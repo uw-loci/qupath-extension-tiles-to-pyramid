@@ -43,7 +43,7 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
         // Check if the root directory itself contains TileConfiguration.txt and matches the string
         // This handles the case where tiles are directly in the folder (common for brightfield)
         Path rootConfigPath = rootdir.resolve("TileConfiguration.txt");
-        if (Files.exists(rootConfigPath) && rootdir.getFileName().toString().equals(matchingString)) {
+        if (Files.exists(rootConfigPath) && rootdir.getFileName().toString().contains(matchingString)) {
             logger.info("Processing root directory directly: {} (contains matching string and TileConfiguration.txt)", rootdir);
             mappings.addAll(processDirectory(rootdir, rootConfigPath, pixelSizeInMicrons, baseDownsample));
         } else {
@@ -51,7 +51,7 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
             logger.info("Searching for subdirectories matching '{}' within: {}", matchingString, folderPath);
             try (DirectoryStream<Path> stream = Files.newDirectoryStream(rootdir)) {
                 for (Path path : stream) {
-                    if (Files.isDirectory(path) && path.getFileName().toString().equals(matchingString)) {
+                    if (Files.isDirectory(path) && path.getFileName().toString().contains(matchingString)) {
                         Path configPath = path.resolve("TileConfiguration.txt");
                         if (!Files.exists(configPath)) {
                             logger.warn("No TileConfiguration.txt in subdir: {}", path);
