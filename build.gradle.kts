@@ -17,7 +17,7 @@ plugins {
 publishing {
     publications {
         create<MavenPublication>("maven") {
-            groupId = "io.github.michaelsnelson"
+            groupId = "io.github.uw-loci"
             artifactId = "qupath-extension-tiles-to-pyramid"
             version = "0.1.0"
 
@@ -37,10 +37,10 @@ repositories {
 
 qupathExtension {
     name = "qupath-extension-tiles-to-pyramid"
-    group = "io.github.michaelsnelson"
+    group = "io.github.uw-loci"
     version = "0.1.0"
     description = "Convert tiles into pyramidal OME-TIFF or OME-ZARR formats"
-    automaticModule = "io.github.michaelsnelson.extension.tiles-to-pyramid"
+    automaticModule = "io.github.uw-loci.extension.tiles-to-pyramid"
 }
 
 dependencies {
