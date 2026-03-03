@@ -2,7 +2,7 @@ plugins {
     // Support writing the extension in Groovy (remove this if you don't want to)
     groovy
     // To optionally create a shadow/fat jar that bundle up any non-core dependencies
-    id("com.gradleup.shadow") version "8.3.5"
+    id("com.gradleup.shadow") version "9.3.2"
     // QuPath Gradle extension convention plugin
     id("qupath-conventions")
     id("maven-publish")
