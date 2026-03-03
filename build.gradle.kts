@@ -51,7 +51,7 @@ dependencies {
     shadow(libs.qupath.fxtras)
 
     // bioformats plugin needed for OMEPyramidWriter and OMEZarrWriter
-    implementation("io.github.qupath:qupath-extension-bioformats:0.6.0-rc4")
+    implementation("io.github.qupath:qupath-extension-bioformats:0.7.0")
 
     // Add Bio-Formats explicitly for compile time to avoid "class file for loci.formats.FormatException not found"
     shadow("ome:formats-gpl:7.1.0")
