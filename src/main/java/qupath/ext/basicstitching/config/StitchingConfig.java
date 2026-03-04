@@ -18,6 +18,14 @@ public class StitchingConfig {
     public final OutputFormat outputFormat;
 
     /**
+     * Optional output filename base. When set, the stitched output file will be named
+     * {@code outputFilename + "_" + subdirName} instead of just {@code subdirName}.
+     * This allows callers to include the sample name in the output filename.
+     * Set after construction if needed.
+     */
+    public String outputFilename;
+
+    /**
      * Output format options for stitched images.
      */
     public enum OutputFormat {
