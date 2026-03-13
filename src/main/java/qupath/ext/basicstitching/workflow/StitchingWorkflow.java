@@ -8,6 +8,7 @@ import qupath.ext.basicstitching.config.StitchingConfig;
 import qupath.ext.basicstitching.stitching.StitchingStrategy;
 import qupath.ext.basicstitching.stitching.StitchingStrategyFactory;
 import qupath.ext.basicstitching.stitching.TileMapping;
+import qupath.lib.common.GeneralTools;
 import qupath.lib.images.servers.ImageServer;
 
 import java.awt.image.BufferedImage;
@@ -89,13 +90,16 @@ public class StitchingWorkflow {
     public static String run(StitchingConfig config) {
         try {
             logger.info("=== STITCHING WORKFLOW STARTING ===");
+            String extVersion = GeneralTools.getPackageVersion(StitchingWorkflow.class);
+            logger.info("Tiles-to-Pyramid version: {}", extVersion != null ? extVersion : "dev");
+            logger.info("QuPath version: {}", GeneralTools.getVersion());
             logger.info("Configuration:");
             logger.info("  - Stitching type: {}", config.stitchingType);
             logger.info("  - Folder path: {}", config.folderPath);
             logger.info("  - Matching string: '{}'", config.matchingString);
             logger.info("  - Output path: {}", config.outputPath);
             logger.info("  - Compression: {}", config.compressionType);
-            logger.info("  - Pixel size: {} µm", config.pixelSizeInMicrons);
+            logger.info("  - Pixel size: {} um", config.pixelSizeInMicrons);
             logger.info("  - Downsample: {}", config.baseDownsample);
 
             // 1. Select the appropriate strategy for this stitching type
