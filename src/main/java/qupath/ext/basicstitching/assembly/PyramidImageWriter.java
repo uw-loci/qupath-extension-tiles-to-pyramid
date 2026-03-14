@@ -127,7 +127,7 @@ public class PyramidImageWriter {
 
             pyramidServer.close();
 
-            logger.info("Finished writing pyramid in {:.1f}s: {}", (System.currentTimeMillis() - t0)/1000.0, output);
+            logger.info("Finished writing pyramid in {}s: {}", String.format("%.1f", (System.currentTimeMillis() - t0)/1000.0), output);
             return output;
         } catch (Exception e) {
             logger.error("Failed to write pyramid OME-TIFF", e);
@@ -201,7 +201,7 @@ public class PyramidImageWriter {
 
             pyramidServer.close();
 
-            logger.info("Finished writing pyramid in {:.1f}s: {}", (System.currentTimeMillis() - t0)/1000.0, output);
+            logger.info("Finished writing pyramid in {}s: {}", String.format("%.1f", (System.currentTimeMillis() - t0)/1000.0), output);
             return output;
         } catch (Exception e) {
             logger.error("Failed to write pyramid OME-ZARR", e);

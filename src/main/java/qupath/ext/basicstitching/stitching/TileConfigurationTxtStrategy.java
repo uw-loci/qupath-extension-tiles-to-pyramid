@@ -40,29 +40,35 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
         List<TileMapping> mappings = new ArrayList<>();
         Path rootdir = Paths.get(folderPath);
 
-        // Check if the root directory itself contains TileConfiguration.txt and matches the string
-        // This handles the case where tiles are directly in the folder (common for brightfield)
-        Path rootConfigPath = rootdir.resolve("TileConfiguration.txt");
-        if (Files.exists(rootConfigPath) && rootdir.getFileName().toString().contains(matchingString)) {
-            logger.info("Processing root directory directly: {} (contains matching string and TileConfiguration.txt)", rootdir);
-            mappings.addAll(processDirectory(rootdir, rootConfigPath, pixelSizeInMicrons, baseDownsample));
-        } else {
-            // Original behavior: look for matching subdirectories (for multi-angle acquisitions)
-            logger.info("Searching for subdirectories matching '{}' within: {}", matchingString, folderPath);
-            try (DirectoryStream<Path> stream = Files.newDirectoryStream(rootdir)) {
-                for (Path path : stream) {
-                    if (Files.isDirectory(path) && path.getFileName().toString().contains(matchingString)) {
-                        Path configPath = path.resolve("TileConfiguration.txt");
-                        if (!Files.exists(configPath)) {
-                            logger.warn("No TileConfiguration.txt in subdir: {}", path);
-                            continue;
-                        }
-                        logger.info("Processing subdir: {} with config {}", path, configPath);
-                        mappings.addAll(processDirectory(path, configPath, pixelSizeInMicrons, baseDownsample));
+        // First, check for matching subdirectories (multi-angle acquisitions).
+        // This takes priority over root directory processing to avoid accidentally
+        // lumping all angles together when the root directory name also matches.
+        logger.info("Searching for subdirectories matching '{}' within: {}", matchingString, folderPath);
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(rootdir)) {
+            for (Path path : stream) {
+                if (Files.isDirectory(path) && path.getFileName().toString().contains(matchingString)) {
+                    Path configPath = path.resolve("TileConfiguration.txt");
+                    if (!Files.exists(configPath)) {
+                        logger.warn("No TileConfiguration.txt in subdir: {}", path);
+                        continue;
                     }
+                    logger.info("Processing subdir: {} with config {}", path, configPath);
+                    mappings.addAll(processDirectory(path, configPath, pixelSizeInMicrons, baseDownsample));
                 }
-            } catch (Exception e) {
-                logger.error("Error searching subdirectories in TileConfigurationTxtStrategy", e);
+            }
+        } catch (Exception e) {
+            logger.error("Error searching subdirectories in TileConfigurationTxtStrategy", e);
+        }
+
+        // If no matching subdirectories found, fall back to processing the root directory
+        // directly (common for brightfield where tiles are in the folder itself)
+        if (mappings.isEmpty()) {
+            Path rootConfigPath = rootdir.resolve("TileConfiguration.txt");
+            if (Files.exists(rootConfigPath)) {
+                logger.info("No matching subdirectories found. Processing root directory directly: {}", rootdir);
+                mappings.addAll(processDirectory(rootdir, rootConfigPath, pixelSizeInMicrons, baseDownsample));
+            } else {
+                logger.warn("No matching subdirectories and no TileConfiguration.txt in root: {}", rootdir);
             }
         }
 

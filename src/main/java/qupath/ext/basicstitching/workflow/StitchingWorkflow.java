@@ -201,7 +201,7 @@ public class StitchingWorkflow {
                             config.compressionType,
                             config.baseDownsample,
                             config.outputFormat != null ? config.outputFormat : StitchingConfig.OutputFormat.OME_TIFF,
-                            progress -> logger.debug("Write progress for '{}': {:.1f}%", subdirName, progress * 100)
+                            progress -> logger.debug("Write progress for '{}': {}%", subdirName, String.format("%.1f", progress * 100))
                     );
 
                     if (written != null) {
