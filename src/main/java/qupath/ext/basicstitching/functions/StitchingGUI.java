@@ -271,13 +271,21 @@ public class StitchingGUI {
      * Adds components for folder selection to the specified GridPane.
      */
     private static void addFolderSelectionComponents(GridPane pane) {
-        // Attempt to initialize with default project folder
-        try {
-            String defaultFolderPath = QPEx.buildPathInProject("Tiles");
-            logger.info("Default folder path: {}", defaultFolderPath);
-            folderField.setText(defaultFolderPath);
-        } catch (Exception e) {
-            logger.info("Error setting default folder path, usually due to no project being open", e);
+        // Only set default if the field is empty (preserve user's last selection)
+        if (folderField.getText() == null || folderField.getText().trim().isEmpty()) {
+            // Try saved preference first, then fall back to project folder
+            String savedFolder = QPPreferences.getFolderLocationSaved();
+            if (savedFolder != null && !savedFolder.isEmpty() && new File(savedFolder).isDirectory()) {
+                folderField.setText(savedFolder);
+            } else {
+                try {
+                    String defaultFolderPath = QPEx.buildPathInProject("Tiles");
+                    logger.info("Default folder path: {}", defaultFolderPath);
+                    folderField.setText(defaultFolderPath);
+                } catch (Exception e) {
+                    logger.info("Error setting default folder path, usually due to no project being open", e);
+                }
+            }
         }
 
         folderButton.setOnAction(e -> {
@@ -286,18 +294,21 @@ public class StitchingGUI {
                 dirChooser.setTitle("Select Folder");
 
                 String initialDirPath = folderField.getText();
-                File initialDir = new File(initialDirPath);
-
-                if (initialDir.exists() && initialDir.isDirectory()) {
-                    dirChooser.setInitialDirectory(initialDir);
-                } else {
-                    logger.warn("Initial directory does not exist or is not a directory: {}",
-                            initialDir.getAbsolutePath());
+                if (initialDirPath != null && !initialDirPath.trim().isEmpty()) {
+                    File initialDir = new File(initialDirPath.trim());
+                    // Walk up to find the nearest existing parent directory
+                    while (initialDir != null && !initialDir.isDirectory()) {
+                        initialDir = initialDir.getParentFile();
+                    }
+                    if (initialDir != null && initialDir.isDirectory()) {
+                        dirChooser.setInitialDirectory(initialDir);
+                    }
                 }
 
                 File selectedDir = dirChooser.showDialog(null);
                 if (selectedDir != null) {
                     folderField.setText(selectedDir.getAbsolutePath());
+                    QPPreferences.setFolderLocationSaved(selectedDir.getAbsolutePath());
                     logger.info("Selected folder path: {}", selectedDir.getAbsolutePath());
                 }
             } catch (Exception ex) {
