@@ -234,9 +234,14 @@ public class PyramidImageWriter {
             case "none":
                 return CompressorFactory.create("null");  // No compression
             case "jpeg":
+            case "j2k":
+            case "j2k_lossy":
             case "jpeg-2000":
             case "jpeg-2000-lossy":
-                logger.warn("JPEG compression not directly supported in ZARR, using zstd instead");
+                logger.warn("JPEG/J2K compression not supported in ZARR, using zstd instead");
+                algorithm = "zstd";
+                break;
+            case "default":
                 algorithm = "zstd";
                 break;
             default:
