@@ -170,19 +170,23 @@ public class PyramidImageWriter {
             // ZARR compression setup - more flexible than TIFF
             Compressor compressor = createZarrCompressor(compressionType);
 
-            logger.info("Writing pyramid OME-ZARR: {} (compression={}, tileSize=1024, downsample={})",
-                    output, compressionType, baseDownsample);
+            // Limit writer threads to 4 (matching OME-TIFF writer default).
+            // availableProcessors() created 90+ threads on large systems, each
+            // loading tiles into memory simultaneously -> OOM on 1600+ tile acquisitions.
+            // ZARR chunk writes are I/O-bound, so extra threads don't help.
+            int numThreads = Math.min(4, Runtime.getRuntime().availableProcessors());
+
+            logger.info("Writing pyramid OME-ZARR: {} (compression={}, tileSize=1024, downsample={}, threads={})",
+                    output, compressionType, baseDownsample, numThreads);
 
             // Pyramidalize server (in case original was not)
             ImageServer<BufferedImage> pyramidServer = ImageServers.pyramidalize(server);
 
             long t0 = System.currentTimeMillis();
-
-            // Build ZARR writer with configuration
             OMEZarrWriter.Builder builder = new OMEZarrWriter.Builder(pyramidServer)
                     .tileSize(1024, 1024)  // ZARR can handle larger chunks efficiently
                     .compression(compressor)
-                    .parallelize(Runtime.getRuntime().availableProcessors());
+                    .parallelize(numThreads);
 
             // Add scaled downsampling if needed
             if (baseDownsample != 1) {
