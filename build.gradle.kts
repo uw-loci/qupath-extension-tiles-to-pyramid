@@ -19,7 +19,7 @@ publishing {
         create<MavenPublication>("maven") {
             groupId = "io.github.uw-loci"
             artifactId = "qupath-extension-tiles-to-pyramid"
-            version = "0.1.0"
+            version = "0.2.0"
 
             from(components["java"])
         }
@@ -38,7 +38,7 @@ repositories {
 qupathExtension {
     name = "qupath-extension-tiles-to-pyramid"
     group = "io.github.uw-loci"
-    version = "0.1.0"
+    version = "0.2.0"
     description = "Convert tiles into pyramidal OME-TIFF or OME-ZARR formats"
     automaticModule = "io.github.uw-loci.extension.tiles-to-pyramid"
 }

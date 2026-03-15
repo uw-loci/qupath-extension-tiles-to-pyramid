@@ -217,7 +217,7 @@ public class PyramidImageWriter {
      * @param compressionType Compression algorithm name
      * @return Configured Compressor for JZarr
      */
-    private static Compressor createZarrCompressor(String compressionType) {
+    public static Compressor createZarrCompressor(String compressionType) {
         if (compressionType == null || compressionType.isEmpty()) {
             compressionType = "zstd";  // Default to zstd (good balance of speed/compression)
         }

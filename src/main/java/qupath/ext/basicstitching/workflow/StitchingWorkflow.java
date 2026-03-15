@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.basicstitching.assembly.ImageAssembler;
 import qupath.ext.basicstitching.assembly.PyramidImageWriter;
+import qupath.ext.basicstitching.assembly.direct.DirectTileStitcher;
 import qupath.ext.basicstitching.config.StitchingConfig;
 import qupath.ext.basicstitching.stitching.StitchingStrategy;
 import qupath.ext.basicstitching.stitching.StitchingStrategyFactory;
@@ -148,7 +149,32 @@ public class StitchingWorkflow {
                         subdirName, subdirMappings.size());
 
                 try {
-                    // 4a. Assemble image server for this subdirectory
+                    // Direct stitching for large tile counts (bypasses SparseImageServer)
+                    if (DirectTileStitcher.shouldUseDirectStitching(subdirMappings.size())) {
+                        logger.info("Using direct tile stitcher for {} tiles (threshold: {})",
+                                subdirMappings.size(), 500);
+                        String outBase;
+                        if (config.outputFilename != null && !config.outputFilename.isBlank()) {
+                            outBase = config.outputFilename + "_" + subdirName;
+                        } else {
+                            outBase = subdirName;
+                        }
+                        String written = DirectTileStitcher.stitch(
+                                subdirMappings, config.outputPath, outBase, config,
+                                progress -> logger.debug("Direct stitch progress: {}%",
+                                        String.format("%.1f", progress * 100)));
+                        if (written != null) {
+                            logger.info("Successfully wrote (direct): {}", written);
+                            lastSuccessfulPath = written;
+                            successCount++;
+                        } else {
+                            logger.error("Direct stitching failed for subdirectory: {}", subdirName);
+                            failureCount++;
+                        }
+                        continue;
+                    }
+
+                    // 4a. Assemble image server for this subdirectory (standard path)
                     // Note: For RGB images, this automatically wraps with white background
                     logger.info("Assembling image server...");
                     ImageServer<BufferedImage> server = ImageAssembler.assemble(
