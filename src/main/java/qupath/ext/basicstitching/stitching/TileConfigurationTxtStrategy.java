@@ -128,10 +128,17 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
             }
 
             // Process all found TIFF files
+            int tileCount = tiffFiles.size();
+            logger.info("Processing {} TIFF files for dimensions and mapping...", tileCount);
+            int processed = 0;
             for (Path tifPath : tiffFiles) {
                 String filename = tifPath.getFileName().toString();
                 Position pos = positionMap.get(filename);
                 Map<String, Integer> dims = UtilityFunctions.getTiffDimensions(tifPath.toFile());
+                processed++;
+                if (processed % 500 == 0 || processed == tileCount) {
+                    logger.info("Tile dimension progress: {}/{} files processed", processed, tileCount);
+                }
                 if (pos != null && dims != null) {
                     ImageRegion region = ImageRegion.createInstance(
                             (int)Math.round(pos.x),

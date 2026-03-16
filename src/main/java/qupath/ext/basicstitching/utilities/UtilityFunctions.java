@@ -118,19 +118,27 @@ public class UtilityFunctions {
         }
 
         try {
-            // Read the image file
-            BufferedImage image = ImageIO.read(filePath);
-            if (image == null) {
-                logger.info("ImageIO returned null for file: {}", filePath);
-                return null;
+            // Read dimensions from TIFF header only (no pixel data loaded)
+            try (javax.imageio.stream.ImageInputStream iis = ImageIO.createImageInputStream(filePath)) {
+                if (iis == null) {
+                    logger.info("Cannot create ImageInputStream for: {}", filePath);
+                    return null;
+                }
+                Iterator<ImageReader> readers = ImageIO.getImageReaders(iis);
+                if (!readers.hasNext()) {
+                    logger.info("No ImageReader found for: {}", filePath);
+                    return null;
+                }
+                ImageReader reader = readers.next();
+                reader.setInput(iis, true, true);
+
+                Map<String, Integer> dimensions = new HashMap<>();
+                dimensions.put("width", reader.getWidth(0));
+                dimensions.put("height", reader.getHeight(0));
+
+                reader.dispose();
+                return dimensions;
             }
-
-            // Return the image dimensions as a map
-            Map<String, Integer> dimensions = new HashMap<>();
-            dimensions.put("width", image.getWidth());
-            dimensions.put("height", image.getHeight());
-            return dimensions;
-
         } catch (IOException e) {
             // Log and handle the error
             logger.info("Error reading the image file {}: {}", filePath, e.getMessage());
