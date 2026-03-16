@@ -107,8 +107,11 @@ public class ChunkCompositor {
 
                 // Draw onto output (Java2D handles color model conversion)
                 Graphics2D g = output.createGraphics();
-                g.drawImage(tileData, dstX, dstY, null);
-                g.dispose();
+                try {
+                    g.drawImage(tileData, dstX, dstY, null);
+                } finally {
+                    g.dispose();
+                }
             } catch (IOException e) {
                 logger.warn("Failed to read tile region from {}: {}", tile.file.getName(), e.getMessage());
                 // Continue with remaining tiles -- gap will show background color

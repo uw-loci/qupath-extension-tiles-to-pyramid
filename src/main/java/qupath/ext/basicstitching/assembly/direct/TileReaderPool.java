@@ -59,7 +59,7 @@ public class TileReaderPool implements AutoCloseable {
         this.cache = new LinkedHashMap<>(maxOpen + 1, 0.75f, true);
     }
 
-    private ReaderEntry getOrCreateReader(File file) throws IOException {
+    private synchronized ReaderEntry getOrCreateReader(File file) throws IOException {
         ReaderEntry entry = cache.get(file);
         if (entry != null) {
             return entry;
@@ -107,7 +107,7 @@ public class TileReaderPool implements AutoCloseable {
      * @param height Region height to read
      * @return BufferedImage containing the requested region
      */
-    public BufferedImage readRegion(File file, int srcX, int srcY, int width, int height) throws IOException {
+    public synchronized BufferedImage readRegion(File file, int srcX, int srcY, int width, int height) throws IOException {
         ReaderEntry entry = getOrCreateReader(file);
         ImageReadParam param = entry.reader.getDefaultReadParam();
         param.setSourceRegion(new Rectangle(srcX, srcY, width, height));
@@ -120,13 +120,13 @@ public class TileReaderPool implements AutoCloseable {
      * @param file Source tile file
      * @return Full BufferedImage
      */
-    public BufferedImage readFull(File file) throws IOException {
+    public synchronized BufferedImage readFull(File file) throws IOException {
         ReaderEntry entry = getOrCreateReader(file);
         return entry.reader.read(0);
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
         for (ReaderEntry entry : cache.values()) {
             entry.close();
         }

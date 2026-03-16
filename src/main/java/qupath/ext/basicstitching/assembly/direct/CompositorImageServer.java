@@ -108,39 +108,37 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
 
     @Override
     public BufferedImage readRegion(RegionRequest request) throws IOException {
-        // The request coordinates are in the full image space.
-        // Our compositor works in origin-translated (0-based) space,
-        // which matches because TileSpatialIndex already translated to 0-based.
+        // RegionRequest contract: x, y, w, h are in FULL-RESOLUTION pixel coordinates.
+        // The downsample indicates the desired output resolution.
+        // So for downsample=4, region (0, 0, 2048, 2048) means:
+        //   "read the 2048x2048 full-res region and return it at 512x512"
         int x = request.getX();
         int y = request.getY();
         int w = request.getWidth();
         int h = request.getHeight();
         double downsample = request.getDownsample();
 
-        // If downsampled, we need to read a larger region and scale
-        // But for level-0 reads (downsample=1), we composite directly
-        if (downsample == 1.0) {
-            return compositor.compositeChunk(x, y, w, h);
-        }
-
-        // For downsampled requests: read at full resolution and scale
-        // This handles the case where pyramidalize() requests lower-res tiles
-        int srcW = (int) Math.ceil(w * downsample);
-        int srcH = (int) Math.ceil(h * downsample);
-
         // Clamp to image bounds
-        srcW = Math.min(srcW, getWidth() - x);
-        srcH = Math.min(srcH, getHeight() - y);
+        int srcW = Math.min(w, getWidth() - x);
+        int srcH = Math.min(h, getHeight() - y);
 
         if (srcW <= 0 || srcH <= 0) {
-            return createEmptyTile(w, h);
+            int outW = (int) Math.max(1, Math.round(w / downsample));
+            int outH = (int) Math.max(1, Math.round(h / downsample));
+            return createEmptyTile(outW, outH);
         }
 
+        // For level-0 reads (downsample=1), composite directly
+        if (downsample == 1.0) {
+            return compositor.compositeChunk(x, y, srcW, srcH);
+        }
+
+        // For downsampled requests: read full-res region, then scale down
         BufferedImage fullRes = compositor.compositeChunk(x, y, srcW, srcH);
 
-        // Scale down to the requested output size
-        int outW = (int) Math.ceil(srcW / downsample);
-        int outH = (int) Math.ceil(srcH / downsample);
+        // Scale to requested output size
+        int outW = (int) Math.max(1, Math.round(srcW / downsample));
+        int outH = (int) Math.max(1, Math.round(srcH / downsample));
 
         if (outW == fullRes.getWidth() && outH == fullRes.getHeight()) {
             return fullRes;
@@ -148,11 +146,14 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
 
         BufferedImage scaled = new BufferedImage(outW, outH, fullRes.getType());
         var g = scaled.createGraphics();
-        g.setRenderingHint(
-                java.awt.RenderingHints.KEY_INTERPOLATION,
-                java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-        g.drawImage(fullRes, 0, 0, outW, outH, null);
-        g.dispose();
+        try {
+            g.setRenderingHint(
+                    java.awt.RenderingHints.KEY_INTERPOLATION,
+                    java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.drawImage(fullRes, 0, 0, outW, outH, null);
+        } finally {
+            g.dispose();
+        }
 
         return scaled;
     }

@@ -108,8 +108,14 @@ public class PyramidImageWriter {
             String output = UtilityFunctions.getUniqueFilePath(outFile.toString());
 
             OMEPyramidWriter.CompressionType comp = UtilityFunctions.getCompressionType(compressionType);
+
+            int imgW = server.getWidth();
+            int imgH = server.getHeight();
+            int estTiles = (int) Math.ceil((double) imgW / 512) * (int) Math.ceil((double) imgH / 512);
             logger.info("Writing pyramid OME-TIFF: {} (compression={}, tileSize=512, downsample={})",
                     output, comp, baseDownsample);
+            logger.info("Image dimensions: {}x{} pixels, ~{} tiles at level 0, server type: {}",
+                    imgW, imgH, estTiles, server.getServerType());
 
             // Pyramidalize server (in case original was not)
             ImageServer<BufferedImage> pyramidServer = ImageServers.pyramidalize(server);

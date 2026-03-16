@@ -46,7 +46,7 @@ public class DirectTileStitcher {
     private static final Logger logger = LoggerFactory.getLogger(DirectTileStitcher.class);
 
     private static final int DEFAULT_CHUNK_SIZE = 1024;
-    private static final int DEFAULT_MAX_OPEN_READERS = 8;
+    private static final int DEFAULT_MAX_OPEN_READERS = 64;
     private static final int TILE_COUNT_THRESHOLD = 500;
 
     /**
@@ -107,46 +107,47 @@ public class DirectTileStitcher {
             int imageHeight = index.getImageHeight();
             logger.info("Full image: {}x{} pixels ({} tiles)", imageWidth, imageHeight, mappings.size());
 
-            // 3. Create compositor and reader pool
+            // 3. Create compositor and reader pool (try-with-resources for cleanup on exception)
             boolean whiteBackground = dims.isRGB();
             BlendStrategy blend = new OverwriteBlendStrategy();
-            TileReaderPool readerPool = new TileReaderPool(DEFAULT_MAX_OPEN_READERS);
-            ChunkCompositor compositor = new ChunkCompositor(
-                    readerPool, index, blend, whiteBackground, dims.isRGB(), dims.bitDepth());
 
-            // 4. Create CompositorImageServer (memory-efficient replacement for SparseImageServer)
-            CompositorImageServer server = new CompositorImageServer(
-                    compositor, readerPool,
-                    imageWidth, imageHeight,
-                    dims.nChannels(), dims.isRGB(), dims.bitDepth(),
-                    config.pixelSizeInMicrons, config.zSpacingMicrons);
+            try (TileReaderPool readerPool = new TileReaderPool(DEFAULT_MAX_OPEN_READERS)) {
+                ChunkCompositor compositor = new ChunkCompositor(
+                        readerPool, index, blend, whiteBackground, dims.isRGB(), dims.bitDepth());
 
-            logger.info("Writing OME-TIFF via CompositorImageServer (memory-efficient read path)...");
+                // 4. Create CompositorImageServer (memory-efficient replacement for SparseImageServer)
+                CompositorImageServer server = new CompositorImageServer(
+                        compositor, readerPool,
+                        imageWidth, imageHeight,
+                        dims.nChannels(), dims.isRGB(), dims.bitDepth(),
+                        config.pixelSizeInMicrons, config.zSpacingMicrons);
 
-            // 5. Delegate to existing PyramidImageWriter for TIFF output
-            String written = PyramidImageWriter.write(
-                    server,
-                    outputPath,
-                    filename,
-                    config.compressionType,
-                    config.baseDownsample,
-                    StitchingConfig.OutputFormat.OME_TIFF,
-                    progressCallback);
+                logger.info("Writing OME-TIFF via CompositorImageServer (memory-efficient read path)...");
 
-            // 6. Clean up
-            server.close();
-            readerPool.close();
+                // 5. Delegate to existing PyramidImageWriter for TIFF output
+                String written = PyramidImageWriter.write(
+                        server,
+                        outputPath,
+                        filename,
+                        config.compressionType,
+                        config.baseDownsample,
+                        StitchingConfig.OutputFormat.OME_TIFF,
+                        progressCallback);
 
-            long elapsed = System.currentTimeMillis() - t0;
-            if (written != null) {
-                logger.info("Direct stitching (OME-TIFF) complete in {}s: {}",
-                        String.format("%.1f", elapsed / 1000.0), written);
-            } else {
-                logger.error("Direct stitching (OME-TIFF) failed after {}s",
-                        String.format("%.1f", elapsed / 1000.0));
+                server.close();
+
+                long elapsed = System.currentTimeMillis() - t0;
+                if (written != null) {
+                    logger.info("Direct stitching (OME-TIFF) complete in {}s: {}",
+                            String.format("%.1f", elapsed / 1000.0), written);
+                } else {
+                    logger.error("Direct stitching (OME-TIFF) failed after {}s",
+                            String.format("%.1f", elapsed / 1000.0));
+                }
+
+                return written;
             }
-
-            return written;
+            // Reader pool auto-closed here, even on exception
 
         } catch (Exception e) {
             logger.error("Direct stitching (OME-TIFF) failed", e);
