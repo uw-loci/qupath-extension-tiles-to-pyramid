@@ -395,27 +395,17 @@ cd qupath-basic-stitching
 
 ## License
 
-This project is licensed under the MIT license - see the [LICENSE](LICENSE) file for details.
-
-## Citation
-
-If you use this extension in your research, please cite:
-
-```bibtex
-@software{qupath_basic_stitching,
-  title={QuPath Basic Stitching Extension},
-  author={Your Name},
-  year={2025},
-  url={https://github.com/yourusername/qupath-basic-stitching},
-  version={1.0.0}
-}
-```
+Apache License 2.0 - see [LICENSE](LICENSE) for details.
 
 ## Support
 
 - **Issues**: Report bugs and feature requests via [GitHub Issues](../../issues)
 - **Discussions**: Join the conversation in [GitHub Discussions](../../discussions)
 - **QuPath Forum**: Get help from the community at [image.sc](https://forum.image.sc/tag/qupath)
+
+## AI-Assisted Development
+
+This project was developed with assistance from [Claude](https://claude.ai) (Anthropic). Claude was used as a development tool for code generation, architecture design, debugging, and documentation throughout the project.
 
 ## Changelog
 
