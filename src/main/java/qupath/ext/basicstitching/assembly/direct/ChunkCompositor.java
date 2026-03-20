@@ -105,11 +105,18 @@ public class ChunkCompositor {
                 // Read the relevant region from the tile
                 BufferedImage tileData = readerPool.readRegion(tile.file, srcX, srcY, isectW, isectH);
 
-                // Draw onto output (Java2D handles color model conversion)
-                Graphics2D g = output.createGraphics();
-                try {
+                if (tileData.getType() == output.getType() || tileData.getType() == BufferedImage.TYPE_CUSTOM) {
+                    // Raw raster transfer -- matches QuPath's SparseImageServer approach.
+                    // Preserves all data types exactly (including TYPE_CUSTOM / unusual
+                    // bit depths) without going through the Java2D rendering pipeline.
+                    output.getRaster().setDataElements(
+                            dstX, dstY, isectW, isectH,
+                            tileData.getRaster().getDataElements(0, 0, isectW, isectH, null));
+                } else {
+                    // Type mismatch (e.g. TYPE_3BYTE_BGR tile into TYPE_INT_RGB output).
+                    // Use Graphics2D which handles the conversion automatically.
+                    Graphics2D g = output.createGraphics();
                     g.drawImage(tileData, dstX, dstY, null);
-                } finally {
                     g.dispose();
                 }
             } catch (IOException e) {
