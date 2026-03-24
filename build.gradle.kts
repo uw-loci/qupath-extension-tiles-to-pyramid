@@ -54,7 +54,7 @@ dependencies {
     implementation("io.github.qupath:qupath-extension-bioformats:0.6.0-rc4")
 
     // Add Bio-Formats explicitly for compile time to avoid "class file for loci.formats.FormatException not found"
-    shadow("ome:formats-gpl:7.1.0")
+    shadow("ome:formats-gpl:8.5.0")
 
     // ZARR format support dependencies (explicit for compile-time resolution)
     // These are needed for OME-ZARR output format functionality
