@@ -210,6 +210,64 @@ public class UtilityFunctions {
     }
 
     /**
+     * Read pixel size in microns from a TIFF file's resolution tags.
+     * Uses TAG_X_RESOLUTION and TAG_RESOLUTION_UNIT to compute the physical pixel size.
+     *
+     * @param file TIFF file to read
+     * @return pixel size in microns, or -1 if resolution metadata is missing or unusable
+     */
+    public static double getTiffPixelSize(File file) {
+        if (file == null || !file.exists()) {
+            return -1;
+        }
+        try (FileInputStream fis = new FileInputStream(file);
+             ImageInputStream iis = ImageIO.createImageInputStream(fis)) {
+            Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName("TIFF");
+            if (!readers.hasNext()) {
+                return -1;
+            }
+            ImageReader reader = readers.next();
+            reader.setInput(iis);
+            IIOMetadata metadata = reader.getImageMetadata(0);
+            TIFFDirectory tiffDir = TIFFDirectory.createFromMetadata(metadata);
+
+            double xRes = getRational(tiffDir, BaselineTIFFTagSet.TAG_X_RESOLUTION);
+            if (xRes <= 0) {
+                reader.dispose();
+                return -1;
+            }
+
+            // Determine resolution unit: 2 = inches, 3 = centimeters
+            int resUnit = 2; // default to inches per TIFF spec
+            var unitField = tiffDir.getTIFFField(BaselineTIFFTagSet.TAG_RESOLUTION_UNIT);
+            if (unitField != null) {
+                resUnit = unitField.getAsInt(0);
+            }
+
+            double pixelSizeMicrons;
+            if (resUnit == 3) {
+                // Centimeters: pixel size = 1/xRes cm = 10000/xRes um
+                pixelSizeMicrons = 10000.0 / xRes;
+            } else if (resUnit == 2) {
+                // Inches: pixel size = 1/xRes in = 25400/xRes um
+                pixelSizeMicrons = 25400.0 / xRes;
+            } else {
+                // No unit (resUnit == 1) -- resolution value is dimensionless, can't derive microns
+                reader.dispose();
+                return -1;
+            }
+
+            reader.dispose();
+            logger.debug("Read pixel size from {}: {} um (xRes={}, unit={})",
+                    file.getName(), pixelSizeMicrons, xRes, resUnit);
+            return pixelSizeMicrons;
+        } catch (Exception e) {
+            logger.debug("Could not read pixel size from {}: {}", file.getName(), e.getMessage());
+            return -1;
+        }
+    }
+
+    /**
      * Helper function to extract a rational number from a TIFFDirectory.
      * Returns 0.0 if tag is missing or malformed.
      *

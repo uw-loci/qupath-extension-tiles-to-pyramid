@@ -135,7 +135,13 @@ public class ChunkCompositor {
         BufferedImage img;
 
         if (isRGB) {
-            img = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+            // Use TYPE_3BYTE_BGR to match the source tile format (JAI camera output).
+            // TYPE_INT_RGB causes ClassCastException in QuPath's
+            // PyramidGeneratingImageServer when it resizes tiles for pyramid
+            // levels -- BufferedImageTools.resize creates a compatible raster
+            // from the source, and the INT vs BYTE transfer types are
+            // incompatible in getSamples/setSamples.
+            img = new BufferedImage(width, height, BufferedImage.TYPE_3BYTE_BGR);
             if (whiteBackground) {
                 Graphics2D g = img.createGraphics();
                 g.setColor(Color.WHITE);

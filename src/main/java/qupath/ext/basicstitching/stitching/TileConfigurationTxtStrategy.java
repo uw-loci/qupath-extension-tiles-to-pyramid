@@ -4,10 +4,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.basicstitching.utilities.UtilityFunctions;
 import qupath.lib.regions.ImageRegion;
-import java.io.File;
 import java.nio.file.*;
 import java.util.*;
-import java.util.regex.Pattern;
 
 /**
  * Stitching strategy that reads a TileConfiguration.txt for image positions.
@@ -23,8 +21,8 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
      *     <li>Iterates through subdirectories in the specified root folder whose names contain the given matching string.</li>
      *     <li>For each such subdirectory, parses its TileConfiguration.txt to get image positions (in microns, downsampled as specified).</li>
      *     <li>Finds all TIFF files, matches them to config entries, and creates ImageRegion mappings.</li>
-     *     <li>Adjusts the Y coordinate for each tile at runtime so that tiles with the largest Y are placed at the top,
-     *         matching the convention of Fiji's Grid/Collection Stitcher.</li>
+     *     <li>Uses absolute stage positions from TileConfiguration.txt directly (no Y-flip needed
+     *         since coordinates are already in physical space).</li>
      * </ul>
      *
      * @param folderPath         The path to the root directory containing tile subdirectories.
@@ -92,15 +90,10 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
             // Parse positions from config
             Map<String, Position> positionMap = parseTileConfig(configPath, pixelSizeInMicrons, baseDownsample);
 
-            // Compute maxY for this subdirectory (needed for Y-flip adjustment)
-            OptionalDouble maxYOpt = positionMap.values().stream()
-                    .mapToDouble(pos -> pos.y)
-                    .max();
-            if (!maxYOpt.isPresent()) {
+            if (positionMap.isEmpty()) {
                 logger.warn("No tile positions found in config: {}", configPath);
                 return mappings;
             }
-            double maxY = maxYOpt.getAsDouble();
 
             // First try to find TIFF files directly in the main directory
             List<Path> tiffFiles = new ArrayList<>();
@@ -150,7 +143,7 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
                     mappings.add(new TileMapping(
                             tifPath.toFile(), region, path.getFileName().toString()
                     ));
-                    logger.debug("Mapped {} at ({}, {} [flipped Y]) from config", filename, pos.x, pos.y);
+                    logger.debug("Mapped {} at ({}, {}) from config", filename, pos.x, pos.y);
                 } else {
                     logger.warn("Missing config position or TIFF dimensions for {}", filename);
                 }
