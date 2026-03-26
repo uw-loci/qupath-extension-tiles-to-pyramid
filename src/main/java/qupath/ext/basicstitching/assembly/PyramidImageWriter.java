@@ -112,7 +112,8 @@ public class PyramidImageWriter {
         // Write to a temp file first, then rename on success.
         // This prevents destroying an existing good file if stitching fails partway through
         // (e.g. OOM, disk full) -- the OME writer truncates the file on open.
-        String tempOutput = finalOutput + ".writing";
+        // The temp file must end in .ome.tif for Bio-Formats to recognize the format.
+        String tempOutput = finalOutput.replace(".ome.tif", ".writing.ome.tif");
 
         try {
             OMEPyramidWriter.CompressionType comp = UtilityFunctions.getCompressionType(compressionType);
@@ -189,7 +190,7 @@ public class PyramidImageWriter {
 
         // Write to a temp directory first, then rename on success.
         // This prevents destroying an existing good ZARR if stitching fails partway through.
-        String tempOutput = finalOutput + ".writing";
+        String tempOutput = finalOutput.replace(".ome.zarr", ".writing.ome.zarr");
 
         try {
             // ZARR compression setup - more flexible than TIFF
