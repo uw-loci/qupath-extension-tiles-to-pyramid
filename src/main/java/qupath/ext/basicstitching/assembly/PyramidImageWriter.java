@@ -12,9 +12,11 @@ import qupath.lib.images.writers.ome.zarr.OMEZarrWriter;
 import qupath.ext.basicstitching.utilities.UtilityFunctions;
 
 import java.awt.image.BufferedImage;
+import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.function.Consumer;
 
 /**
@@ -101,21 +103,28 @@ public class PyramidImageWriter {
      */
     private static String writeOMETIFF(ImageServer<BufferedImage> server, String outputPath,
                                        String filename, String compressionType, double baseDownsample) {
-        try {
-            Path outFile = (baseDownsample == 1)
-                    ? Paths.get(outputPath).resolve(filename + ".ome.tif")
-                    : Paths.get(outputPath).resolve(filename + "_" + (int)baseDownsample + "x_downsample.ome.tif");
-            String output = UtilityFunctions.getUniqueFilePath(outFile.toString());
+        // Determine the final output path (unique, won't collide with existing files)
+        Path outFile = (baseDownsample == 1)
+                ? Paths.get(outputPath).resolve(filename + ".ome.tif")
+                : Paths.get(outputPath).resolve(filename + "_" + (int)baseDownsample + "x_downsample.ome.tif");
+        String finalOutput = UtilityFunctions.getUniqueFilePath(outFile.toString());
 
+        // Write to a temp file first, then rename on success.
+        // This prevents destroying an existing good file if stitching fails partway through
+        // (e.g. OOM, disk full) -- the OME writer truncates the file on open.
+        String tempOutput = finalOutput + ".writing";
+
+        try {
             OMEPyramidWriter.CompressionType comp = UtilityFunctions.getCompressionType(compressionType);
 
             int imgW = server.getWidth();
             int imgH = server.getHeight();
             int estTiles = (int) Math.ceil((double) imgW / 512) * (int) Math.ceil((double) imgH / 512);
             logger.info("Writing pyramid OME-TIFF: {} (compression={}, tileSize=512, downsample={})",
-                    output, comp, baseDownsample);
+                    finalOutput, comp, baseDownsample);
             logger.info("Image dimensions: {}x{} pixels, ~{} tiles at level 0, server type: {}",
                     imgW, imgH, estTiles, server.getServerType());
+            logger.debug("Using temp file during write: {}", tempOutput);
 
             // Pyramidalize server (in case original was not)
             ImageServer<BufferedImage> pyramidServer = ImageServers.pyramidalize(server);
@@ -129,14 +138,19 @@ public class PyramidImageWriter {
                     .compression(comp)
                     .scaledDownsampling(baseDownsample, 4)
                     .build()
-                    .writeSeries(output);
+                    .writeSeries(tempOutput);
 
             pyramidServer.close();
 
-            logger.info("Finished writing pyramid in {}s: {}", String.format("%.1f", (System.currentTimeMillis() - t0)/1000.0), output);
-            return output;
+            // Write succeeded -- rename temp file to final output
+            renameTempToFinal(tempOutput, finalOutput);
+
+            logger.info("Finished writing pyramid in {}s: {}",
+                    String.format("%.1f", (System.currentTimeMillis() - t0) / 1000.0), finalOutput);
+            return finalOutput;
         } catch (Exception e) {
             logger.error("Failed to write pyramid OME-TIFF", e);
+            cleanupTempFile(tempOutput);
             return null;
         }
     }
@@ -155,29 +169,35 @@ public class PyramidImageWriter {
     private static String writeOMEZARR(ImageServer<BufferedImage> server, String outputPath,
                                        String filename, String compressionType, double baseDownsample,
                                        Consumer<Double> progressCallback) {
-        try {
-            Path outDir = (baseDownsample == 1)
-                    ? Paths.get(outputPath).resolve(filename + ".ome.zarr")
-                    : Paths.get(outputPath).resolve(filename + "_" + (int)baseDownsample + "x_downsample.ome.zarr");
+        // Determine the final output path (unique, won't collide with existing directories)
+        Path outDir = (baseDownsample == 1)
+                ? Paths.get(outputPath).resolve(filename + ".ome.zarr")
+                : Paths.get(outputPath).resolve(filename + "_" + (int)baseDownsample + "x_downsample.ome.zarr");
 
-            // For ZARR, ensure unique directory path (don't use getUniqueFilePath which adds .ome.tif)
-            String output = outDir.toString();
-            int counter = 2;
-            while (Files.exists(Paths.get(output))) {
-                String baseFilename = filename.replaceAll("\\.ome\\.zarr$", "");
-                if (baseDownsample == 1) {
-                    output = Paths.get(outputPath).resolve(baseFilename + "_" + counter + ".ome.zarr").toString();
-                } else {
-                    output = Paths.get(outputPath).resolve(baseFilename + "_" + (int)baseDownsample + "x_downsample_" + counter + ".ome.zarr").toString();
-                }
-                counter++;
+        // For ZARR, ensure unique directory path (don't use getUniqueFilePath which adds .ome.tif)
+        String finalOutput = outDir.toString();
+        int counter = 2;
+        while (Files.exists(Paths.get(finalOutput))) {
+            String baseFilename = filename.replaceAll("\\.ome\\.zarr$", "");
+            if (baseDownsample == 1) {
+                finalOutput = Paths.get(outputPath).resolve(baseFilename + "_" + counter + ".ome.zarr").toString();
+            } else {
+                finalOutput = Paths.get(outputPath).resolve(baseFilename + "_" + (int)baseDownsample + "x_downsample_" + counter + ".ome.zarr").toString();
             }
+            counter++;
+        }
 
+        // Write to a temp directory first, then rename on success.
+        // This prevents destroying an existing good ZARR if stitching fails partway through.
+        String tempOutput = finalOutput + ".writing";
+
+        try {
             // ZARR compression setup - more flexible than TIFF
             Compressor compressor = createZarrCompressor(compressionType);
 
             logger.info("Writing pyramid OME-ZARR: {} (compression={}, tileSize=1024, downsample={})",
-                    output, compressionType, baseDownsample);
+                    finalOutput, compressionType, baseDownsample);
+            logger.debug("Using temp directory during write: {}", tempOutput);
 
             // Pyramidalize server (in case original was not)
             ImageServer<BufferedImage> pyramidServer = ImageServers.pyramidalize(server);
@@ -201,16 +221,21 @@ public class PyramidImageWriter {
                 logger.debug("Progress callback provided but not supported by current OMEZarrWriter API");
             }
 
-            OMEZarrWriter writer = builder.build(output);
+            OMEZarrWriter writer = builder.build(tempOutput);
             writer.writeImage();
             writer.close();
 
             pyramidServer.close();
 
-            logger.info("Finished writing pyramid in {}s: {}", String.format("%.1f", (System.currentTimeMillis() - t0)/1000.0), output);
-            return output;
+            // Write succeeded -- rename temp directory to final output
+            renameTempToFinal(tempOutput, finalOutput);
+
+            logger.info("Finished writing pyramid in {}s: {}",
+                    String.format("%.1f", (System.currentTimeMillis() - t0) / 1000.0), finalOutput);
+            return finalOutput;
         } catch (Exception e) {
             logger.error("Failed to write pyramid OME-ZARR", e);
+            cleanupTempPath(tempOutput);
             return null;
         }
     }
@@ -266,6 +291,91 @@ public class PyramidImageWriter {
         } catch (Exception e) {
             logger.warn("Failed to create compressor '{}', using default zstd", algorithm, e);
             return CompressorFactory.create("blosc", "cname", "zstd", "clevel", 5, "shuffle", 1);
+        }
+    }
+
+    /**
+     * Rename a completed temp file/directory to its final output path.
+     * Uses File.renameTo first (fast, same-filesystem), then falls back to
+     * Files.move with REPLACE_EXISTING if renameTo fails.
+     *
+     * @param tempPath Path to the temp file or directory
+     * @param finalPath Desired final path
+     * @throws Exception if the rename fails
+     */
+    private static void renameTempToFinal(String tempPath, String finalPath) throws Exception {
+        File tempFile = new File(tempPath);
+        File finalFile = new File(finalPath);
+        if (!tempFile.exists()) {
+            throw new IllegalStateException("Temp output does not exist after write: " + tempPath);
+        }
+        // Safety: getUniqueFilePath should prevent collisions, but be defensive
+        if (finalFile.exists()) {
+            logger.warn("Final output already exists (unexpected), removing before rename: {}", finalPath);
+            deleteRecursively(finalFile);
+        }
+        boolean renamed = tempFile.renameTo(finalFile);
+        if (!renamed) {
+            // Fallback: try Files.move (handles cross-filesystem edge cases)
+            Files.move(tempFile.toPath(), finalFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        }
+        logger.debug("Renamed temp output to final: {}", finalPath);
+    }
+
+    /**
+     * Clean up a temp file on write failure. Logs a warning if the file existed.
+     *
+     * @param tempPath Path to the temp file to delete
+     */
+    private static void cleanupTempFile(String tempPath) {
+        try {
+            File tempFile = new File(tempPath);
+            if (tempFile.exists()) {
+                if (tempFile.delete()) {
+                    logger.warn("Deleted incomplete temp file: {}", tempPath);
+                } else {
+                    logger.error("Failed to delete incomplete temp file: {}", tempPath);
+                }
+            }
+        } catch (Exception cleanupEx) {
+            logger.error("Error cleaning up temp file: {}", tempPath, cleanupEx);
+        }
+    }
+
+    /**
+     * Clean up a temp path (file or directory tree) on write failure.
+     * For ZARR output this may be a directory tree that needs recursive deletion.
+     *
+     * @param tempPath Path to the temp file or directory to delete
+     */
+    private static void cleanupTempPath(String tempPath) {
+        try {
+            File tempFile = new File(tempPath);
+            if (tempFile.exists()) {
+                deleteRecursively(tempFile);
+                logger.warn("Deleted incomplete temp output: {}", tempPath);
+            }
+        } catch (Exception cleanupEx) {
+            logger.error("Error cleaning up temp output: {}", tempPath, cleanupEx);
+        }
+    }
+
+    /**
+     * Recursively delete a file or directory tree.
+     *
+     * @param file File or directory to delete
+     */
+    private static void deleteRecursively(File file) {
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children != null) {
+                for (File child : children) {
+                    deleteRecursively(child);
+                }
+            }
+        }
+        if (!file.delete()) {
+            logger.warn("Could not delete: {}", file.getAbsolutePath());
         }
     }
 
