@@ -50,11 +50,12 @@ Developers of qpsc may want to also run the following to enable working with qps
 ```
 
 
-## Usage
+<details>
+<summary><h2>Usage</h2></summary>
 
 ### Accessing the Extension
 1. Open QuPath
-2. Navigate to **Extensions** → **Basic Stitching** → **Stitch Images**
+2. Navigate to **Extensions** -> **Basic Stitching** -> **Stitch Images**
 3. The stitching dialog will open
 
 ### Stitching Strategies
@@ -94,15 +95,15 @@ tile_004.tif; ; (1024.0, 1024.0)
 When the matching string matches multiple subdirectories, each subdirectory is stitched independently:
 ```
 input_folder/bounds/
-├── -5.0/
-│   ├── TileConfiguration.txt
-│   └── [tile files]
-├── 0.0/
-│   ├── TileConfiguration.txt
-│   └── [tile files]
-└── 5.0/
-    ├── TileConfiguration.txt
-    └── [tile files]
++-- -5.0/
+|   +-- TileConfiguration.txt
+|   +-- [tile files]
++-- 0.0/
+|   +-- TileConfiguration.txt
+|   +-- [tile files]
++-- 5.0/
+    +-- TileConfiguration.txt
+    +-- [tile files]
 ```
 With matching string "." results in:
 - `-5.0.ome.tif`
@@ -121,12 +122,12 @@ For Akoya/PerkinElmer Vectra imaging systems:
 |-----------|-------------|---------|
 | **Input Folder** | Root directory containing image subdirectories | Required |
 | **Output Folder** | Directory for stitched output files | Required |
-| **Pixel Size (μm)** | Physical size of each pixel in microns | 0.5 |
+| **Pixel Size (um)** | Physical size of each pixel in microns | 0.5 |
 | **Base Downsample** | Downsampling factor for output | 1.0 |
 | **Compression** | Compression algorithm (TIFF: LZW, JPEG; ZARR: zstd, lz4) | LZW |
 | **Output Format** | OME-TIFF (single file) or OME-ZARR (directory) | OME-TIFF |
 | **Matching String** | Filter subdirectories by name pattern. Use "." to process all subdirectories separately | "" (all) |
-| **Z-Spacing (μm)** | Z-axis spacing for 3D datasets | 1.0 |
+| **Z-Spacing (um)** | Z-axis spacing for 3D datasets | 1.0 |
 
 ### Output Format Options
 
@@ -185,10 +186,10 @@ StitchingConfig config = new StitchingConfig(
     "/path/to/input/folder",                      // Input path
     "/path/to/output/folder",                     // Output path
     "LZW",                                        // Compression
-    0.5,                                          // Pixel size (μm)
+    0.5,                                          // Pixel size (um)
     1.0,                                          // Base downsample
     "slide",                                      // Matching string
-    1.0,                                          // Z-spacing (μm)
+    1.0,                                          // Z-spacing (um)
     StitchingConfig.OutputFormat.OME_TIFF         // Output format
 );
 String result = StitchingWorkflow.run(config);
@@ -202,7 +203,7 @@ StitchingConfig config = new StitchingConfig(
     "/data/microscopy/slides",
     "/data/output/stitched",
     "zstd",                                       // ZARR compression (fast + good ratio)
-    0.25,                                         // 0.25 μm/pixel
+    0.25,                                         // 0.25 um/pixel
     1.0,                                          // Base downsample
     ".",                                          // Process all subdirectories
     1.0,                                          // Z-spacing
@@ -219,7 +220,7 @@ StitchingConfig config = new StitchingConfig(
     "/data/microscopy/slides",
     "/data/output/stitched",
     "JPEG",                                       // TIFF compression
-    0.25,                                         // 0.25 μm/pixel
+    0.25,                                         // 0.25 um/pixel
     4.0,                                          // 4x downsample
     "H&E",                                        // Process only H&E slides
     1.0,
@@ -234,34 +235,37 @@ String result = StitchingWorkflow.run(config);
 For workflows with multiple rotation angles stored in separate folders:
 ```
 bounds/
-├── -5.0/
-│   ├── TileConfiguration.txt
-│   └── [9 tiles]
-├── 0.0/
-│   ├── TileConfiguration.txt
-│   └── [9 tiles]
-└── 5.0/
-    ├── TileConfiguration.txt
-    └── [9 tiles]
++-- -5.0/
+|   +-- TileConfiguration.txt
+|   +-- [9 tiles]
++-- 0.0/
+|   +-- TileConfiguration.txt
+|   +-- [9 tiles]
++-- 5.0/
+    +-- TileConfiguration.txt
+    +-- [9 tiles]
 ```
 Using matching string "." will create three separate stitched images, one for each angle.
 
-## Directory Structure
+</details>
+
+<details>
+<summary><h2>Directory Structure</h2></summary>
 
 ### Input Directory Structure
 ```
 input_folder/
-├── slide001_tumor/
-│   ├── tile_001[0,0].tif
-│   ├── tile_002[1000,0].tif
-│   └── tile_003[0,1000].tif
-├── slide002_normal/
-│   ├── tile_001[0,0].tif
-│   └── tile_002[1000,0].tif
-└── slide003_control/
-    └── TileConfiguration.txt
-    ├── image_001.tif
-    └── image_002.tif
++-- slide001_tumor/
+|   +-- tile_001[0,0].tif
+|   +-- tile_002[1000,0].tif
+|   +-- tile_003[0,1000].tif
++-- slide002_normal/
+|   +-- tile_001[0,0].tif
+|   +-- tile_002[1000,0].tif
++-- slide003_control/
+    +-- TileConfiguration.txt
+    +-- image_001.tif
+    +-- image_002.tif
 ```
 
 ### Output Structure
@@ -271,20 +275,23 @@ Output files are named based on the subdirectory being processed:
 
 ```
 output_folder/
-├── slide001_tumor.ome.tif
-├── slide002_normal.ome.tif
-└── slide003_control.ome.tif
++-- slide001_tumor.ome.tif
++-- slide002_normal.ome.tif
++-- slide003_control.ome.tif
 ```
 
 When processing subdirectories:
 ```
 output_folder/
-├── -5.0.ome.tif
-├── 0.0.ome.tif
-└── 5.0.ome.tif
++-- -5.0.ome.tif
++-- 0.0.ome.tif
++-- 5.0.ome.tif
 ```
 
-## Performance Optimization
+</details>
+
+<details>
+<summary><h2>Performance Optimization</h2></summary>
 
 ### Memory Management
 - **Large Datasets**: Use higher downsample values (2x, 4x) for initial processing
@@ -303,7 +310,10 @@ output_folder/
 - **Large Tiles** (> 8192px): Slower processing, less overhead
 - **Optimal Range**: 2048-4096 pixels per tile dimension
 
-## Troubleshooting
+</details>
+
+<details>
+<summary><h2>Troubleshooting</h2></summary>
 
 ### Common Issues
 
@@ -345,7 +355,10 @@ logger.qupath.ext.basicstitching=DEBUG
 3. **Directory Matching**: Confirm subdirectories match the filtering criteria
 4. **Output Verification**: Open resulting OME-TIFF in QuPath to verify stitching quality
 
-## API Documentation
+</details>
+
+<details>
+<summary><h2>API Documentation</h2></summary>
 
 ### Core Classes
 
@@ -375,7 +388,10 @@ public interface StitchingStrategy {
 }
 ```
 
-## Contributing
+</details>
+
+<details>
+<summary><h2>Contributing</h2></summary>
 
 We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
 
@@ -393,6 +409,8 @@ cd qupath-basic-stitching
 - Include unit tests for new functionality
 - Update documentation for API changes
 
+</details>
+
 ## License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
@@ -403,11 +421,16 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 - **Discussions**: Join the conversation in [GitHub Discussions](../../discussions)
 - **QuPath Forum**: Get help from the community at [image.sc](https://forum.image.sc/tag/qupath)
 
+## Acknowledgments
+
+The OME-ZARR writing approach in this extension was informed by Leo Leplat's ZARR implementation in QuPath core (`qupath.lib.images.writers.ome.zarr`) and the [qupath-extension-stitching](https://github.com/qupath/qupath-extension-stitching).
+
 ## AI-Assisted Development
 
 This project was developed with assistance from [Claude](https://claude.ai) (Anthropic). Claude was used as a development tool for code generation, architecture design, debugging, and documentation throughout the project.
 
-## Changelog
+<details>
+<summary><h2>Changelog</h2></summary>
 
 ### Version 0.2.0 (Direct Stitcher + ZARR Support)
 - **NEW**: Memory-efficient direct tile stitcher for large acquisitions (500+ tiles)
@@ -435,6 +458,8 @@ This project was developed with assistance from [Claude](https://claude.ai) (Ant
 - Multi-subdirectory batch processing with separate outputs
 - Comprehensive error handling and logging
 - Performance optimizations for large datasets
+
+</details>
 
 ---
 
