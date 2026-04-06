@@ -120,9 +120,10 @@ public class PyramidImageWriter {
 
             int imgW = server.getWidth();
             int imgH = server.getHeight();
-            int estTiles = (int) Math.ceil((double) imgW / 512) * (int) Math.ceil((double) imgH / 512);
-            logger.info("Writing pyramid OME-TIFF: {} (compression={}, tileSize=512, downsample={})",
-                    finalOutput, comp, baseDownsample);
+            int tileSize = 512;
+            int estTiles = (int) Math.ceil((double) imgW / tileSize) * (int) Math.ceil((double) imgH / tileSize);
+            logger.info("Writing pyramid OME-TIFF: {} (compression={}, tileSize={}, downsample={})",
+                    finalOutput, comp, tileSize, baseDownsample);
             logger.info("Image dimensions: {}x{} pixels, ~{} tiles at level 0, server type: {}",
                     imgW, imgH, estTiles, server.getServerType());
             logger.debug("Using temp file during write: {}", tempOutput);
@@ -132,12 +133,23 @@ public class PyramidImageWriter {
 
             long t0 = System.currentTimeMillis();
 
+            // Compute safe number of pyramid levels: stop before any level is
+            // smaller than the tile size. Each level halves the dimensions.
+            // J2K compression produces corrupt codestreams for sub-tile levels.
+            int minDim = Math.min(imgW, imgH);
+            int maxLevels = 0;
+            while ((minDim >> (maxLevels + 1)) >= tileSize && maxLevels < 8) {
+                maxLevels++;
+            }
+            logger.info("Pyramid levels: {} (min dimension {} / tile size {})",
+                    maxLevels, minDim, tileSize);
+
             new OMEPyramidWriter.Builder(pyramidServer)
-                    .tileSize(512)
+                    .tileSize(tileSize)
                     .channelsInterleaved()
                     .parallelize(true)
                     .compression(comp)
-                    .scaledDownsampling(baseDownsample, 4)
+                    .scaledDownsampling(baseDownsample, maxLevels)
                     .build()
                     .writeSeries(tempOutput);
 
