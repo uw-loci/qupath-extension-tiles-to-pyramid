@@ -13,6 +13,21 @@ import java.util.*;
  */
 public class TileConfigurationTxtStrategy implements StitchingStrategy {
     private static final Logger logger = LoggerFactory.getLogger(TileConfigurationTxtStrategy.class);
+
+    /**
+     * Optional caller-set flag: when {@code true}, the Y coordinate read from
+     * TileConfiguration.txt is negated before converting to pixel space. This
+     * is needed for microscopes whose stage Y convention is inverted relative
+     * to the standard assumption (stage Y+ = pixel Y down). CAMM/PPM leave
+     * this at {@code false} and the behaviour is unchanged.
+     *
+     * <p>Set this immediately before invoking the stitching workflow, and
+     * reset it to {@code false} afterwards. It is intentionally static
+     * because the {@link StitchingStrategy} interface does not carry a
+     * configuration object through to the strategy implementations and
+     * QuPath-side stitching calls are effectively serial.
+     */
+    public static volatile boolean flipStitchingY = false;
     /**
      * Prepares tile mappings for image stitching based on coordinates in TileConfiguration.txt files.
      *
@@ -160,6 +175,10 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
      */
     private static Map<String, Position> parseTileConfig(Path configPath, double pixelSizeInMicrons, double baseDownsample) {
         Map<String, Position> map = new HashMap<>();
+        boolean flipY = flipStitchingY;
+        if (flipY) {
+            logger.info("flipStitchingY=true: negating Y coordinates for stage-inverted scope");
+        }
         try {
             List<String> lines = Files.readAllLines(configPath);
             for (String line : lines) {
@@ -169,8 +188,13 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
                     String imageName = parts[0].trim();
                     String[] coord = parts[2].replaceAll("[(){}]", "").split(",");
                     if (coord.length >= 2) {
-                        double x = Double.parseDouble(coord[0].trim()) / (pixelSizeInMicrons * baseDownsample);
-                        double y = Double.parseDouble(coord[1].trim()) / (pixelSizeInMicrons * baseDownsample);
+                        double rawX = Double.parseDouble(coord[0].trim());
+                        double rawY = Double.parseDouble(coord[1].trim());
+                        if (flipY) {
+                            rawY = -rawY;
+                        }
+                        double x = rawX / (pixelSizeInMicrons * baseDownsample);
+                        double y = rawY / (pixelSizeInMicrons * baseDownsample);
                         map.put(imageName, new Position(x, y));
                     }
                 }
