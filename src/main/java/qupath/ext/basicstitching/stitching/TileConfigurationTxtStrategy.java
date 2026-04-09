@@ -28,6 +28,9 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
      * QuPath-side stitching calls are effectively serial.
      */
     public static volatile boolean flipStitchingY = false;
+
+    /** Mirror of {@link #flipStitchingY} for the X axis. */
+    public static volatile boolean flipStitchingX = false;
     /**
      * Prepares tile mappings for image stitching based on coordinates in TileConfiguration.txt files.
      *
@@ -176,8 +179,12 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
     private static Map<String, Position> parseTileConfig(Path configPath, double pixelSizeInMicrons, double baseDownsample) {
         Map<String, Position> map = new HashMap<>();
         boolean flipY = flipStitchingY;
+        boolean flipX = flipStitchingX;
         if (flipY) {
             logger.info("flipStitchingY=true: negating Y coordinates for stage-inverted scope");
+        }
+        if (flipX) {
+            logger.info("flipStitchingX=true: negating X coordinates for stage-inverted scope");
         }
         try {
             List<String> lines = Files.readAllLines(configPath);
@@ -190,6 +197,9 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
                     if (coord.length >= 2) {
                         double rawX = Double.parseDouble(coord[0].trim());
                         double rawY = Double.parseDouble(coord[1].trim());
+                        if (flipX) {
+                            rawX = -rawX;
+                        }
                         if (flipY) {
                             rawY = -rawY;
                         }
