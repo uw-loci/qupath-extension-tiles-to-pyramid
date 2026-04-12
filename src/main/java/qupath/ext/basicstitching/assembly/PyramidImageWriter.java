@@ -17,6 +17,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.concurrent.Semaphore;
 import java.util.function.Consumer;
 
 /**
@@ -26,6 +27,14 @@ import java.util.function.Consumer;
  */
 public class PyramidImageWriter {
     private static final Logger logger = LoggerFactory.getLogger(PyramidImageWriter.class);
+
+    /**
+     * Global gate: only one OME-TIFF pyramid write at a time.
+     * BioFormats' TiffWriter has internal state (initialized array, J2K codec)
+     * that is not safe for concurrent use across multiple writer instances.
+     * Concurrent writes cause NPE at high pyramid levels (downsample=64).
+     */
+    private static final Semaphore TIFF_WRITE_GATE = new Semaphore(1);
 
     /**
      * Write the server using the specified output format.
@@ -115,6 +124,18 @@ public class PyramidImageWriter {
         // The temp file must end in .ome.tif for Bio-Formats to recognize the format.
         String tempOutput = finalOutput.replace(".ome.tif", ".writing.ome.tif");
 
+        // Serialize OME-TIFF writes: BioFormats' TiffWriter NPEs when multiple
+        // writers are active concurrently (corrupts pyramid level 3+).
+        try {
+            TIFF_WRITE_GATE.acquire();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.error("Interrupted waiting for TIFF write gate");
+            return null;
+        }
+
+        logger.info("Acquired TIFF write gate for: {}", filename);
+
         try {
             OMEPyramidWriter.CompressionType comp = UtilityFunctions.getCompressionType(compressionType);
 
@@ -165,6 +186,9 @@ public class PyramidImageWriter {
             logger.error("Failed to write pyramid OME-TIFF", e);
             cleanupTempFile(tempOutput);
             return null;
+        } finally {
+            TIFF_WRITE_GATE.release();
+            logger.info("Released TIFF write gate for: {}", filename);
         }
     }
 
