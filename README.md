@@ -18,6 +18,7 @@ A basic image stitching extension for QuPath that combines multiple image tiles 
 - **Memory Efficient**: Direct tile stitcher for 500+ tiles uses ~40 MB steady state (vs 2-4+ GB)
 - **Parallel Writing**: ZARR format utilizes multi-threaded tile writing for faster output
 - **Large Acquisition Support**: Handles 1600+ tiles without OOM via spatial indexing and bounded reader pool
+- **Multichannel Merge**: Combine N same-shape single-channel pyramids (from per-channel stitching) into one multichannel OME-TIFF via `ChannelMerger` / `ChannelMergeImageServer`
 
 ## Requirements
 
