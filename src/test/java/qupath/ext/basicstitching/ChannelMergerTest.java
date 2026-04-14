@@ -49,23 +49,8 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 public class ChannelMergerTest {
 
-    // Must be large enough that PyramidImageWriter's maxLevels computation
-    // yields >= 2. PyramidImageWriter.writeOMETIFF passes `maxLevels` as the
-    // second arg to OMEPyramidWriter.Builder.scaledDownsampling(baseDownsample,
-    // scaleFactor) -- but that method's second arg is a double *scale factor*,
-    // not a level count. When maxLevels=1 it degenerates to scaleFactor=1.0
-    // ("each level is identical to the previous"), which the builder greedily
-    // allocates Doubles for until the JVM OOMs. This is a latent bug in
-    // PyramidImageWriter that production doesn't hit because real acquisitions
-    // have large enough images to cap at maxLevels=6-8.
-    //
-    // 2048x2048 gives maxLevels=2 (~coarse 2x/4x pyramid), enough to exercise
-    // the multichannel round trip without triggering the degenerate case.
-    //
-    // Tracked for fix: `PyramidImageWriter.writeOMETIFF` -- scaledDownsampling
-    // signature misuse, see TODO_LIST.md under qupath-extension-tiles-to-pyramid.
-    private static final int TEST_WIDTH = 2048;
-    private static final int TEST_HEIGHT = 2048;
+    private static final int TEST_WIDTH = 256;
+    private static final int TEST_HEIGHT = 256;
     private static final int[] CHANNEL_VALUES = {100, 200, 300, 400};
     private static final String[] CHANNEL_NAMES = {"DAPI", "FITC", "TRITC", "Cy5"};
 

@@ -154,17 +154,10 @@ public class PyramidImageWriter {
 
             long t0 = System.currentTimeMillis();
 
-            // Compute safe number of pyramid levels: stop before any level is
-            // smaller than the tile size. Each level halves the dimensions.
-            // J2K compression produces corrupt codestreams for sub-tile levels.
-            int minDim = Math.min(imgW, imgH);
-            int maxLevels = 0;
-            while ((minDim >> (maxLevels + 1)) >= tileSize && maxLevels < 8) {
-                maxLevels++;
-            }
-            logger.info("Pyramid levels: {} (min dimension {} / tile size {})",
-                    maxLevels, minDim, tileSize);
-
+            // scaledDownsampling(baseDownsample, scaleFactor) wants a multiplicative
+            // scale between successive pyramid levels (2.0 = halving each step).
+            // The builder stops adding levels when the next level would be smaller
+            // than the tile size, so we don't have to cap the count ourselves.
             // channelsInterleaved() packs all channels into a single BIP plane per
             // tile, which is the right representation for RGB brightfield (where
             // the three "channels" are samples-per-pixel in a single chroma stream).
@@ -177,7 +170,7 @@ public class PyramidImageWriter {
                     .tileSize(tileSize)
                     .parallelize(true)
                     .compression(comp)
-                    .scaledDownsampling(baseDownsample, maxLevels);
+                    .scaledDownsampling(baseDownsample, 2.0);
             if (pyramidServer.isRGB()) {
                 builder.channelsInterleaved();
             }
