@@ -165,14 +165,23 @@ public class PyramidImageWriter {
             logger.info("Pyramid levels: {} (min dimension {} / tile size {})",
                     maxLevels, minDim, tileSize);
 
-            new OMEPyramidWriter.Builder(pyramidServer)
+            // channelsInterleaved() packs all channels into a single BIP plane per
+            // tile, which is the right representation for RGB brightfield (where
+            // the three "channels" are samples-per-pixel in a single chroma stream).
+            // For multi-channel non-RGB content (stitched fluorescence, channel-
+            // merged IF), it must NOT be enabled: Bio-Formats will write only the
+            // first channel's data as a single-channel stream under most codecs
+            // (JPEG-2000 especially), so the reader only sees 1 channel even though
+            // the source server reports N. Keep the interleaved path for RGB only.
+            OMEPyramidWriter.Builder builder = new OMEPyramidWriter.Builder(pyramidServer)
                     .tileSize(tileSize)
-                    .channelsInterleaved()
                     .parallelize(true)
                     .compression(comp)
-                    .scaledDownsampling(baseDownsample, maxLevels)
-                    .build()
-                    .writeSeries(tempOutput);
+                    .scaledDownsampling(baseDownsample, maxLevels);
+            if (pyramidServer.isRGB()) {
+                builder.channelsInterleaved();
+            }
+            builder.build().writeSeries(tempOutput);
 
             pyramidServer.close();
 

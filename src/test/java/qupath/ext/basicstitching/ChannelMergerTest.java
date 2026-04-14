@@ -157,6 +157,63 @@ public class ChannelMergerTest {
     }
 
     /**
+     * Regression test for the OWS3 widefield IF bug (2026-04-13): using JPEG-2000
+     * compression with {@code channelsInterleaved()} would silently drop channels
+     * beyond the first, producing a "merged" file that the viewer reported as
+     * 1 channel even though the ChannelMergeImageServer correctly reported N.
+     * This test exercises the EXACT compression production uses and reads back
+     * the pixel values per channel to prove both channels survived the round
+     * trip.
+     */
+    @Test
+    public void testTwoChannelRoundTripWithJ2K() throws Exception {
+        Path tempDir = Files.createTempDirectory("channel-merger-test-j2k-");
+        try {
+            List<String> channelPaths = writeSingleChannelSources(tempDir, 2);
+            String mergedPath = ChannelMerger.merge(
+                    channelPaths,
+                    List.of("DAPI", "FITC"),
+                    tempDir.toString(),
+                    "merged_2ch_j2k",
+                    "J2K",
+                    StitchingConfig.OutputFormat.OME_TIFF);
+            assertNotNull(mergedPath, "2-channel J2K merge should succeed");
+
+            try (ImageServer<BufferedImage> merged = ImageServers.buildServer(Path.of(mergedPath).toUri())) {
+                assertEquals(2, merged.nChannels(),
+                        "J2K merged image should report 2 channels, got " + merged.nChannels());
+                assertEquals("DAPI", merged.getChannel(0).getName());
+                assertEquals("FITC", merged.getChannel(1).getName());
+
+                // Read back a small region and verify both channels carry their
+                // synthesized constant values -- if channel 1 gets lost during
+                // the JPEG-2000 write (the OWS3 bug), sample(8,8,1) would be 0
+                // or the same as channel 0.
+                RegionRequest request = RegionRequest.createInstance(
+                        merged.getPath(), 1.0, 0, 0, 16, 16);
+                BufferedImage tile = merged.readRegion(request);
+                assertNotNull(tile, "J2K merged region read should return a tile");
+                assertEquals(2, tile.getRaster().getNumBands(),
+                        "J2K read tile should have 2 bands");
+
+                WritableRaster raster = tile.getRaster();
+                int ch0 = raster.getSample(8, 8, 0);
+                int ch1 = raster.getSample(8, 8, 1);
+                // J2K is lossy by default -- allow a few counts of tolerance.
+                assertEquals(CHANNEL_VALUES[0], ch0, 5,
+                        String.format("J2K channel 0 ('DAPI') should carry value %d, got %d",
+                                CHANNEL_VALUES[0], ch0));
+                assertEquals(CHANNEL_VALUES[1], ch1, 5,
+                        String.format("J2K channel 1 ('FITC') should carry value %d, got %d -- "
+                                        + "if 0 or matches channel 0, channelsInterleaved() dropped it",
+                                CHANNEL_VALUES[1], ch1));
+            }
+        } finally {
+            deleteRecursively(tempDir);
+        }
+    }
+
+    /**
      * Single-input merge should be rejected (there's nothing to merge). This
      * guards the early-return branch in ChannelMerger so a misconfigured
      * acquisition with one channel selected can't silently produce a
