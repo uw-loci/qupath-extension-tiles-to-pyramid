@@ -149,15 +149,22 @@ public class PyramidImageWriter {
                     imgW, imgH, estTiles, server.getServerType());
             logger.debug("Using temp file during write: {}", tempOutput);
 
-            // Pyramidalize server (in case original was not)
-            ImageServer<BufferedImage> pyramidServer = ImageServers.pyramidalize(server);
+            // Precompute the downsample list so both the pyramidalized source
+            // server AND the OME writer see *identical* levels. If they don't
+            // match, OMEPyramidWriter$OMEPyramidSeries.writeSeries crashes with
+            // AIOOBE at `server.getMetadata().getLevel(level)` when the writer's
+            // level index exceeds the server's level count. ImageServers.pyramidalize
+            // with no args builds levels by multiplying downsamples by 4.0 each
+            // step, while scaledDownsampling(1, 2.0) would have built them by 2.0 --
+            // the mismatch produced ArrayIndexOutOfBoundsException: Index 4 out of
+            // bounds for length 4 on large PPM acquisitions.
+            double[] downsamples = computePyramidDownsamples(imgW, imgH, baseDownsample, tileSize);
+            logger.info("Pyramid levels: {} (downsamples={})", downsamples.length,
+                    java.util.Arrays.toString(downsamples));
+            ImageServer<BufferedImage> pyramidServer = ImageServers.pyramidalize(server, downsamples);
 
             long t0 = System.currentTimeMillis();
 
-            // scaledDownsampling(baseDownsample, scaleFactor) wants a multiplicative
-            // scale between successive pyramid levels (2.0 = halving each step).
-            // The builder stops adding levels when the next level would be smaller
-            // than the tile size, so we don't have to cap the count ourselves.
             // channelsInterleaved() packs all channels into a single BIP plane per
             // tile, which is the right representation for RGB brightfield (where
             // the three "channels" are samples-per-pixel in a single chroma stream).
@@ -170,7 +177,7 @@ public class PyramidImageWriter {
                     .tileSize(tileSize)
                     .parallelize(true)
                     .compression(comp)
-                    .scaledDownsampling(baseDownsample, 2.0);
+                    .downsamples(downsamples);
             if (pyramidServer.isRGB()) {
                 builder.channelsInterleaved();
             }
@@ -192,6 +199,43 @@ public class PyramidImageWriter {
             TIFF_WRITE_GATE.release();
             logger.info("Released TIFF write gate for: {}", filename);
         }
+    }
+
+    /**
+     * Compute the list of downsamples for the pyramid.
+     *
+     * Halves the dimensions each level (scale factor 2.0) and stops once the
+     * next level would be smaller than the tile size in either dimension.
+     * Always contains at least baseDownsample.
+     *
+     * Must be used symmetrically for pyramidalize() and OMEPyramidWriter to
+     * keep their level counts in sync -- the OME writer indexes into the source
+     * server's metadata by writer-level, so any mismatch causes
+     * ArrayIndexOutOfBoundsException in OMEPyramidWriter.writeSeries.
+     */
+    private static double[] computePyramidDownsamples(int imgW, int imgH, double baseDownsample, int tileSize) {
+        java.util.List<Double> levels = new java.util.ArrayList<>();
+        double d = baseDownsample;
+        levels.add(d);
+        while (true) {
+            double next = d * 2.0;
+            int nextW = (int) (imgW / next);
+            int nextH = (int) (imgH / next);
+            if (nextW < tileSize || nextH < tileSize) {
+                break;
+            }
+            levels.add(next);
+            d = next;
+            // Hard safety cap in case of degenerate inputs
+            if (levels.size() >= 16) {
+                break;
+            }
+        }
+        double[] out = new double[levels.size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = levels.get(i);
+        }
+        return out;
     }
 
     /**
