@@ -306,7 +306,6 @@ public class PyramidImageWriter {
 
             OMEZarrWriter writer = builder.build(tempOutput);
             writer.writeImage();
-            writer.close();
 
             pyramidServer.close();
 
