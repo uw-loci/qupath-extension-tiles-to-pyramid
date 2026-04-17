@@ -22,8 +22,8 @@ A basic image stitching extension for QuPath that combines multiple image tiles 
 
 ## Requirements
 
-- **QuPath**: Version 0.6.0 or greater
-- **Java**: Java 11 or higher
+- **QuPath**: Version 0.7.0 or greater
+- **Java**: Java 25 or higher
 - **Memory**: Recommended 8GB+ RAM for large image datasets
 
 ## Installation
