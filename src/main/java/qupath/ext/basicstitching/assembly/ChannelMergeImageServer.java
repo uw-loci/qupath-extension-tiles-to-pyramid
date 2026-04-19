@@ -52,6 +52,20 @@ public class ChannelMergeImageServer implements ImageServer<BufferedImage> {
      *                       source server's own channel name. Pass {@code null} to use source names verbatim
      */
     public ChannelMergeImageServer(List<ImageServer<BufferedImage>> sources, List<String> channelNames) {
+        this(sources, channelNames, null);
+    }
+
+    /**
+     * @param sources        list of image servers to merge, in output channel order. Must be non-empty
+     * @param channelNames   optional list of display names, one per logical output channel. When shorter
+     *                       than the total summed channel count, any missing entries fall back to the
+     *                       source server's own channel name. Pass {@code null} to use source names verbatim
+     * @param channelColors  optional list of packed ARGB colors, one per logical output channel. When
+     *                       {@code null} or shorter than the channel count, missing entries fall back to
+     *                       the source server's channel color
+     */
+    public ChannelMergeImageServer(List<ImageServer<BufferedImage>> sources, List<String> channelNames,
+                                   List<Integer> channelColors) {
         if (sources == null || sources.isEmpty()) {
             throw new IllegalArgumentException("ChannelMergeImageServer requires at least one source");
         }
@@ -72,7 +86,11 @@ public class ChannelMergeImageServer implements ImageServer<BufferedImage> {
                 } else {
                     name = srcChannel.getName();
                 }
-                merged.add(ImageChannel.getInstance(name, srcChannel.getColor()));
+                Integer color = (channelColors != null && overrideIdx < channelColors.size()
+                        && channelColors.get(overrideIdx) != null)
+                        ? channelColors.get(overrideIdx)
+                        : srcChannel.getColor();
+                merged.add(ImageChannel.getInstance(name, color));
                 overrideIdx++;
             }
         }

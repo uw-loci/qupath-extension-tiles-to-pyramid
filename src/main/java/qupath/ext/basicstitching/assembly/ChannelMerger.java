@@ -56,6 +56,30 @@ public class ChannelMerger {
             String outputFilename,
             String compression,
             StitchingConfig.OutputFormat outputFormat) {
+        return merge(inputPaths, channelNames, null, outputDirectory, outputFilename, compression, outputFormat);
+    }
+
+    /**
+     * Merge N single-channel pyramids into one multichannel pyramid with explicit channel colors.
+     *
+     * @param inputPaths      ordered list of per-channel pyramid files (OME-TIFF); must be non-empty
+     * @param channelNames    display names for each channel in output order (same length as inputPaths).
+     *                        Pass {@code null} to use the source files' own channel names
+     * @param channelColors   packed ARGB colors for each channel, or {@code null} for source defaults
+     * @param outputDirectory directory to write the merged output into
+     * @param outputFilename  filename stem (no extension -- {@code .ome.tif} is appended)
+     * @param compression     compression type (e.g. {@code "LZW"})
+     * @param outputFormat    output format (OME-TIFF or OME-ZARR)
+     * @return absolute path to the merged output, or {@code null} on failure
+     */
+    public static String merge(
+            List<String> inputPaths,
+            List<String> channelNames,
+            List<Integer> channelColors,
+            String outputDirectory,
+            String outputFilename,
+            String compression,
+            StitchingConfig.OutputFormat outputFormat) {
         if (inputPaths == null || inputPaths.isEmpty()) {
             logger.warn("ChannelMerger.merge called with no input paths");
             return null;
@@ -104,7 +128,7 @@ public class ChannelMerger {
                 return null;
             }
 
-            ChannelMergeImageServer merged = new ChannelMergeImageServer(sources, channelNames);
+            ChannelMergeImageServer merged = new ChannelMergeImageServer(sources, channelNames, channelColors);
             logger.info(
                     "ChannelMerger: merging {} sources into {} (total channels: {})",
                     sources.size(),
