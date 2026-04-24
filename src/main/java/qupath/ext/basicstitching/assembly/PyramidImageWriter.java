@@ -70,14 +70,13 @@ public class PyramidImageWriter {
                                String compressionType, double baseDownsample,
                                StitchingConfig.OutputFormat outputFormat,
                                Consumer<Double> progressCallback) {
-        switch (outputFormat) {
-            case OME_TIFF:
-                return writeOMETIFF(server, outputPath, filename, compressionType, baseDownsample);
-            case OME_ZARR:
-                return writeOMEZARR(server, outputPath, filename, compressionType, baseDownsample, progressCallback);
-            default:
-                logger.error("Unsupported output format: {}", outputFormat);
-                return null;
+        if (outputFormat.stitchAsZarr()) {
+            return writeOMEZARR(server, outputPath, filename, compressionType, baseDownsample, progressCallback);
+        } else if (outputFormat == StitchingConfig.OutputFormat.OME_TIFF) {
+            return writeOMETIFF(server, outputPath, filename, compressionType, baseDownsample);
+        } else {
+            logger.error("Unsupported output format: {}", outputFormat);
+            return null;
         }
     }
 
