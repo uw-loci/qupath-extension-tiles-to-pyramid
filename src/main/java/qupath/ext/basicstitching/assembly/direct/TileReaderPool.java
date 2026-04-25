@@ -43,8 +43,16 @@ public class TileReaderPool implements AutoCloseable {
         }
 
         void close() {
-            try { reader.dispose(); } catch (Exception e) { /* ignore */ }
-            try { stream.close(); } catch (Exception e) { /* ignore */ }
+            try {
+                reader.dispose();
+            } catch (RuntimeException e) {
+                logger.debug("ImageReader.dispose() failed: {}", e.getMessage());
+            }
+            try {
+                stream.close();
+            } catch (IOException | RuntimeException e) {
+                logger.debug("ImageInputStream.close() failed: {}", e.getMessage());
+            }
         }
     }
 

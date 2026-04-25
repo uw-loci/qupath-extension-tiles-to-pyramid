@@ -6,6 +6,8 @@ plugins {
     // QuPath Gradle extension convention plugin
     id("qupath-conventions")
     id("maven-publish")
+    // Static bug detection
+    id("com.github.spotbugs") version "6.5.0"
     // Note: Platform detection (osdetector) is already provided by qupath-conventions
 }
 
@@ -68,4 +70,17 @@ dependencies {
     testImplementation(libs.junit)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
+}
+
+// ---------------------------------------------------------------------------
+// SpotBugs -- static bug detection (gates the build)
+// ---------------------------------------------------------------------------
+spotbugs {
+    effort.set(com.github.spotbugs.snom.Effort.MAX)
+    reportLevel.set(com.github.spotbugs.snom.Confidence.HIGH)
+    excludeFilter.set(file("config/spotbugs/exclude.xml"))
+}
+
+tasks.withType<com.github.spotbugs.snom.SpotBugsTask>().configureEach {
+    reports.create("html") { required.set(true) }
 }
