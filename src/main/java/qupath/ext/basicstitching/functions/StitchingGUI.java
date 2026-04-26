@@ -264,6 +264,12 @@ public class StitchingGUI {
         stitchingGridBox.setValue(QPPreferences.getStitchingMethodSaved());
         stitchingGridBox.setOnAction(e -> updateComponentsBasedOnSelection(pane));
 
+        Tooltip stitchingTooltip = new Tooltip(
+                "Method used to determine tile positions for stitching."
+        );
+        stitchingGridLabel.setTooltip(stitchingTooltip);
+        stitchingGridBox.setTooltip(stitchingTooltip);
+
         addToGrid(pane, stitchingGridLabel, stitchingGridBox);
     }
 
@@ -316,6 +322,12 @@ public class StitchingGUI {
             }
         });
 
+        Tooltip folderTooltip = new Tooltip(
+                "Root folder containing the tile images to stitch."
+        );
+        folderLabel.setTooltip(folderTooltip);
+        folderField.setTooltip(folderTooltip);
+
         addToGrid(pane, folderLabel, folderField);
 
         Integer rowIndex = guiElementPositions.get(folderLabel);
@@ -367,6 +379,12 @@ public class StitchingGUI {
      * Adds pixel size input components to the specified GridPane.
      */
     private static void addPixelSizeComponents(GridPane pane) {
+        Tooltip pixelSizeTooltip = new Tooltip(
+                "Pixel size in microns for the tile images."
+        );
+        pixelSizeLabel.setTooltip(pixelSizeTooltip);
+        pixelSizeField.setTooltip(pixelSizeTooltip);
+
         addToGrid(pane, pixelSizeLabel, pixelSizeField);
     }
 
@@ -387,6 +405,12 @@ public class StitchingGUI {
      * Adds matching string input components to the specified GridPane.
      */
     private static void addMatchStringComponents(GridPane pane) {
+        Tooltip matchStringTooltip = new Tooltip(
+                "Only stitch sub-folders whose names contain this text."
+        );
+        matchStringLabel.setTooltip(matchStringTooltip);
+        matchStringField.setTooltip(matchStringTooltip);
+
         addToGrid(pane, matchStringLabel, matchStringField);
     }
 
@@ -463,6 +487,18 @@ public class StitchingGUI {
         }
 
         // Add fudge factor fields
+        Tooltip xFudgeTooltip = new Tooltip(
+                "X-axis scale factor to adjust for gaps between tiles (typically slightly less than 1.0)."
+        );
+        xFudgeLabel.setTooltip(xFudgeTooltip);
+        xFudgeField.setTooltip(xFudgeTooltip);
+
+        Tooltip yFudgeTooltip = new Tooltip(
+                "Y-axis scale factor to adjust for gaps between tiles (typically slightly less than 1.0)."
+        );
+        yFudgeLabel.setTooltip(yFudgeTooltip);
+        yFudgeField.setTooltip(yFudgeTooltip);
+
         addToGrid(pane, xFudgeLabel, xFudgeField);
         addToGrid(pane, yFudgeLabel, yFudgeField);
 
