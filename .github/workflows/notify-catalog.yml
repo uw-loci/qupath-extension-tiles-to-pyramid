@@ -32,24 +32,26 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ inputs.tag }}"
-            if [ -z "$TAG" ]; then
-              TAG=$(gh release view --repo "${{ github.repository }}" --json tagName --jq '.tagName')
-            fi
-            ASSETS_JSON=$(gh release view "$TAG" --repo "${{ github.repository }}" --json assets --jq '.assets')
-          else
+          # Pick the tag from the dispatch input, falling back to the
+          # release-event payload, falling back to the latest release.
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ]; then
             TAG="${{ github.event.release.tag_name }}"
-            ASSETS_JSON='${{ toJSON(github.event.release.assets) }}'
           fi
-          # Prefer *-all.jar (shadow jar, the standard QuPath extension asset).
-          # Fall back to any *.jar so repos that don't yet ship a shadow jar
-          # still work; the catalog-side bump_catalog.py just stores whatever
-          # URL we send, so consistency with the existing main_url is more
-          # important than the suffix.
-          ASSET_URL=$(echo "$ASSETS_JSON" | jq -r '
-            ([.[] | select(.name | endswith("-all.jar"))][0]?.browser_download_url
-             // [.[] | select(.name | endswith(".jar"))][0]?.browser_download_url
+          if [ -z "$TAG" ]; then
+            TAG=$(gh release view --repo "${{ github.repository }}" --json tagName --jq '.tagName')
+          fi
+          # Resolve the asset URL through `gh release view` for both code
+          # paths so we use a single field naming. The webhook payload's
+          # `browser_download_url` is renamed to `url` by the gh CLI; using
+          # gh exclusively avoids the mismatch.
+          # Prefer *-all.jar (shadow jar, the standard QuPath extension
+          # asset). Fall back to any *.jar so repos that don't yet ship a
+          # shadow jar still work (the catalog-side bump_catalog.py just
+          # stores whatever URL we send).
+          ASSET_URL=$(gh release view "$TAG" --repo "${{ github.repository }}" --json assets --jq '
+            ([.assets[] | select(.name | endswith("-all.jar"))][0].url
+             // [.assets[] | select(.name | endswith(".jar"))][0].url
              // empty)')
           if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then
             echo "::error::No .jar asset found on release $TAG"
