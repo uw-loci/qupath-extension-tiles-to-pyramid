@@ -418,9 +418,9 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 ## Support
 
-- **Issues**: Report bugs and feature requests via [GitHub Issues](../../issues)
-- **Discussions**: Join the conversation in [GitHub Discussions](../../discussions)
-- **QuPath Forum**: Get help from the community at [image.sc](https://forum.image.sc/tag/qupath)
+- **General support and feature requests**: post on the [image.sc forum](https://forum.image.sc/) with the `#qupath` tag and mention `@Mike_Nelson` to flag the topic for my attention
+- **Bug reports**: file via [GitHub Issues](../../issues)
+- **Discussions**: [GitHub Discussions](../../discussions)
 
 ## Acknowledgments
 
