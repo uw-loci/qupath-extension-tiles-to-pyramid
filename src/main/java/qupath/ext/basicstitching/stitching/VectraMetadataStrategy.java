@@ -1,12 +1,11 @@
 package qupath.ext.basicstitching.stitching;
 
+import java.nio.file.*;
+import java.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.basicstitching.utilities.UtilityFunctions;
 import qupath.lib.regions.ImageRegion;
-import java.io.File;
-import java.nio.file.*;
-import java.util.*;
 
 /**
  * Stitching strategy for Vectra multiplex TIFFs using metadata for position.
@@ -30,8 +29,8 @@ public class VectraMetadataStrategy implements StitchingStrategy {
     }
 
     @Override
-    public List<TileMapping> prepareStitching(String folderPath, double pixelSizeInMicrons,
-                                              double baseDownsample, String matchingString) {
+    public List<TileMapping> prepareStitching(
+            String folderPath, double pixelSizeInMicrons, double baseDownsample, String matchingString) {
         logger.info("Preparing stitching using Vectra metadata strategy for folder: {}", folderPath);
         logger.info("Using fudge factors - X: {}, Y: {}", xFudgeFactor, yFudgeFactor);
         List<TileMapping> mappings = new ArrayList<>();
@@ -48,13 +47,14 @@ public class VectraMetadataStrategy implements StitchingStrategy {
                                     tifPath.toFile(), xFudgeFactor, yFudgeFactor);
                             if (info != null) {
                                 // If info.xPx/yPx are already in pixels, no scaling by pixelSizeInMicrons needed
-                                ImageRegion region = ImageRegion.createInstance(
-                                        info.xPx, info.yPx, info.width, info.height, 0, 0
-                                );
+                                ImageRegion region =
+                                        ImageRegion.createInstance(info.xPx, info.yPx, info.width, info.height, 0, 0);
                                 mappings.add(new TileMapping(
-                                        tifPath.toFile(), region, path.getFileName().toString()
-                                ));
-                                logger.debug("Added mapping for Vectra file {} at ({}, {})", filename, info.xPx, info.yPx);
+                                        tifPath.toFile(),
+                                        region,
+                                        path.getFileName().toString()));
+                                logger.debug(
+                                        "Added mapping for Vectra file {} at ({}, {})", filename, info.xPx, info.yPx);
                             } else {
                                 logger.warn("Failed to extract Vectra metadata for {}", filename);
                             }

@@ -1,21 +1,17 @@
 package qupath.ext.basicstitching.assembly.direct;
 
 import com.bc.zarr.Compressor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.ext.basicstitching.assembly.PyramidImageWriter;
-import qupath.ext.basicstitching.config.StitchingConfig;
-import qupath.ext.basicstitching.stitching.TileMapping;
-import qupath.ext.basicstitching.utilities.UtilityFunctions;
-import qupath.lib.images.servers.ImageServer;
-import qupath.lib.images.servers.ImageServers;
-
 import java.awt.image.BufferedImage;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.function.Consumer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.ext.basicstitching.assembly.PyramidImageWriter;
+import qupath.ext.basicstitching.config.StitchingConfig;
+import qupath.ext.basicstitching.stitching.TileMapping;
 
 /**
  * Memory-efficient stitcher for large tile counts (500+) that bypasses
@@ -73,11 +69,14 @@ public class DirectTileStitcher {
      * @param progressCallback Progress callback (0.0 to 1.0), may be null
      * @return Absolute path to output file/directory, or null on failure
      */
-    public static String stitch(List<TileMapping> mappings, String outputPath, String filename,
-                                StitchingConfig config, Consumer<Double> progressCallback) {
-        StitchingConfig.OutputFormat format = config.outputFormat != null
-                ? config.outputFormat
-                : StitchingConfig.OutputFormat.OME_TIFF;
+    public static String stitch(
+            List<TileMapping> mappings,
+            String outputPath,
+            String filename,
+            StitchingConfig config,
+            Consumer<Double> progressCallback) {
+        StitchingConfig.OutputFormat format =
+                config.outputFormat != null ? config.outputFormat : StitchingConfig.OutputFormat.OME_TIFF;
 
         if (format == StitchingConfig.OutputFormat.OME_ZARR) {
             return stitchToZarr(mappings, outputPath, filename, config, progressCallback);
@@ -90,16 +89,24 @@ public class DirectTileStitcher {
      * Stitch to OME-TIFF using a CompositorImageServer as the read path
      * for the existing PyramidImageWriter.
      */
-    private static String stitchToTiff(List<TileMapping> mappings, String outputPath,
-                                       String filename, StitchingConfig config,
-                                       Consumer<Double> progressCallback) {
+    private static String stitchToTiff(
+            List<TileMapping> mappings,
+            String outputPath,
+            String filename,
+            StitchingConfig config,
+            Consumer<Double> progressCallback) {
         long t0 = System.currentTimeMillis();
 
         try {
             // 1. Read tile properties from first tile header
             TileReaderPool.TileDimensions dims = TileReaderPool.getDimensions(mappings.get(0).file);
-            logger.info("Tile properties: {}x{}, {} channels, {} bit, RGB={}",
-                    dims.width(), dims.height(), dims.nChannels(), dims.bitDepth(), dims.isRGB());
+            logger.info(
+                    "Tile properties: {}x{}, {} channels, {} bit, RGB={}",
+                    dims.width(),
+                    dims.height(),
+                    dims.nChannels(),
+                    dims.bitDepth(),
+                    dims.isRGB());
 
             // 2. Build spatial index
             TileSpatialIndex index = new TileSpatialIndex(mappings, DEFAULT_CHUNK_SIZE);
@@ -112,15 +119,20 @@ public class DirectTileStitcher {
             BlendStrategy blend = new OverwriteBlendStrategy();
 
             try (TileReaderPool readerPool = new TileReaderPool(DEFAULT_MAX_OPEN_READERS)) {
-                ChunkCompositor compositor = new ChunkCompositor(
-                        readerPool, index, blend, whiteBackground, dims.isRGB(), dims.bitDepth());
+                ChunkCompositor compositor =
+                        new ChunkCompositor(readerPool, index, blend, whiteBackground, dims.isRGB(), dims.bitDepth());
 
                 // 4. Create CompositorImageServer (memory-efficient replacement for SparseImageServer)
                 CompositorImageServer server = new CompositorImageServer(
-                        compositor, readerPool,
-                        imageWidth, imageHeight,
-                        dims.nChannels(), dims.isRGB(), dims.bitDepth(),
-                        config.pixelSizeInMicrons, config.zSpacingMicrons);
+                        compositor,
+                        readerPool,
+                        imageWidth,
+                        imageHeight,
+                        dims.nChannels(),
+                        dims.isRGB(),
+                        dims.bitDepth(),
+                        config.pixelSizeInMicrons,
+                        config.zSpacingMicrons);
 
                 logger.info("Writing OME-TIFF via CompositorImageServer (memory-efficient read path)...");
 
@@ -138,11 +150,13 @@ public class DirectTileStitcher {
 
                 long elapsed = System.currentTimeMillis() - t0;
                 if (written != null) {
-                    logger.info("Direct stitching (OME-TIFF) complete in {}s: {}",
-                            String.format("%.1f", elapsed / 1000.0), written);
+                    logger.info(
+                            "Direct stitching (OME-TIFF) complete in {}s: {}",
+                            String.format("%.1f", elapsed / 1000.0),
+                            written);
                 } else {
-                    logger.error("Direct stitching (OME-TIFF) failed after {}s",
-                            String.format("%.1f", elapsed / 1000.0));
+                    logger.error(
+                            "Direct stitching (OME-TIFF) failed after {}s", String.format("%.1f", elapsed / 1000.0));
                 }
 
                 return written;
@@ -159,16 +173,24 @@ public class DirectTileStitcher {
      * Stitch directly to OME-ZARR using chunk-by-chunk writing via JZarr.
      * Most memory-efficient path -- no ImageServer intermediate.
      */
-    private static String stitchToZarr(List<TileMapping> mappings, String outputPath,
-                                       String filename, StitchingConfig config,
-                                       Consumer<Double> progressCallback) {
+    private static String stitchToZarr(
+            List<TileMapping> mappings,
+            String outputPath,
+            String filename,
+            StitchingConfig config,
+            Consumer<Double> progressCallback) {
         long t0 = System.currentTimeMillis();
 
         try {
             // 1. Read tile properties from first tile header (no pixel data)
             TileReaderPool.TileDimensions dims = TileReaderPool.getDimensions(mappings.get(0).file);
-            logger.info("Tile properties: {}x{}, {} channels, {} bit, RGB={}",
-                    dims.width(), dims.height(), dims.nChannels(), dims.bitDepth(), dims.isRGB());
+            logger.info(
+                    "Tile properties: {}x{}, {} channels, {} bit, RGB={}",
+                    dims.width(),
+                    dims.height(),
+                    dims.nChannels(),
+                    dims.bitDepth(),
+                    dims.isRGB());
 
             // 2. Build spatial index from tile positions
             TileSpatialIndex index = new TileSpatialIndex(mappings, DEFAULT_CHUNK_SIZE);
@@ -188,9 +210,16 @@ public class DirectTileStitcher {
             Compressor compressor = PyramidImageWriter.createZarrCompressor(config.compressionType);
 
             try (ZarrOutputWriter writer = new ZarrOutputWriter(zarrPath, compressor)) {
-                writer.initialize(imageWidth, imageHeight, dims.nChannels(), dims.isRGB(),
-                        dims.bitDepth(), config.pixelSizeInMicrons, config.zSpacingMicrons,
-                        DEFAULT_CHUNK_SIZE, numLevels);
+                writer.initialize(
+                        imageWidth,
+                        imageHeight,
+                        dims.nChannels(),
+                        dims.isRGB(),
+                        dims.bitDepth(),
+                        config.pixelSizeInMicrons,
+                        config.zSpacingMicrons,
+                        DEFAULT_CHUNK_SIZE,
+                        numLevels);
 
                 // 6. Create compositor with bounded reader pool
                 boolean whiteBackground = dims.isRGB();
@@ -224,9 +253,9 @@ public class DirectTileStitcher {
                                 progressCallback.accept(0.8 * processed / totalChunks);
                             }
                             if (processed % 100 == 0) {
-                                logger.info("Level 0 progress: {}/{} chunks ({}%)",
-                                        processed, totalChunks,
-                                        String.format("%.1f", 100.0 * processed / totalChunks));
+                                logger.info(
+                                        "Level 0 progress: {}/{} chunks ({}%)",
+                                        processed, totalChunks, String.format("%.1f", 100.0 * processed / totalChunks));
                             }
                         }
                     }
@@ -238,9 +267,8 @@ public class DirectTileStitcher {
                 // 8. Generate pyramid levels from already-written level 0
                 if (numLevels > 1) {
                     logger.info("Generating {} pyramid levels...", numLevels - 1);
-                    PyramidLevelGenerator.generateLevels(writer, numLevels, imageWidth, imageHeight,
-                            DEFAULT_CHUNK_SIZE,
-                            progress -> {
+                    PyramidLevelGenerator.generateLevels(
+                            writer, numLevels, imageWidth, imageHeight, DEFAULT_CHUNK_SIZE, progress -> {
                                 if (progressCallback != null) {
                                     progressCallback.accept(0.8 + 0.2 * progress);
                                 }
@@ -250,8 +278,10 @@ public class DirectTileStitcher {
             // Writer closed here
 
             long elapsed = System.currentTimeMillis() - t0;
-            logger.info("Direct stitching (OME-ZARR) complete in {}s: {}",
-                    String.format("%.1f", elapsed / 1000.0), zarrPath);
+            logger.info(
+                    "Direct stitching (OME-ZARR) complete in {}s: {}",
+                    String.format("%.1f", elapsed / 1000.0),
+                    zarrPath);
 
             return zarrPath;
 

@@ -19,11 +19,9 @@ public class QPPreferences {
     private static final StringProperty imagePixelSizeInMicronsSaved =
             PathPrefs.createPersistentPreference("imagePixelSizeInMicrons", "7.2");
 
-    private static final StringProperty downsampleSaved =
-            PathPrefs.createPersistentPreference("downsample", "1");
+    private static final StringProperty downsampleSaved = PathPrefs.createPersistentPreference("downsample", "1");
 
-    private static final StringProperty searchStringSaved =
-            PathPrefs.createPersistentPreference("searchString", "20x");
+    private static final StringProperty searchStringSaved = PathPrefs.createPersistentPreference("searchString", "20x");
 
     private static final StringProperty compressionTypeSaved =
             PathPrefs.createPersistentPreference("compressionType", "J2K");

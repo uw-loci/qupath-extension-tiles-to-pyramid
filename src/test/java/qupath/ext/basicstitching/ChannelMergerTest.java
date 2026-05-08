@@ -1,5 +1,7 @@
 package qupath.ext.basicstitching;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 import java.awt.image.BufferedImage;
 import java.awt.image.WritableRaster;
 import java.io.IOException;
@@ -8,8 +10,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import qupath.ext.basicstitching.assembly.ChannelMerger;
 import qupath.ext.basicstitching.assembly.ChannelMergeImageServer;
+import qupath.ext.basicstitching.assembly.ChannelMerger;
 import qupath.ext.basicstitching.assembly.PyramidImageWriter;
 import qupath.ext.basicstitching.config.StitchingConfig;
 import qupath.lib.awt.common.BufferedImageTools;
@@ -18,8 +20,6 @@ import qupath.lib.images.servers.ImageServers;
 import qupath.lib.images.servers.PixelType;
 import qupath.lib.images.servers.WrappedBufferedImageServer;
 import qupath.lib.regions.RegionRequest;
-
-import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * End-to-end integration tests for the multichannel stitching path.
@@ -74,37 +74,37 @@ public class ChannelMergerTest {
                     "LZW",
                     StitchingConfig.OutputFormat.OME_TIFF);
             assertNotNull(mergedPath, "ChannelMerger.merge should produce an output path");
-            assertTrue(Files.exists(Path.of(mergedPath)),
-                    "Merged output file should exist at " + mergedPath);
+            assertTrue(Files.exists(Path.of(mergedPath)), "Merged output file should exist at " + mergedPath);
 
             // Re-open the merged output and verify structure + pixel values per channel.
-            try (ImageServer<BufferedImage> merged = ImageServers.buildServer(Path.of(mergedPath).toUri())) {
-                assertEquals(4, merged.nChannels(),
-                        "Merged image should report 4 channels, got " + merged.nChannels());
-                assertEquals(TEST_WIDTH, merged.getWidth(),
-                        "Merged image width should match sources");
-                assertEquals(TEST_HEIGHT, merged.getHeight(),
-                        "Merged image height should match sources");
+            try (ImageServer<BufferedImage> merged =
+                    ImageServers.buildServer(Path.of(mergedPath).toUri())) {
+                assertEquals(4, merged.nChannels(), "Merged image should report 4 channels, got " + merged.nChannels());
+                assertEquals(TEST_WIDTH, merged.getWidth(), "Merged image width should match sources");
+                assertEquals(TEST_HEIGHT, merged.getHeight(), "Merged image height should match sources");
 
                 // Verify channel order + values: channel i should carry CHANNEL_VALUES[i].
                 for (int c = 0; c < 4; c++) {
-                    assertEquals(CHANNEL_NAMES[c], merged.getChannel(c).getName(),
+                    assertEquals(
+                            CHANNEL_NAMES[c],
+                            merged.getChannel(c).getName(),
                             "Channel " + c + " name should be preserved");
                 }
 
                 // Read a small region and sample the pixel value in each channel.
-                RegionRequest request = RegionRequest.createInstance(
-                        merged.getPath(), 1.0, 0, 0, 16, 16);
+                RegionRequest request = RegionRequest.createInstance(merged.getPath(), 1.0, 0, 0, 16, 16);
                 BufferedImage tile = merged.readRegion(request);
                 assertNotNull(tile, "Merged region read should return a tile");
-                assertEquals(4, tile.getRaster().getNumBands(),
-                        "Read tile should have 4 bands");
+                assertEquals(4, tile.getRaster().getNumBands(), "Read tile should have 4 bands");
 
                 WritableRaster raster = tile.getRaster();
                 for (int c = 0; c < 4; c++) {
                     int sample = raster.getSample(8, 8, c);
-                    assertEquals(CHANNEL_VALUES[c], sample,
-                            String.format("Channel %d ('%s') pixel should carry value %d, got %d",
+                    assertEquals(
+                            CHANNEL_VALUES[c],
+                            sample,
+                            String.format(
+                                    "Channel %d ('%s') pixel should carry value %d, got %d",
                                     c, CHANNEL_NAMES[c], CHANNEL_VALUES[c], sample));
                 }
             }
@@ -131,7 +131,8 @@ public class ChannelMergerTest {
                     StitchingConfig.OutputFormat.OME_TIFF);
             assertNotNull(mergedPath, "2-channel merge should succeed");
 
-            try (ImageServer<BufferedImage> merged = ImageServers.buildServer(Path.of(mergedPath).toUri())) {
+            try (ImageServer<BufferedImage> merged =
+                    ImageServers.buildServer(Path.of(mergedPath).toUri())) {
                 assertEquals(2, merged.nChannels());
                 assertEquals("BF", merged.getChannel(0).getName());
                 assertEquals("DAPI", merged.getChannel(1).getName());
@@ -164,9 +165,10 @@ public class ChannelMergerTest {
                     StitchingConfig.OutputFormat.OME_TIFF);
             assertNotNull(mergedPath, "2-channel J2K merge should succeed");
 
-            try (ImageServer<BufferedImage> merged = ImageServers.buildServer(Path.of(mergedPath).toUri())) {
-                assertEquals(2, merged.nChannels(),
-                        "J2K merged image should report 2 channels, got " + merged.nChannels());
+            try (ImageServer<BufferedImage> merged =
+                    ImageServers.buildServer(Path.of(mergedPath).toUri())) {
+                assertEquals(
+                        2, merged.nChannels(), "J2K merged image should report 2 channels, got " + merged.nChannels());
                 assertEquals("DAPI", merged.getChannel(0).getName());
                 assertEquals("FITC", merged.getChannel(1).getName());
 
@@ -174,22 +176,26 @@ public class ChannelMergerTest {
                 // synthesized constant values -- if channel 1 gets lost during
                 // the JPEG-2000 write (the OWS3 bug), sample(8,8,1) would be 0
                 // or the same as channel 0.
-                RegionRequest request = RegionRequest.createInstance(
-                        merged.getPath(), 1.0, 0, 0, 16, 16);
+                RegionRequest request = RegionRequest.createInstance(merged.getPath(), 1.0, 0, 0, 16, 16);
                 BufferedImage tile = merged.readRegion(request);
                 assertNotNull(tile, "J2K merged region read should return a tile");
-                assertEquals(2, tile.getRaster().getNumBands(),
-                        "J2K read tile should have 2 bands");
+                assertEquals(2, tile.getRaster().getNumBands(), "J2K read tile should have 2 bands");
 
                 WritableRaster raster = tile.getRaster();
                 int ch0 = raster.getSample(8, 8, 0);
                 int ch1 = raster.getSample(8, 8, 1);
                 // J2K is lossy by default -- allow a few counts of tolerance.
-                assertEquals(CHANNEL_VALUES[0], ch0, 5,
-                        String.format("J2K channel 0 ('DAPI') should carry value %d, got %d",
-                                CHANNEL_VALUES[0], ch0));
-                assertEquals(CHANNEL_VALUES[1], ch1, 5,
-                        String.format("J2K channel 1 ('FITC') should carry value %d, got %d -- "
+                assertEquals(
+                        CHANNEL_VALUES[0],
+                        ch0,
+                        5,
+                        String.format("J2K channel 0 ('DAPI') should carry value %d, got %d", CHANNEL_VALUES[0], ch0));
+                assertEquals(
+                        CHANNEL_VALUES[1],
+                        ch1,
+                        5,
+                        String.format(
+                                "J2K channel 1 ('FITC') should carry value %d, got %d -- "
                                         + "if 0 or matches channel 0, channelsInterleaved() dropped it",
                                 CHANNEL_VALUES[1], ch1));
             }
@@ -237,7 +243,8 @@ public class ChannelMergerTest {
         ImageServer<BufferedImage> serverA = new WrappedBufferedImageServer("a", a);
         ImageServer<BufferedImage> serverB = new WrappedBufferedImageServer("b", b);
 
-        assertThrows(IllegalArgumentException.class,
+        assertThrows(
+                IllegalArgumentException.class,
                 () -> new ChannelMergeImageServer(List.of(serverA, serverB), null),
                 "Sources with different dimensions should throw on construction");
 
@@ -260,17 +267,14 @@ public class ChannelMergerTest {
         for (int i = 0; i < n; i++) {
             BufferedImage img = BufferedImageTools.createImage(TEST_WIDTH, TEST_HEIGHT, PixelType.UINT16, 1);
             fillWithConstant(img, CHANNEL_VALUES[i]);
-            ImageServer<BufferedImage> source = new WrappedBufferedImageServer("source-" + i, img,
+            ImageServer<BufferedImage> source = new WrappedBufferedImageServer(
+                    "source-" + i,
+                    img,
                     List.of(qupath.lib.images.servers.ImageChannel.getInstance(
                             CHANNEL_NAMES[i], qupath.lib.images.servers.ImageChannel.getDefaultChannelColor(i))));
 
             String outPath = PyramidImageWriter.write(
-                    source,
-                    tempDir.toString(),
-                    "channel_" + i,
-                    "LZW",
-                    1.0,
-                    StitchingConfig.OutputFormat.OME_TIFF);
+                    source, tempDir.toString(), "channel_" + i, "LZW", 1.0, StitchingConfig.OutputFormat.OME_TIFF);
             assertNotNull(outPath, "Single-channel pyramid " + i + " should write successfully");
             paths.add(outPath);
 

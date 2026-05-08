@@ -3,8 +3,19 @@
 // =======================================================================================
 package qupath.ext.basicstitching.functions;
 
+import static qupath.ext.basicstitching.utilities.UtilityFunctions.getCompressionTypeList;
+
+import java.awt.Desktop;
+import java.io.File;
+import java.net.URI;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import javafx.scene.Node;
 import javafx.scene.control.*;
+import javafx.scene.control.CheckBox;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Modality;
@@ -14,20 +25,6 @@ import qupath.ext.basicstitching.config.StitchingConfig;
 import qupath.ext.basicstitching.utilities.QPPreferences;
 import qupath.ext.basicstitching.workflow.StitchingWorkflow;
 import qupath.lib.gui.scripting.QPEx;
-
-import java.awt.Desktop;
-import java.io.File;
-import java.net.URI;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import javafx.scene.control.CheckBox;
-import javafx.scene.control.Tooltip;
-import java.awt.Desktop;
-import java.net.URI;
-
-import static qupath.ext.basicstitching.utilities.UtilityFunctions.getCompressionTypeList;
 
 /**
  * GUI class for the Basic Stitching Extension.
@@ -128,8 +125,7 @@ public class StitchingGUI {
                     zSpacingMicrons,
                     xFudgeFactor,
                     yFudgeFactor,
-                    outputFormat != null ? outputFormat : StitchingConfig.OutputFormat.OME_TIFF
-            );
+                    outputFormat != null ? outputFormat : StitchingConfig.OutputFormat.OME_TIFF);
 
             // Use the new workflow
             String finalImageName = StitchingWorkflow.run(config);
@@ -146,9 +142,6 @@ public class StitchingGUI {
             showAlertDialog("Error processing input: " + e.getMessage());
         }
     }
-
-
-
 
     /**
      * Safely parses a string to double with a default fallback value.
@@ -255,18 +248,17 @@ public class StitchingGUI {
      */
     private static void addStitchingGridComponents(GridPane pane) {
         stitchingGridBox.getItems().clear();
-        stitchingGridBox.getItems().addAll(
-                "Vectra tiles with metadata",
-                "Filename[x,y] with coordinates in microns",
-                "Coordinates in TileConfiguration.txt file"
-        );
+        stitchingGridBox
+                .getItems()
+                .addAll(
+                        "Vectra tiles with metadata",
+                        "Filename[x,y] with coordinates in microns",
+                        "Coordinates in TileConfiguration.txt file");
 
         stitchingGridBox.setValue(QPPreferences.getStitchingMethodSaved());
         stitchingGridBox.setOnAction(e -> updateComponentsBasedOnSelection(pane));
 
-        Tooltip stitchingTooltip = new Tooltip(
-                "Method used to determine tile positions for stitching."
-        );
+        Tooltip stitchingTooltip = new Tooltip("Method used to determine tile positions for stitching.");
         stitchingGridLabel.setTooltip(stitchingTooltip);
         stitchingGridBox.setTooltip(stitchingTooltip);
 
@@ -322,9 +314,7 @@ public class StitchingGUI {
             }
         });
 
-        Tooltip folderTooltip = new Tooltip(
-                "Root folder containing the tile images to stitch."
-        );
+        Tooltip folderTooltip = new Tooltip("Root folder containing the tile images to stitch.");
         folderLabel.setTooltip(folderTooltip);
         folderField.setTooltip(folderTooltip);
 
@@ -365,10 +355,8 @@ public class StitchingGUI {
         // Default to OME-TIFF for backward compatibility
         outputFormatBox.setValue(StitchingConfig.OutputFormat.OME_TIFF);
 
-        Tooltip formatTooltip = new Tooltip(
-            "OME-TIFF: Traditional single-file format (widely compatible)\n" +
-            "OME-ZARR: Cloud-native directory format (better compression, parallel writing, cloud storage)"
-        );
+        Tooltip formatTooltip = new Tooltip("OME-TIFF: Traditional single-file format (widely compatible)\n"
+                + "OME-ZARR: Cloud-native directory format (better compression, parallel writing, cloud storage)");
         outputFormatLabel.setTooltip(formatTooltip);
         outputFormatBox.setTooltip(formatTooltip);
 
@@ -379,9 +367,7 @@ public class StitchingGUI {
      * Adds pixel size input components to the specified GridPane.
      */
     private static void addPixelSizeComponents(GridPane pane) {
-        Tooltip pixelSizeTooltip = new Tooltip(
-                "Pixel size in microns for the tile images."
-        );
+        Tooltip pixelSizeTooltip = new Tooltip("Pixel size in microns for the tile images.");
         pixelSizeLabel.setTooltip(pixelSizeTooltip);
         pixelSizeField.setTooltip(pixelSizeTooltip);
 
@@ -392,9 +378,8 @@ public class StitchingGUI {
      * Adds downsample input components to the specified GridPane.
      */
     private static void addDownsampleComponents(GridPane pane) {
-        Tooltip downsampleTooltip = new Tooltip(
-                "The amount by which the highest resolution plane will be initially downsampled."
-        );
+        Tooltip downsampleTooltip =
+                new Tooltip("The amount by which the highest resolution plane will be initially downsampled.");
         downsampleLabel.setTooltip(downsampleTooltip);
         downsampleField.setTooltip(downsampleTooltip);
 
@@ -405,9 +390,7 @@ public class StitchingGUI {
      * Adds matching string input components to the specified GridPane.
      */
     private static void addMatchStringComponents(GridPane pane) {
-        Tooltip matchStringTooltip = new Tooltip(
-                "Only stitch sub-folders whose names contain this text."
-        );
+        Tooltip matchStringTooltip = new Tooltip("Only stitch sub-folders whose names contain this text.");
         matchStringLabel.setTooltip(matchStringTooltip);
         matchStringField.setTooltip(matchStringTooltip);
 
@@ -420,8 +403,8 @@ public class StitchingGUI {
      */
     private static void updateComponentsBasedOnSelection(GridPane pane) {
         String selectedValue = stitchingGridBox.getValue();
-        boolean hidePixelSize = "Vectra tiles with metadata".equals(selectedValue) ||
-                "Coordinates in TileConfiguration.txt file".equals(selectedValue);
+        boolean hidePixelSize = "Vectra tiles with metadata".equals(selectedValue)
+                || "Coordinates in TileConfiguration.txt file".equals(selectedValue);
 
         pixelSizeLabel.setVisible(!hidePixelSize);
         pixelSizeField.setVisible(!hidePixelSize);
@@ -463,12 +446,12 @@ public class StitchingGUI {
         alert.initModality(Modality.APPLICATION_MODAL);
         alert.showAndWait();
     }
+
     private static void addFudgeFactorComponents(GridPane pane) {
         // Checkbox with tooltip
-        Tooltip fudgeTooltip = new Tooltip(
-                "Fudge factor to adjust for empty black lines between tiles (slightly less than 1.0).\n" +
-                        "See forum discussion for details."
-        );
+        Tooltip fudgeTooltip =
+                new Tooltip("Fudge factor to adjust for empty black lines between tiles (slightly less than 1.0).\n"
+                        + "See forum discussion for details.");
         useFudgeFactorCheckbox.setTooltip(fudgeTooltip);
 
         // Set up the forum link
@@ -487,15 +470,13 @@ public class StitchingGUI {
         }
 
         // Add fudge factor fields
-        Tooltip xFudgeTooltip = new Tooltip(
-                "X-axis scale factor to adjust for gaps between tiles (typically slightly less than 1.0)."
-        );
+        Tooltip xFudgeTooltip =
+                new Tooltip("X-axis scale factor to adjust for gaps between tiles (typically slightly less than 1.0).");
         xFudgeLabel.setTooltip(xFudgeTooltip);
         xFudgeField.setTooltip(xFudgeTooltip);
 
-        Tooltip yFudgeTooltip = new Tooltip(
-                "Y-axis scale factor to adjust for gaps between tiles (typically slightly less than 1.0)."
-        );
+        Tooltip yFudgeTooltip =
+                new Tooltip("Y-axis scale factor to adjust for gaps between tiles (typically slightly less than 1.0).");
         yFudgeLabel.setTooltip(yFudgeTooltip);
         yFudgeField.setTooltip(yFudgeTooltip);
 
@@ -524,6 +505,4 @@ public class StitchingGUI {
         yFudgeField.setVisible(visible);
         vectraForumLink.setVisible(visible);
     }
-
-
 }

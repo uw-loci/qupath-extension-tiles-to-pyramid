@@ -1,5 +1,9 @@
 package qupath.ext.basicstitching.workflow;
 
+import java.awt.image.BufferedImage;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.basicstitching.assembly.ImageAssembler;
@@ -11,12 +15,6 @@ import qupath.ext.basicstitching.stitching.StitchingStrategyFactory;
 import qupath.ext.basicstitching.stitching.TileMapping;
 import qupath.lib.common.GeneralTools;
 import qupath.lib.images.servers.ImageServer;
-
-import java.awt.image.BufferedImage;
-import java.util.Map;
-import java.util.stream.Collectors;
-import java.util.List;
-
 
 /**
  * Orchestrates the complete stitching workflow:
@@ -114,11 +112,7 @@ public class StitchingWorkflow {
             // 2. Prepare tile mappings (tile file, region, and group info)
             logger.info("Preparing tile mappings...");
             List<TileMapping> allMappings = strategy.prepareStitching(
-                    config.folderPath,
-                    config.pixelSizeInMicrons,
-                    config.baseDownsample,
-                    config.matchingString
-            );
+                    config.folderPath, config.pixelSizeInMicrons, config.baseDownsample, config.matchingString);
 
             if (allMappings == null || allMappings.isEmpty()) {
                 logger.error("No tile mappings produced by strategy");
@@ -127,13 +121,11 @@ public class StitchingWorkflow {
             logger.info("Total tile mappings created: {}", allMappings.size());
 
             // 3. Group tiles by subdirectory
-            Map<String, List<TileMapping>> groupedMappings = allMappings.stream()
-                    .collect(Collectors.groupingBy(mapping -> mapping.subdirName));
+            Map<String, List<TileMapping>> groupedMappings =
+                    allMappings.stream().collect(Collectors.groupingBy(mapping -> mapping.subdirName));
 
             logger.info("Tiles grouped into {} subdirectories:", groupedMappings.size());
-            groupedMappings.forEach((subdir, tiles) ->
-                    logger.info("  - '{}': {} tiles", subdir, tiles.size())
-            );
+            groupedMappings.forEach((subdir, tiles) -> logger.info("  - '{}': {} tiles", subdir, tiles.size()));
 
             // 4. Process each subdirectory group separately
             String lastSuccessfulPath = null;
@@ -145,14 +137,13 @@ public class StitchingWorkflow {
                 List<TileMapping> subdirMappings = entry.getValue();
 
                 logger.info(""); // Blank line for readability
-                logger.info("=== Processing subdirectory: '{}' ({} tiles) ===",
-                        subdirName, subdirMappings.size());
+                logger.info("=== Processing subdirectory: '{}' ({} tiles) ===", subdirName, subdirMappings.size());
 
                 try {
                     // Direct stitching for large tile counts (bypasses SparseImageServer)
                     if (DirectTileStitcher.shouldUseDirectStitching(subdirMappings.size())) {
-                        logger.info("Using direct tile stitcher for {} tiles (threshold: {})",
-                                subdirMappings.size(), 500);
+                        logger.info(
+                                "Using direct tile stitcher for {} tiles (threshold: {})", subdirMappings.size(), 500);
                         String outBase;
                         if (config.outputFilename != null && !config.outputFilename.isBlank()) {
                             outBase = config.outputFilename + "_" + subdirName;
@@ -160,9 +151,12 @@ public class StitchingWorkflow {
                             outBase = subdirName;
                         }
                         String written = DirectTileStitcher.stitch(
-                                subdirMappings, config.outputPath, outBase, config,
-                                progress -> logger.debug("Direct stitch progress: {}%",
-                                        String.format("%.1f", progress * 100)));
+                                subdirMappings,
+                                config.outputPath,
+                                outBase,
+                                config,
+                                progress -> logger.debug(
+                                        "Direct stitch progress: {}%", String.format("%.1f", progress * 100)));
                         if (written != null) {
                             logger.info("Successfully wrote (direct): {}", written);
                             lastSuccessfulPath = written;
@@ -177,19 +171,18 @@ public class StitchingWorkflow {
                     // 4a. Assemble image server for this subdirectory (standard path)
                     // Note: For RGB images, this automatically wraps with white background
                     logger.info("Assembling image server...");
-                    ImageServer<BufferedImage> server = ImageAssembler.assemble(
-                            subdirMappings,
-                            config.pixelSizeInMicrons,
-                            config.zSpacingMicrons
-                    );
+                    ImageServer<BufferedImage> server =
+                            ImageAssembler.assemble(subdirMappings, config.pixelSizeInMicrons, config.zSpacingMicrons);
 
                     if (server == null) {
                         logger.error("Failed to assemble image server for subdirectory: {}", subdirName);
                         failureCount++;
                         continue;
                     }
-                    logger.info("Successfully assembled {} tiles into image server (type: {})",
-                            subdirMappings.size(), server.getServerType());
+                    logger.info(
+                            "Successfully assembled {} tiles into image server (type: {})",
+                            subdirMappings.size(),
+                            server.getServerType());
 
                     // 4b. Determine output filename
                     String outBase;
@@ -216,8 +209,9 @@ public class StitchingWorkflow {
                     }
 
                     // 4c. Write output pyramid (TIFF or ZARR based on config)
-                    String formatName = config.outputFormat == null ? "OME-TIFF" :
-                                       (config.outputFormat == StitchingConfig.OutputFormat.OME_ZARR ? "OME-ZARR" : "OME-TIFF");
+                    String formatName = config.outputFormat == null
+                            ? "OME-TIFF"
+                            : (config.outputFormat == StitchingConfig.OutputFormat.OME_ZARR ? "OME-ZARR" : "OME-TIFF");
                     logger.info("Writing {} pyramid for '{}'...", formatName, subdirName);
 
                     String written = PyramidImageWriter.write(
@@ -227,8 +221,8 @@ public class StitchingWorkflow {
                             config.compressionType,
                             config.baseDownsample,
                             config.outputFormat != null ? config.outputFormat : StitchingConfig.OutputFormat.OME_TIFF,
-                            progress -> logger.debug("Write progress for '{}': {}%", subdirName, String.format("%.1f", progress * 100))
-                    );
+                            progress -> logger.debug(
+                                    "Write progress for '{}': {}%", subdirName, String.format("%.1f", progress * 100)));
 
                     if (written != null) {
                         logger.info("Successfully wrote: {}", written);
@@ -243,8 +237,7 @@ public class StitchingWorkflow {
                     server.close();
 
                 } catch (Exception e) {
-                    logger.error("Exception processing subdirectory '{}': {}",
-                            subdirName, e.getMessage(), e);
+                    logger.error("Exception processing subdirectory '{}': {}", subdirName, e.getMessage(), e);
                     failureCount++;
                 }
             }
@@ -252,8 +245,11 @@ public class StitchingWorkflow {
             // 5. Summary and return
             logger.info("");
             logger.info("=== STITCHING WORKFLOW COMPLETE ===");
-            logger.info("Processed {} subdirectories: {} successful, {} failed",
-                    groupedMappings.size(), successCount, failureCount);
+            logger.info(
+                    "Processed {} subdirectories: {} successful, {} failed",
+                    groupedMappings.size(),
+                    successCount,
+                    failureCount);
 
             if (successCount > 0) {
                 logger.info("Last successful output: {}", lastSuccessfulPath);

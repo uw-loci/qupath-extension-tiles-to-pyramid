@@ -64,8 +64,8 @@ public class ChannelMergeImageServer implements ImageServer<BufferedImage> {
      *                       {@code null} or shorter than the channel count, missing entries fall back to
      *                       the source server's channel color
      */
-    public ChannelMergeImageServer(List<ImageServer<BufferedImage>> sources, List<String> channelNames,
-                                   List<Integer> channelColors) {
+    public ChannelMergeImageServer(
+            List<ImageServer<BufferedImage>> sources, List<String> channelNames, List<Integer> channelColors) {
         if (sources == null || sources.isEmpty()) {
             throw new IllegalArgumentException("ChannelMergeImageServer requires at least one source");
         }
@@ -79,15 +79,17 @@ public class ChannelMergeImageServer implements ImageServer<BufferedImage> {
             for (int c = 0; c < s.nChannels(); c++) {
                 ImageChannel srcChannel = s.getChannel(c);
                 String name;
-                if (channelNames != null && overrideIdx < channelNames.size()
+                if (channelNames != null
+                        && overrideIdx < channelNames.size()
                         && channelNames.get(overrideIdx) != null
                         && !channelNames.get(overrideIdx).isBlank()) {
                     name = channelNames.get(overrideIdx);
                 } else {
                     name = srcChannel.getName();
                 }
-                Integer color = (channelColors != null && overrideIdx < channelColors.size()
-                        && channelColors.get(overrideIdx) != null)
+                Integer color = (channelColors != null
+                                && overrideIdx < channelColors.size()
+                                && channelColors.get(overrideIdx) != null)
                         ? channelColors.get(overrideIdx)
                         : srcChannel.getColor();
                 merged.add(ImageChannel.getInstance(name, color));
@@ -124,7 +126,9 @@ public class ChannelMergeImageServer implements ImageServer<BufferedImage> {
                 logger.warn(
                         "ChannelMergeImageServer: source {} has {} resolutions but reference has {}; reads will "
                                 + "still work but pyramid structure may differ",
-                        i, s.nResolutions(), nRes);
+                        i,
+                        s.nResolutions(),
+                        nRes);
             }
         }
     }

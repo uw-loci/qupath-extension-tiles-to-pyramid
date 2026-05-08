@@ -2,15 +2,6 @@ package qupath.ext.basicstitching.assembly;
 
 import com.bc.zarr.Compressor;
 import com.bc.zarr.CompressorFactory;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.ext.basicstitching.config.StitchingConfig;
-import qupath.lib.images.servers.ImageServer;
-import qupath.lib.images.servers.ImageServers;
-import qupath.lib.images.writers.ome.OMEPyramidWriter;
-import qupath.lib.images.writers.ome.zarr.OMEZarrWriter;
-import qupath.ext.basicstitching.utilities.UtilityFunctions;
-
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.nio.file.Files;
@@ -19,6 +10,14 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.concurrent.Semaphore;
 import java.util.function.Consumer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.ext.basicstitching.config.StitchingConfig;
+import qupath.ext.basicstitching.utilities.UtilityFunctions;
+import qupath.lib.images.servers.ImageServer;
+import qupath.lib.images.servers.ImageServers;
+import qupath.lib.images.writers.ome.OMEPyramidWriter;
+import qupath.lib.images.writers.ome.zarr.OMEZarrWriter;
 
 /**
  * Writes an assembled SparseImageServer to disk as either:
@@ -48,9 +47,13 @@ public class PyramidImageWriter {
      * @param outputFormat Output format (OME_TIFF or OME_ZARR)
      * @return Absolute path to output file/directory, or null on failure
      */
-    public static String write(ImageServer<BufferedImage> server, String outputPath, String filename,
-                               String compressionType, double baseDownsample,
-                               StitchingConfig.OutputFormat outputFormat) {
+    public static String write(
+            ImageServer<BufferedImage> server,
+            String outputPath,
+            String filename,
+            String compressionType,
+            double baseDownsample,
+            StitchingConfig.OutputFormat outputFormat) {
         return write(server, outputPath, filename, compressionType, baseDownsample, outputFormat, null);
     }
 
@@ -66,10 +69,14 @@ public class PyramidImageWriter {
      * @param progressCallback Optional callback for progress updates (0.0 to 1.0), primarily for ZARR
      * @return Absolute path to output file/directory, or null on failure
      */
-    public static String write(ImageServer<BufferedImage> server, String outputPath, String filename,
-                               String compressionType, double baseDownsample,
-                               StitchingConfig.OutputFormat outputFormat,
-                               Consumer<Double> progressCallback) {
+    public static String write(
+            ImageServer<BufferedImage> server,
+            String outputPath,
+            String filename,
+            String compressionType,
+            double baseDownsample,
+            StitchingConfig.OutputFormat outputFormat,
+            Consumer<Double> progressCallback) {
         if (outputFormat.stitchAsZarr()) {
             return writeOMEZARR(server, outputPath, filename, compressionType, baseDownsample, progressCallback);
         } else if (outputFormat == StitchingConfig.OutputFormat.OME_TIFF) {
@@ -93,10 +100,20 @@ public class PyramidImageWriter {
      * @deprecated Use write() method with explicit outputFormat parameter
      */
     @Deprecated
-    public static String write(ImageServer<BufferedImage> server, String outputPath, String filename,
-                               String compressionType, double baseDownsample) {
-        return write(server, outputPath, filename, compressionType, baseDownsample,
-                    StitchingConfig.OutputFormat.OME_TIFF, null);
+    public static String write(
+            ImageServer<BufferedImage> server,
+            String outputPath,
+            String filename,
+            String compressionType,
+            double baseDownsample) {
+        return write(
+                server,
+                outputPath,
+                filename,
+                compressionType,
+                baseDownsample,
+                StitchingConfig.OutputFormat.OME_TIFF,
+                null);
     }
 
     /**
@@ -109,12 +126,16 @@ public class PyramidImageWriter {
      * @param baseDownsample Downsample factor
      * @return Absolute path to output TIFF file, or null on failure
      */
-    private static String writeOMETIFF(ImageServer<BufferedImage> server, String outputPath,
-                                       String filename, String compressionType, double baseDownsample) {
+    private static String writeOMETIFF(
+            ImageServer<BufferedImage> server,
+            String outputPath,
+            String filename,
+            String compressionType,
+            double baseDownsample) {
         // Determine the final output path (unique, won't collide with existing files)
         Path outFile = (baseDownsample == 1)
                 ? Paths.get(outputPath).resolve(filename + ".ome.tif")
-                : Paths.get(outputPath).resolve(filename + "_" + (int)baseDownsample + "x_downsample.ome.tif");
+                : Paths.get(outputPath).resolve(filename + "_" + (int) baseDownsample + "x_downsample.ome.tif");
         String finalOutput = UtilityFunctions.getUniqueFilePath(outFile.toString());
 
         // Write to a temp file first, then rename on success.
@@ -142,10 +163,18 @@ public class PyramidImageWriter {
             int imgH = server.getHeight();
             int tileSize = 512;
             int estTiles = (int) Math.ceil((double) imgW / tileSize) * (int) Math.ceil((double) imgH / tileSize);
-            logger.info("Writing pyramid OME-TIFF: {} (compression={}, tileSize={}, downsample={})",
-                    finalOutput, comp, tileSize, baseDownsample);
-            logger.info("Image dimensions: {}x{} pixels, ~{} tiles at level 0, server type: {}",
-                    imgW, imgH, estTiles, server.getServerType());
+            logger.info(
+                    "Writing pyramid OME-TIFF: {} (compression={}, tileSize={}, downsample={})",
+                    finalOutput,
+                    comp,
+                    tileSize,
+                    baseDownsample);
+            logger.info(
+                    "Image dimensions: {}x{} pixels, ~{} tiles at level 0, server type: {}",
+                    imgW,
+                    imgH,
+                    estTiles,
+                    server.getServerType());
             logger.debug("Using temp file during write: {}", tempOutput);
 
             // Precompute the downsample list so both the pyramidalized source
@@ -158,8 +187,8 @@ public class PyramidImageWriter {
             // the mismatch produced ArrayIndexOutOfBoundsException: Index 4 out of
             // bounds for length 4 on large PPM acquisitions.
             double[] downsamples = computePyramidDownsamples(imgW, imgH, baseDownsample, tileSize);
-            logger.info("Pyramid levels: {} (downsamples={})", downsamples.length,
-                    java.util.Arrays.toString(downsamples));
+            logger.info(
+                    "Pyramid levels: {} (downsamples={})", downsamples.length, java.util.Arrays.toString(downsamples));
             ImageServer<BufferedImage> pyramidServer = ImageServers.pyramidalize(server, downsamples);
 
             long t0 = System.currentTimeMillis();
@@ -187,8 +216,10 @@ public class PyramidImageWriter {
             // Write succeeded -- rename temp file to final output
             renameTempToFinal(tempOutput, finalOutput);
 
-            logger.info("Finished writing pyramid in {}s: {}",
-                    String.format("%.1f", (System.currentTimeMillis() - t0) / 1000.0), finalOutput);
+            logger.info(
+                    "Finished writing pyramid in {}s: {}",
+                    String.format("%.1f", (System.currentTimeMillis() - t0) / 1000.0),
+                    finalOutput);
             return finalOutput;
         } catch (Exception e) {
             logger.error("Failed to write pyramid OME-TIFF", e);
@@ -248,13 +279,17 @@ public class PyramidImageWriter {
      * @param progressCallback Optional callback for per-tile progress (0.0 to 1.0)
      * @return Absolute path to output ZARR directory, or null on failure
      */
-    private static String writeOMEZARR(ImageServer<BufferedImage> server, String outputPath,
-                                       String filename, String compressionType, double baseDownsample,
-                                       Consumer<Double> progressCallback) {
+    private static String writeOMEZARR(
+            ImageServer<BufferedImage> server,
+            String outputPath,
+            String filename,
+            String compressionType,
+            double baseDownsample,
+            Consumer<Double> progressCallback) {
         // Determine the final output path (unique, won't collide with existing directories)
         Path outDir = (baseDownsample == 1)
                 ? Paths.get(outputPath).resolve(filename + ".ome.zarr")
-                : Paths.get(outputPath).resolve(filename + "_" + (int)baseDownsample + "x_downsample.ome.zarr");
+                : Paths.get(outputPath).resolve(filename + "_" + (int) baseDownsample + "x_downsample.ome.zarr");
 
         // For ZARR, ensure unique directory path (don't use getUniqueFilePath which adds .ome.tif)
         String finalOutput = outDir.toString();
@@ -262,9 +297,13 @@ public class PyramidImageWriter {
         while (Files.exists(Paths.get(finalOutput))) {
             String baseFilename = filename.replaceAll("\\.ome\\.zarr$", "");
             if (baseDownsample == 1) {
-                finalOutput = Paths.get(outputPath).resolve(baseFilename + "_" + counter + ".ome.zarr").toString();
+                finalOutput = Paths.get(outputPath)
+                        .resolve(baseFilename + "_" + counter + ".ome.zarr")
+                        .toString();
             } else {
-                finalOutput = Paths.get(outputPath).resolve(baseFilename + "_" + (int)baseDownsample + "x_downsample_" + counter + ".ome.zarr").toString();
+                finalOutput = Paths.get(outputPath)
+                        .resolve(baseFilename + "_" + (int) baseDownsample + "x_downsample_" + counter + ".ome.zarr")
+                        .toString();
             }
             counter++;
         }
@@ -277,8 +316,11 @@ public class PyramidImageWriter {
             // ZARR compression setup - more flexible than TIFF
             Compressor compressor = createZarrCompressor(compressionType);
 
-            logger.info("Writing pyramid OME-ZARR: {} (compression={}, tileSize=1024, downsample={})",
-                    finalOutput, compressionType, baseDownsample);
+            logger.info(
+                    "Writing pyramid OME-ZARR: {} (compression={}, tileSize=1024, downsample={})",
+                    finalOutput,
+                    compressionType,
+                    baseDownsample);
             logger.debug("Using temp directory during write: {}", tempOutput);
 
             // Pyramidalize server (in case original was not)
@@ -288,7 +330,7 @@ public class PyramidImageWriter {
 
             // Build ZARR writer with configuration
             OMEZarrWriter.Builder builder = new OMEZarrWriter.Builder(pyramidServer)
-                    .tileSize(1024, 1024)  // ZARR can handle larger chunks efficiently
+                    .tileSize(1024, 1024) // ZARR can handle larger chunks efficiently
                     .compression(compressor)
                     .parallelize(Runtime.getRuntime().availableProcessors());
 
@@ -311,8 +353,10 @@ public class PyramidImageWriter {
             // Write succeeded -- rename temp directory to final output
             renameTempToFinal(tempOutput, finalOutput);
 
-            logger.info("Finished writing pyramid in {}s: {}",
-                    String.format("%.1f", (System.currentTimeMillis() - t0) / 1000.0), finalOutput);
+            logger.info(
+                    "Finished writing pyramid in {}s: {}",
+                    String.format("%.1f", (System.currentTimeMillis() - t0) / 1000.0),
+                    finalOutput);
             return finalOutput;
         } catch (Exception e) {
             logger.error("Failed to write pyramid OME-ZARR", e);
@@ -331,7 +375,7 @@ public class PyramidImageWriter {
      */
     public static Compressor createZarrCompressor(String compressionType) {
         if (compressionType == null || compressionType.isEmpty()) {
-            compressionType = "zstd";  // Default to zstd (good balance of speed/compression)
+            compressionType = "zstd"; // Default to zstd (good balance of speed/compression)
         }
 
         // Map common TIFF compression types to ZARR equivalents
@@ -344,7 +388,7 @@ public class PyramidImageWriter {
                 break;
             case "uncompressed":
             case "none":
-                return CompressorFactory.create("null");  // No compression
+                return CompressorFactory.create("null"); // No compression
             case "jpeg":
             case "j2k":
             case "j2k_lossy":
@@ -364,11 +408,14 @@ public class PyramidImageWriter {
 
         try {
             return CompressorFactory.create(
-                "blosc",
-                "cname", algorithm,   // Compression algorithm
-                "clevel", 5,          // Compression level (0-9, 5 is balanced)
-                "shuffle", 1          // Byte shuffle (improves compression for scientific data)
-            );
+                    "blosc",
+                    "cname",
+                    algorithm, // Compression algorithm
+                    "clevel",
+                    5, // Compression level (0-9, 5 is balanced)
+                    "shuffle",
+                    1 // Byte shuffle (improves compression for scientific data)
+                    );
         } catch (Exception e) {
             logger.warn("Failed to create compressor '{}', using default zstd", algorithm, e);
             return CompressorFactory.create("blosc", "cname", "zstd", "clevel", 5, "shuffle", 1);

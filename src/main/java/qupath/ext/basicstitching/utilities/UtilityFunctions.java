@@ -3,34 +3,29 @@
 // =======================================================================================
 package qupath.ext.basicstitching.utilities;
 
-import org.slf4j.LoggerFactory;
-import qupath.lib.gui.QuPathGUI;
-import qupath.lib.images.writers.ome.OMEPyramidWriter;
-import org.slf4j.Logger;
-
-import javax.imageio.ImageIO;
-import javax.imageio.ImageReader;
-import javax.imageio.metadata.IIOMetadata;
-import javax.imageio.plugins.tiff.BaselineTIFFTagSet;
-import javax.imageio.plugins.tiff.TIFFDirectory;
-import java.awt.image.BufferedImage;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import javax.imageio.stream.ImageInputStream;
-import java.io.File;
-import java.io.FileInputStream;
-import java.util.Iterator;
-
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.metadata.IIOMetadata;
+import javax.imageio.plugins.tiff.BaselineTIFFTagSet;
+import javax.imageio.plugins.tiff.TIFFDirectory;
+import javax.imageio.stream.ImageInputStream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.lib.images.writers.ome.OMEPyramidWriter;
 
 /**
  * Class containing utility functions used throughout the application.
@@ -52,9 +47,9 @@ public class UtilityFunctions {
 
         // Filter only public static final fields and extract names
         return Arrays.stream(fields)
-                .filter(field -> Modifier.isPublic(field.getModifiers()) &&
-                        Modifier.isStatic(field.getModifiers()) &&
-                        Modifier.isFinal(field.getModifiers()))
+                .filter(field -> Modifier.isPublic(field.getModifiers())
+                        && Modifier.isStatic(field.getModifiers())
+                        && Modifier.isFinal(field.getModifiers()))
                 .map(Field::getName)
                 .collect(Collectors.toList());
     }
@@ -146,7 +141,6 @@ public class UtilityFunctions {
         }
     }
 
-
     /**
      * Parse a Vectra TIFF for spatial coordinates and image dimensions using baseline TIFF tags.
      * This overloaded version accepts fudge factors to correct for stage calibration issues.
@@ -158,7 +152,7 @@ public class UtilityFunctions {
      */
     public static VectraRegionInfo getVectraPositionAndDimensions(File file, double xFudgeFactor, double yFudgeFactor) {
         try (FileInputStream fis = new FileInputStream(file);
-             ImageInputStream iis = ImageIO.createImageInputStream(fis)) {
+                ImageInputStream iis = ImageIO.createImageInputStream(fis)) {
             Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName("TIFF");
             if (!readers.hasNext()) {
                 logger.warn("No TIFF readers available for file: {}", file.getName());
@@ -180,8 +174,10 @@ public class UtilityFunctions {
             double yPos = getRational(tiffDir, BaselineTIFFTagSet.TAG_Y_POSITION);
 
             // Extract width and height (pixels)
-            int width = (int) tiffDir.getTIFFField(BaselineTIFFTagSet.TAG_IMAGE_WIDTH).getAsLong(0);
-            int height = (int) tiffDir.getTIFFField(BaselineTIFFTagSet.TAG_IMAGE_LENGTH).getAsLong(0);
+            int width = (int)
+                    tiffDir.getTIFFField(BaselineTIFFTagSet.TAG_IMAGE_WIDTH).getAsLong(0);
+            int height = (int)
+                    tiffDir.getTIFFField(BaselineTIFFTagSet.TAG_IMAGE_LENGTH).getAsLong(0);
 
             reader.dispose();
 
@@ -189,8 +185,15 @@ public class UtilityFunctions {
             int xPx = (int) Math.round(xRes * xPos);
             int yPx = (int) Math.round(yRes * yPos);
 
-            logger.info("Extracted Vectra region from {} with fudge factors (X: {}, Y: {}): x={}, y={}, width={}, height={}",
-                    file.getName(), xFudgeFactor, yFudgeFactor, xPx, yPx, width, height);
+            logger.info(
+                    "Extracted Vectra region from {} with fudge factors (X: {}, Y: {}): x={}, y={}, width={}, height={}",
+                    file.getName(),
+                    xFudgeFactor,
+                    yFudgeFactor,
+                    xPx,
+                    yPx,
+                    width,
+                    height);
             return new VectraRegionInfo(xPx, yPx, width, height);
         } catch (Exception e) {
             logger.error("Failed to extract Vectra region info from {}", file.getName(), e);
@@ -221,7 +224,7 @@ public class UtilityFunctions {
             return -1;
         }
         try (FileInputStream fis = new FileInputStream(file);
-             ImageInputStream iis = ImageIO.createImageInputStream(fis)) {
+                ImageInputStream iis = ImageIO.createImageInputStream(fis)) {
             Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName("TIFF");
             if (!readers.hasNext()) {
                 return -1;
@@ -258,8 +261,12 @@ public class UtilityFunctions {
             }
 
             reader.dispose();
-            logger.debug("Read pixel size from {}: {} um (xRes={}, unit={})",
-                    file.getName(), pixelSizeMicrons, xRes, resUnit);
+            logger.debug(
+                    "Read pixel size from {}: {} um (xRes={}, unit={})",
+                    file.getName(),
+                    pixelSizeMicrons,
+                    xRes,
+                    resUnit);
             return pixelSizeMicrons;
         } catch (Exception e) {
             logger.debug("Could not read pixel size from {}: {}", file.getName(), e.getMessage());
@@ -293,6 +300,7 @@ public class UtilityFunctions {
      */
     public static class VectraRegionInfo {
         public final int xPx, yPx, width, height;
+
         public VectraRegionInfo(int xPx, int yPx, int width, int height) {
             this.xPx = xPx;
             this.yPx = yPx;
@@ -300,6 +308,4 @@ public class UtilityFunctions {
             this.height = height;
         }
     }
-
-
 }

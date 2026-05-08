@@ -122,9 +122,7 @@ public class ChannelMerger {
             }
 
             if (sources.size() < 2) {
-                logger.warn(
-                        "ChannelMerger: need at least 2 sources to merge, got {}. Skipping merge.",
-                        sources.size());
+                logger.warn("ChannelMerger: need at least 2 sources to merge, got {}. Skipping merge.", sources.size());
                 return null;
             }
 
@@ -155,5 +153,4 @@ public class ChannelMerger {
             }
         }
     }
-
 }

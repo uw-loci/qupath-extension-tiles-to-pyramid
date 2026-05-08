@@ -8,10 +8,5 @@ import java.util.List;
  */
 public interface StitchingStrategy {
     List<TileMapping> prepareStitching(
-            String folderPath,
-            double pixelSizeInMicrons,
-            double baseDownsample,
-            String matchingString
-    );
-
+            String folderPath, double pixelSizeInMicrons, double baseDownsample, String matchingString);
 }

@@ -1,5 +1,10 @@
 package qupath.ext.basicstitching.assembly;
 
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.basicstitching.stitching.TileMapping;
@@ -8,12 +13,6 @@ import qupath.lib.images.servers.ImageServerMetadata;
 import qupath.lib.images.servers.ImageServerProvider;
 import qupath.lib.images.servers.SparseImageServer;
 import qupath.lib.regions.ImageRegion;
-
-import java.awt.image.BufferedImage;
-import java.io.File;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * Assembles a list of tile mappings into a SparseImageServer, applying metadata for pixel and z-spacing.
@@ -35,7 +34,8 @@ public class ImageAssembler {
      * @param zSpacingMicrons Z spacing for the final image (in microns)
      * @return ImageServer with correct metadata, or null on failure
      */
-    public static ImageServer<BufferedImage> assemble(List<TileMapping> mappings, double pixelSizeMicrons, double zSpacingMicrons) throws IOException {
+    public static ImageServer<BufferedImage> assemble(
+            List<TileMapping> mappings, double pixelSizeMicrons, double zSpacingMicrons) throws IOException {
         return assemble(mappings, pixelSizeMicrons, zSpacingMicrons, true);
     }
 
@@ -48,8 +48,9 @@ public class ImageAssembler {
      * @param whiteBackgroundForRGB If true, RGB images will have white background for empty regions
      * @return ImageServer with correct metadata, or null on failure
      */
-    public static ImageServer<BufferedImage> assemble(List<TileMapping> mappings, double pixelSizeMicrons,
-                                                       double zSpacingMicrons, boolean whiteBackgroundForRGB) throws IOException {
+    public static ImageServer<BufferedImage> assemble(
+            List<TileMapping> mappings, double pixelSizeMicrons, double zSpacingMicrons, boolean whiteBackgroundForRGB)
+            throws IOException {
         if (mappings == null || mappings.isEmpty()) {
             logger.error("No tile mappings provided to assembler.");
             return null;
@@ -66,7 +67,9 @@ public class ImageAssembler {
                 logger.warn("Null file or region in mapping, skipping...");
                 continue;
             }
-            var serverBuilders = ImageServerProvider.getPreferredUriImageSupport(BufferedImage.class, file.toURI().toString()).getBuilders();
+            var serverBuilders = ImageServerProvider.getPreferredUriImageSupport(
+                            BufferedImage.class, file.toURI().toString())
+                    .getBuilders();
             if (serverBuilders.isEmpty()) {
                 logger.error("No server builders for file: {}", file.getName());
                 continue;
@@ -123,8 +126,7 @@ public class ImageAssembler {
                         region.getWidth(),
                         region.getHeight(),
                         region.getZ(),
-                        region.getT()
-                ));
+                        region.getT()));
             }
             logger.debug("Translated {} regions by offset ({}, {})", translatedRegions.size(), originX, originY);
 
@@ -132,8 +134,10 @@ public class ImageAssembler {
             // Only return wrapped server if it will actually apply white background
             // Otherwise return the raw server to avoid unnecessary wrapping overhead
             if (sparseServer.isRGB() || sparseServer.nChannels() == 3) {
-                logger.info("Color image detected (isRGB={}, nChannels={}) - using white background wrapper",
-                           sparseServer.isRGB(), sparseServer.nChannels());
+                logger.info(
+                        "Color image detected (isRGB={}, nChannels={}) - using white background wrapper",
+                        sparseServer.isRGB(),
+                        sparseServer.nChannels());
                 return wrappedServer;
             }
         }
@@ -152,8 +156,8 @@ public class ImageAssembler {
      * @param zSpacingMicrons Z spacing for the final image (in microns)
      * @return SparseImageServer with correct metadata, or null on failure
      */
-    public static SparseImageServer assembleRaw(List<TileMapping> mappings, double pixelSizeMicrons,
-                                                 double zSpacingMicrons) throws IOException {
+    public static SparseImageServer assembleRaw(
+            List<TileMapping> mappings, double pixelSizeMicrons, double zSpacingMicrons) throws IOException {
         ImageServer<BufferedImage> server = assemble(mappings, pixelSizeMicrons, zSpacingMicrons, false);
         if (server instanceof SparseImageServer) {
             return (SparseImageServer) server;

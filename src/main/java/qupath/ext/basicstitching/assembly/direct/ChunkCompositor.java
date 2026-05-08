@@ -1,14 +1,13 @@
 package qupath.ext.basicstitching.assembly.direct;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.ext.basicstitching.stitching.TileMapping;
-
 import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.ext.basicstitching.stitching.TileMapping;
 
 /**
  * Composites source tiles into output chunk buffers.
@@ -41,9 +40,13 @@ public class ChunkCompositor {
      * @param isRGB Whether the image is RGB (affects buffer type and background)
      * @param bitDepth Bits per sample (8 or 16)
      */
-    public ChunkCompositor(TileReaderPool readerPool, TileSpatialIndex spatialIndex,
-                           BlendStrategy blendStrategy, boolean whiteBackground,
-                           boolean isRGB, int bitDepth) {
+    public ChunkCompositor(
+            TileReaderPool readerPool,
+            TileSpatialIndex spatialIndex,
+            BlendStrategy blendStrategy,
+            boolean whiteBackground,
+            boolean isRGB,
+            int bitDepth) {
         this.readerPool = readerPool;
         this.spatialIndex = spatialIndex;
         this.blendStrategy = blendStrategy;
@@ -109,9 +112,13 @@ public class ChunkCompositor {
                     // Raw raster transfer -- matches QuPath's SparseImageServer approach.
                     // Preserves all data types exactly (including TYPE_CUSTOM / unusual
                     // bit depths) without going through the Java2D rendering pipeline.
-                    output.getRaster().setDataElements(
-                            dstX, dstY, isectW, isectH,
-                            tileData.getRaster().getDataElements(0, 0, isectW, isectH, null));
+                    output.getRaster()
+                            .setDataElements(
+                                    dstX,
+                                    dstY,
+                                    isectW,
+                                    isectH,
+                                    tileData.getRaster().getDataElements(0, 0, isectW, isectH, null));
                 } else {
                     // Type mismatch (e.g. TYPE_3BYTE_BGR tile into TYPE_INT_RGB output).
                     // Use Graphics2D which handles the conversion automatically.

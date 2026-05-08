@@ -1,16 +1,5 @@
 package qupath.ext.basicstitching.assembly.direct;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.lib.images.servers.ImageChannel;
-import qupath.lib.images.servers.ImageServer;
-import qupath.lib.images.servers.ImageServerMetadata;
-import qupath.lib.images.servers.ImageServerBuilder.ServerBuilder;
-import qupath.lib.images.servers.PixelType;
-import qupath.lib.images.servers.TileRequest;
-import qupath.lib.images.servers.TileRequestManager;
-import qupath.lib.regions.RegionRequest;
-
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.net.URI;
@@ -18,6 +7,16 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.lib.images.servers.ImageChannel;
+import qupath.lib.images.servers.ImageServer;
+import qupath.lib.images.servers.ImageServerBuilder.ServerBuilder;
+import qupath.lib.images.servers.ImageServerMetadata;
+import qupath.lib.images.servers.PixelType;
+import qupath.lib.images.servers.TileRequest;
+import qupath.lib.images.servers.TileRequestManager;
+import qupath.lib.regions.RegionRequest;
 
 /**
  * A read-only {@link ImageServer} backed by a {@link ChunkCompositor} and
@@ -57,10 +56,16 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
      * @param pixelSizeMicrons Pixel size for metadata
      * @param zSpacingMicrons Z-spacing for metadata
      */
-    public CompositorImageServer(ChunkCompositor compositor, TileReaderPool readerPool,
-                                 int imageWidth, int imageHeight,
-                                 int nChannels, boolean isRGB, int bitDepth,
-                                 double pixelSizeMicrons, double zSpacingMicrons) {
+    public CompositorImageServer(
+            ChunkCompositor compositor,
+            TileReaderPool readerPool,
+            int imageWidth,
+            int imageHeight,
+            int nChannels,
+            boolean isRGB,
+            int bitDepth,
+            double pixelSizeMicrons,
+            double zSpacingMicrons) {
         this.compositor = compositor;
         this.readerPool = readerPool;
         this.isRGB = isRGB;
@@ -100,8 +105,13 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
 
         this.metadata = builder.build();
 
-        logger.info("CompositorImageServer created: {}x{}, {} channels, {} bit, RGB={}",
-                imageWidth, imageHeight, nChannels, bitDepth, isRGB);
+        logger.info(
+                "CompositorImageServer created: {}x{}, {} channels, {} bit, RGB={}",
+                imageWidth,
+                imageHeight,
+                nChannels,
+                bitDepth,
+                isRGB);
     }
 
     // --- Core pixel data method ---
@@ -148,8 +158,7 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
         var g = scaled.createGraphics();
         try {
             g.setRenderingHint(
-                    java.awt.RenderingHints.KEY_INTERPOLATION,
-                    java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                    java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
             g.drawImage(fullRes, 0, 0, outW, outH, null);
         } finally {
             g.dispose();
@@ -159,8 +168,8 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
     }
 
     @Override
-    public BufferedImage readRegion(double downsample, int x, int y, int width, int height,
-                                    int z, int t) throws IOException {
+    public BufferedImage readRegion(double downsample, int x, int y, int width, int height, int z, int t)
+            throws IOException {
         return readRegion(RegionRequest.createInstance(getPath(), downsample, x, y, width, height, z, t));
     }
 
@@ -173,7 +182,9 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
             g.dispose();
             return img;
         }
-        return new BufferedImage(width, height,
+        return new BufferedImage(
+                width,
+                height,
                 metadata.getPixelType() == PixelType.UINT16
                         ? BufferedImage.TYPE_USHORT_GRAY
                         : BufferedImage.TYPE_BYTE_GRAY);

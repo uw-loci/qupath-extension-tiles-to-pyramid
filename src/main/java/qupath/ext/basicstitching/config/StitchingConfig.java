@@ -90,8 +90,7 @@ public class StitchingConfig {
             double zSpacingMicrons,
             double xFudgeFactor,
             double yFudgeFactor,
-            OutputFormat outputFormat
-    ) {
+            OutputFormat outputFormat) {
         this.stitchingType = stitchingType;
         this.folderPath = folderPath;
         this.outputPath = outputPath;
@@ -122,11 +121,19 @@ public class StitchingConfig {
             String matchingString,
             double zSpacingMicrons,
             double xFudgeFactor,
-            double yFudgeFactor
-    ) {
-        this(stitchingType, folderPath, outputPath, compressionType,
-                pixelSizeInMicrons, baseDownsample, matchingString,
-                zSpacingMicrons, xFudgeFactor, yFudgeFactor, OutputFormat.OME_TIFF);
+            double yFudgeFactor) {
+        this(
+                stitchingType,
+                folderPath,
+                outputPath,
+                compressionType,
+                pixelSizeInMicrons,
+                baseDownsample,
+                matchingString,
+                zSpacingMicrons,
+                xFudgeFactor,
+                yFudgeFactor,
+                OutputFormat.OME_TIFF);
     }
 
     /**
@@ -152,11 +159,19 @@ public class StitchingConfig {
             double baseDownsample,
             String matchingString,
             double zSpacingMicrons,
-            OutputFormat outputFormat
-    ) {
-        this(stitchingType, folderPath, outputPath, compressionType,
-                pixelSizeInMicrons, baseDownsample, matchingString,
-                zSpacingMicrons, 1.0, 1.0, outputFormat);
+            OutputFormat outputFormat) {
+        this(
+                stitchingType,
+                folderPath,
+                outputPath,
+                compressionType,
+                pixelSizeInMicrons,
+                baseDownsample,
+                matchingString,
+                zSpacingMicrons,
+                1.0,
+                1.0,
+                outputFormat);
     }
 
     /**
@@ -175,10 +190,18 @@ public class StitchingConfig {
             double pixelSizeInMicrons,
             double baseDownsample,
             String matchingString,
-            double zSpacingMicrons
-    ) {
-        this(stitchingType, folderPath, outputPath, compressionType,
-                pixelSizeInMicrons, baseDownsample, matchingString,
-                zSpacingMicrons, 1.0, 1.0, OutputFormat.OME_TIFF);
+            double zSpacingMicrons) {
+        this(
+                stitchingType,
+                folderPath,
+                outputPath,
+                compressionType,
+                pixelSizeInMicrons,
+                baseDownsample,
+                matchingString,
+                zSpacingMicrons,
+                1.0,
+                1.0,
+                OutputFormat.OME_TIFF);
     }
 }

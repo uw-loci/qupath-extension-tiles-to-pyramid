@@ -5,9 +5,6 @@ import com.bc.zarr.Compressor;
 import com.bc.zarr.DataType;
 import com.bc.zarr.ZarrArray;
 import com.bc.zarr.ZarrGroup;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -17,6 +14,8 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Writes OME-ZARR output directly using JZarr, bypassing QuPath's OMEZarrWriter
@@ -75,9 +74,17 @@ public class ZarrOutputWriter implements AutoCloseable {
      * @param chunkSize Chunk size in pixels (typically 1024)
      * @param numPyramidLevels Number of pyramid levels to create
      */
-    public void initialize(int imageWidth, int imageHeight, int nChannels, boolean isRGB,
-                           int bitDepth, double pixelSizeMicrons, double zSpacingMicrons,
-                           int chunkSize, int numPyramidLevels) throws IOException {
+    public void initialize(
+            int imageWidth,
+            int imageHeight,
+            int nChannels,
+            boolean isRGB,
+            int bitDepth,
+            double pixelSizeMicrons,
+            double zSpacingMicrons,
+            int chunkSize,
+            int numPyramidLevels)
+            throws IOException {
         this.imageWidth = imageWidth;
         this.imageHeight = imageHeight;
         this.nChannels = nChannels;
@@ -85,8 +92,14 @@ public class ZarrOutputWriter implements AutoCloseable {
         this.bitDepth = bitDepth;
         this.chunkSize = chunkSize;
 
-        logger.info("Initializing ZARR writer: {}x{}, {} channels, {} bit, {} levels, chunk={}",
-                imageWidth, imageHeight, nChannels, bitDepth, numPyramidLevels, chunkSize);
+        logger.info(
+                "Initializing ZARR writer: {}x{}, {} channels, {} bit, {} levels, chunk={}",
+                imageWidth,
+                imageHeight,
+                nChannels,
+                bitDepth,
+                numPyramidLevels,
+                chunkSize);
 
         // Create root group
         rootGroup = ZarrGroup.create(outputPath);
@@ -107,11 +120,11 @@ public class ZarrOutputWriter implements AutoCloseable {
             int[] shape;
             int[] chunks;
             if (nChannels > 1) {
-                shape = new int[]{nChannels, levelH, levelW};
-                chunks = new int[]{nChannels, levelChunkH, levelChunkW};
+                shape = new int[] {nChannels, levelH, levelW};
+                chunks = new int[] {nChannels, levelChunkH, levelChunkW};
             } else {
-                shape = new int[]{levelH, levelW};
-                chunks = new int[]{levelChunkH, levelChunkW};
+                shape = new int[] {levelH, levelW};
+                chunks = new int[] {levelChunkH, levelChunkW};
             }
 
             ArrayParams params = new ArrayParams()
@@ -133,8 +146,11 @@ public class ZarrOutputWriter implements AutoCloseable {
             }
             levelArrays[level].writeAttributes(arrayAttrs);
 
-            logger.debug("Created level {} array: shape={}, chunks={}",
-                    level, Arrays.toString(shape), Arrays.toString(chunks));
+            logger.debug(
+                    "Created level {} array: shape={}, chunks={}",
+                    level,
+                    Arrays.toString(shape),
+                    Arrays.toString(chunks));
         }
 
         // Write NGFF 0.4 metadata to root .zattrs
@@ -249,34 +265,33 @@ public class ZarrOutputWriter implements AutoCloseable {
                 write8BitChunk(array, image, w, h, chunkX, chunkY);
             }
         } catch (Exception e) {
-            throw new IOException("Error writing chunk at level=" + level +
-                    " (" + chunkX + "," + chunkY + ")", e);
+            throw new IOException("Error writing chunk at level=" + level + " (" + chunkX + "," + chunkY + ")", e);
         }
     }
 
     /**
      * Write RGB chunk as [C=3, Y, X] byte data.
      */
-    private void writeRGBChunk(ZarrArray array, BufferedImage image, int w, int h,
-                               int chunkX, int chunkY) throws Exception {
+    private void writeRGBChunk(ZarrArray array, BufferedImage image, int w, int h, int chunkX, int chunkY)
+            throws Exception {
         byte[] data = new byte[nChannels * h * w];
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
                 int rgb = image.getRGB(x, y);
                 int idx = y * w + x;
-                data[idx] = (byte) ((rgb >> 16) & 0xFF);               // R -> channel 0
-                data[h * w + idx] = (byte) ((rgb >> 8) & 0xFF);        // G -> channel 1
-                data[2 * h * w + idx] = (byte) (rgb & 0xFF);           // B -> channel 2
+                data[idx] = (byte) ((rgb >> 16) & 0xFF); // R -> channel 0
+                data[h * w + idx] = (byte) ((rgb >> 8) & 0xFF); // G -> channel 1
+                data[2 * h * w + idx] = (byte) (rgb & 0xFF); // B -> channel 2
             }
         }
-        array.write(data, new int[]{nChannels, h, w}, new int[]{0, chunkY, chunkX});
+        array.write(data, new int[] {nChannels, h, w}, new int[] {0, chunkY, chunkX});
     }
 
     /**
      * Write 16-bit single-channel chunk.
      */
-    private void write16BitChunk(ZarrArray array, BufferedImage image, int w, int h,
-                                 int chunkX, int chunkY) throws Exception {
+    private void write16BitChunk(ZarrArray array, BufferedImage image, int w, int h, int chunkX, int chunkY)
+            throws Exception {
         int[] samples = new int[h * w];
         image.getRaster().getSamples(0, 0, w, h, 0, samples);
         short[] data = new short[h * w];
@@ -285,17 +300,17 @@ public class ZarrOutputWriter implements AutoCloseable {
         }
 
         if (nChannels > 1) {
-            array.write(data, new int[]{1, h, w}, new int[]{0, chunkY, chunkX});
+            array.write(data, new int[] {1, h, w}, new int[] {0, chunkY, chunkX});
         } else {
-            array.write(data, new int[]{h, w}, new int[]{chunkY, chunkX});
+            array.write(data, new int[] {h, w}, new int[] {chunkY, chunkX});
         }
     }
 
     /**
      * Write 8-bit single-channel chunk.
      */
-    private void write8BitChunk(ZarrArray array, BufferedImage image, int w, int h,
-                                int chunkX, int chunkY) throws Exception {
+    private void write8BitChunk(ZarrArray array, BufferedImage image, int w, int h, int chunkX, int chunkY)
+            throws Exception {
         int[] samples = new int[h * w];
         image.getRaster().getSamples(0, 0, w, h, 0, samples);
         byte[] data = new byte[h * w];
@@ -304,9 +319,9 @@ public class ZarrOutputWriter implements AutoCloseable {
         }
 
         if (nChannels > 1) {
-            array.write(data, new int[]{1, h, w}, new int[]{0, chunkY, chunkX});
+            array.write(data, new int[] {1, h, w}, new int[] {0, chunkY, chunkX});
         } else {
-            array.write(data, new int[]{h, w}, new int[]{chunkY, chunkX});
+            array.write(data, new int[] {h, w}, new int[] {chunkY, chunkX});
         }
     }
 
@@ -321,18 +336,18 @@ public class ZarrOutputWriter implements AutoCloseable {
      * @param height Data height
      * @param width Data width
      */
-    public void writeRawData(Object data, int level, int offsetY, int offsetX,
-                             int height, int width) throws IOException {
+    public void writeRawData(Object data, int level, int offsetY, int offsetX, int height, int width)
+            throws IOException {
         try {
             ZarrArray array = levelArrays[level];
             if (nChannels > 1) {
-                array.write(data, new int[]{nChannels, height, width}, new int[]{0, offsetY, offsetX});
+                array.write(data, new int[] {nChannels, height, width}, new int[] {0, offsetY, offsetX});
             } else {
-                array.write(data, new int[]{height, width}, new int[]{offsetY, offsetX});
+                array.write(data, new int[] {height, width}, new int[] {offsetY, offsetX});
             }
         } catch (Exception e) {
-            throw new IOException("Error writing raw data at level " + level +
-                    " offset=(" + offsetX + "," + offsetY + ")", e);
+            throw new IOException(
+                    "Error writing raw data at level " + level + " offset=(" + offsetX + "," + offsetY + ")", e);
         }
     }
 
@@ -347,18 +362,17 @@ public class ZarrOutputWriter implements AutoCloseable {
      * @param width Read width
      * @return Flat array (byte[] for 8-bit, short[] for 16-bit)
      */
-    public Object readRawData(int level, int offsetY, int offsetX,
-                              int height, int width) throws IOException {
+    public Object readRawData(int level, int offsetY, int offsetX, int height, int width) throws IOException {
         try {
             ZarrArray array = levelArrays[level];
             if (nChannels > 1) {
-                return array.read(new int[]{nChannels, height, width}, new int[]{0, offsetY, offsetX});
+                return array.read(new int[] {nChannels, height, width}, new int[] {0, offsetY, offsetX});
             } else {
-                return array.read(new int[]{height, width}, new int[]{offsetY, offsetX});
+                return array.read(new int[] {height, width}, new int[] {offsetY, offsetX});
             }
         } catch (Exception e) {
-            throw new IOException("Error reading data at level " + level +
-                    " offset=(" + offsetX + "," + offsetY + ")", e);
+            throw new IOException(
+                    "Error reading data at level " + level + " offset=(" + offsetX + "," + offsetY + ")", e);
         }
     }
 
@@ -372,10 +386,21 @@ public class ZarrOutputWriter implements AutoCloseable {
         return Math.max(1, imageHeight / (1 << level));
     }
 
-    public int getNumChannels() { return nChannels; }
-    public boolean isRGB() { return isRGB; }
-    public int getBitDepth() { return bitDepth; }
-    public int getChunkSize() { return chunkSize; }
+    public int getNumChannels() {
+        return nChannels;
+    }
+
+    public boolean isRGB() {
+        return isRGB;
+    }
+
+    public int getBitDepth() {
+        return bitDepth;
+    }
+
+    public int getChunkSize() {
+        return chunkSize;
+    }
 
     @Override
     public void close() throws IOException {

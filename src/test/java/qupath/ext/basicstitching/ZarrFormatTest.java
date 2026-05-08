@@ -1,9 +1,9 @@
 package qupath.ext.basicstitching;
 
+import static org.junit.jupiter.api.Assertions.*;
+
 import org.junit.jupiter.api.Test;
 import qupath.ext.basicstitching.config.StitchingConfig;
-
-import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Unit tests for ZARR format support in the tiles-to-pyramid extension.
@@ -48,20 +48,18 @@ public class ZarrFormatTest {
     @Test
     public void testStitchingConfigWithOutputFormat() {
         StitchingConfig config = new StitchingConfig(
-            "filename",
-            "/test/input",
-            "/test/output",
-            "zstd",
-            0.5,
-            1.0,
-            "test",
-            1.0,
-            StitchingConfig.OutputFormat.OME_ZARR
-        );
+                "filename",
+                "/test/input",
+                "/test/output",
+                "zstd",
+                0.5,
+                1.0,
+                "test",
+                1.0,
+                StitchingConfig.OutputFormat.OME_ZARR);
 
         assertNotNull(config, "Config should be created successfully");
-        assertEquals(StitchingConfig.OutputFormat.OME_ZARR, config.outputFormat,
-                    "Output format should be OME_ZARR");
+        assertEquals(StitchingConfig.OutputFormat.OME_ZARR, config.outputFormat, "Output format should be OME_ZARR");
         assertEquals("zstd", config.compressionType, "Compression type should be zstd");
     }
 
@@ -71,20 +69,14 @@ public class ZarrFormatTest {
     @Test
     @SuppressWarnings("deprecation")
     public void testDeprecatedConstructorDefaultsToOMETIFF() {
-        StitchingConfig config = new StitchingConfig(
-            "filename",
-            "/test/input",
-            "/test/output",
-            "LZW",
-            0.5,
-            1.0,
-            "test",
-            1.0
-        );
+        StitchingConfig config =
+                new StitchingConfig("filename", "/test/input", "/test/output", "LZW", 0.5, 1.0, "test", 1.0);
 
         assertNotNull(config, "Config should be created successfully");
-        assertEquals(StitchingConfig.OutputFormat.OME_TIFF, config.outputFormat,
-                    "Deprecated constructor should default to OME_TIFF");
+        assertEquals(
+                StitchingConfig.OutputFormat.OME_TIFF,
+                config.outputFormat,
+                "Deprecated constructor should default to OME_TIFF");
     }
 
     /**
@@ -93,18 +85,17 @@ public class ZarrFormatTest {
     @Test
     public void testStitchingConfigWithFudgeFactorsAndFormat() {
         StitchingConfig config = new StitchingConfig(
-            "vectra",
-            "/test/input",
-            "/test/output",
-            "lz4",
-            0.5,
-            1.0,
-            "test",
-            1.0,
-            1.05,  // xFudgeFactor
-            1.02,  // yFudgeFactor
-            StitchingConfig.OutputFormat.OME_ZARR
-        );
+                "vectra",
+                "/test/input",
+                "/test/output",
+                "lz4",
+                0.5,
+                1.0,
+                "test",
+                1.0,
+                1.05, // xFudgeFactor
+                1.02, // yFudgeFactor
+                StitchingConfig.OutputFormat.OME_ZARR);
 
         assertNotNull(config, "Config should be created successfully");
         assertEquals(StitchingConfig.OutputFormat.OME_ZARR, config.outputFormat);
@@ -126,17 +117,29 @@ public class ZarrFormatTest {
         // Verify that config accepts both TIFF and ZARR compression types
         for (String compression : tiffCompressions) {
             StitchingConfig config = new StitchingConfig(
-                "filename", "/in", "/out", compression, 0.5, 1.0, "test", 1.0,
-                StitchingConfig.OutputFormat.OME_ZARR
-            );
+                    "filename",
+                    "/in",
+                    "/out",
+                    compression,
+                    0.5,
+                    1.0,
+                    "test",
+                    1.0,
+                    StitchingConfig.OutputFormat.OME_ZARR);
             assertNotNull(config, "Should accept TIFF compression: " + compression);
         }
 
         for (String compression : zarrCompressions) {
             StitchingConfig config = new StitchingConfig(
-                "filename", "/in", "/out", compression, 0.5, 1.0, "test", 1.0,
-                StitchingConfig.OutputFormat.OME_ZARR
-            );
+                    "filename",
+                    "/in",
+                    "/out",
+                    compression,
+                    0.5,
+                    1.0,
+                    "test",
+                    1.0,
+                    StitchingConfig.OutputFormat.OME_ZARR);
             assertNotNull(config, "Should accept ZARR compression: " + compression);
         }
     }
@@ -150,18 +153,18 @@ public class ZarrFormatTest {
         // This is tested in integration tests, but we verify the config accepts null
 
         StitchingConfig config = new StitchingConfig(
-            "filename",
-            "/test/input",
-            "/test/output",
-            "LZW",
-            0.5,
-            1.0,
-            "test",
-            1.0,
-            1.0,
-            1.0,
-            null  // null output format
-        );
+                "filename",
+                "/test/input",
+                "/test/output",
+                "LZW",
+                0.5,
+                1.0,
+                "test",
+                1.0,
+                1.0,
+                1.0,
+                null // null output format
+                );
 
         // The config should still be created, even with null format
         assertNotNull(config, "Config should accept null output format");

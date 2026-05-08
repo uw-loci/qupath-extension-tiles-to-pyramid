@@ -1,13 +1,12 @@
 package qupath.ext.basicstitching.assembly.direct;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.ext.basicstitching.stitching.TileMapping;
-
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.ext.basicstitching.stitching.TileMapping;
 
 /**
  * Grid-based spatial index for fast tile lookup by region.
@@ -66,8 +65,15 @@ public class TileSpatialIndex {
         this.gridCols = (int) Math.ceil((double) imageWidth / chunkSize);
         this.gridRows = (int) Math.ceil((double) imageHeight / chunkSize);
 
-        logger.info("Spatial index: {}x{} image, {}x{} grid (chunk={}), origin=({},{})",
-                imageWidth, imageHeight, gridCols, gridRows, chunkSize, originX, originY);
+        logger.info(
+                "Spatial index: {}x{} image, {}x{} grid (chunk={}), origin=({},{})",
+                imageWidth,
+                imageHeight,
+                gridCols,
+                gridRows,
+                chunkSize,
+                originX,
+                originY);
 
         // Initialize grid cells
         grid = new List[gridRows][gridCols];
@@ -105,8 +111,11 @@ public class TileSpatialIndex {
                 totalEntries += grid[r][c].size();
             }
         }
-        logger.info("Spatial index populated: {} tiles, max {} per cell, {} total entries",
-                mappings.size(), maxPerCell, totalEntries);
+        logger.info(
+                "Spatial index populated: {} tiles, max {} per cell, {} total entries",
+                mappings.size(),
+                maxPerCell,
+                totalEntries);
     }
 
     /**
@@ -137,20 +146,32 @@ public class TileSpatialIndex {
     }
 
     /** Full image width in pixels (origin-translated). */
-    public int getImageWidth() { return imageWidth; }
+    public int getImageWidth() {
+        return imageWidth;
+    }
 
     /** Full image height in pixels (origin-translated). */
-    public int getImageHeight() { return imageHeight; }
+    public int getImageHeight() {
+        return imageHeight;
+    }
 
     /** X origin offset -- subtract from tile coordinates to get 0-based positions. */
-    public int getOriginX() { return originX; }
+    public int getOriginX() {
+        return originX;
+    }
 
     /** Y origin offset -- subtract from tile coordinates to get 0-based positions. */
-    public int getOriginY() { return originY; }
+    public int getOriginY() {
+        return originY;
+    }
 
     /** Number of grid columns. */
-    public int getGridCols() { return gridCols; }
+    public int getGridCols() {
+        return gridCols;
+    }
 
     /** Number of grid rows. */
-    public int getGridRows() { return gridRows; }
+    public int getGridRows() {
+        return gridRows;
+    }
 }

@@ -1,24 +1,22 @@
 package qupath.ext.basicstitching.assembly;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import qupath.lib.images.servers.ImageChannel;
-import qupath.lib.images.servers.ImageServer;
-import qupath.lib.images.servers.ImageServerMetadata;
-import qupath.lib.images.servers.ImageServerBuilder.ServerBuilder;
-import qupath.lib.images.servers.PixelType;
-import qupath.lib.images.servers.TileRequest;
-import qupath.lib.images.servers.TileRequestManager;
-import qupath.lib.regions.ImageRegion;
-import qupath.lib.regions.RegionRequest;
-
-import java.util.List;
-
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.net.URI;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import qupath.lib.images.servers.ImageChannel;
+import qupath.lib.images.servers.ImageServer;
+import qupath.lib.images.servers.ImageServerBuilder.ServerBuilder;
+import qupath.lib.images.servers.ImageServerMetadata;
+import qupath.lib.images.servers.PixelType;
+import qupath.lib.images.servers.TileRequest;
+import qupath.lib.images.servers.TileRequestManager;
+import qupath.lib.regions.ImageRegion;
+import qupath.lib.regions.RegionRequest;
 
 /**
  * A wrapper ImageServer that fills empty regions with white for RGB/color images.
@@ -70,8 +68,7 @@ public class WhiteBackgroundImageServer implements ImageServer<BufferedImage> {
 
         // Determine if this is a color image that should have white background
         // isRGB() only returns true for 8-bit RGB, so also check for 3-channel images
-        boolean isColorImage = server.isRGB() ||
-                              (server.nChannels() == 3 && !isFluorescenceImage(server));
+        boolean isColorImage = server.isRGB() || (server.nChannels() == 3 && !isFluorescenceImage(server));
         this.applyWhiteBackground = isColorImage;
 
         // Get the maximum pixel value, respecting effective bit depth (12-bit, 14-bit, etc.)
@@ -81,12 +78,16 @@ public class WhiteBackgroundImageServer implements ImageServer<BufferedImage> {
 
         if (applyWhiteBackground) {
             logger.debug("WhiteBackgroundImageServer: Will apply white background for color image");
-            logger.debug("  - isRGB: {}, nChannels: {}, pixelType: {}, maxValue: {}",
-                    server.isRGB(), server.nChannels(),
-                    server.getMetadata().getPixelType(), this.maxValue);
+            logger.debug(
+                    "  - isRGB: {}, nChannels: {}, pixelType: {}, maxValue: {}",
+                    server.isRGB(),
+                    server.nChannels(),
+                    server.getMetadata().getPixelType(),
+                    this.maxValue);
             logger.debug("  - Covered regions: {}", this.coveredRegions.size());
         } else {
-            logger.debug("WhiteBackgroundImageServer: Skipping white background for non-color image (pass-through mode)");
+            logger.debug(
+                    "WhiteBackgroundImageServer: Skipping white background for non-color image (pass-through mode)");
         }
     }
 
@@ -103,10 +104,17 @@ public class WhiteBackgroundImageServer implements ImageServer<BufferedImage> {
         // Common fluorescence channel patterns
         for (var channel : channels) {
             String name = channel.getName().toLowerCase();
-            if (name.contains("dapi") || name.contains("fitc") || name.contains("cy") ||
-                name.contains("alexa") || name.contains("rhodamine") || name.contains("gfp") ||
-                name.contains("rfp") || name.contains("yfp") || name.contains("cfp") ||
-                name.contains("hoechst") || name.contains("sytox")) {
+            if (name.contains("dapi")
+                    || name.contains("fitc")
+                    || name.contains("cy")
+                    || name.contains("alexa")
+                    || name.contains("rhodamine")
+                    || name.contains("gfp")
+                    || name.contains("rfp")
+                    || name.contains("yfp")
+                    || name.contains("cfp")
+                    || name.contains("hoechst")
+                    || name.contains("sytox")) {
                 return true;
             }
         }
@@ -195,9 +203,15 @@ public class WhiteBackgroundImageServer implements ImageServer<BufferedImage> {
      * Properly handles different bit depths (8-bit, 16-bit, etc.) by using the
      * maximum value for each sample based on the color model.
      */
-    private BufferedImage fillWithRegionTracking(BufferedImage img, int reqX, int reqY,
-                                                  int reqWidth, int reqHeight,
-                                                  double downsample, int outWidth, int outHeight) {
+    private BufferedImage fillWithRegionTracking(
+            BufferedImage img,
+            int reqX,
+            int reqY,
+            int reqWidth,
+            int reqHeight,
+            double downsample,
+            int outWidth,
+            int outHeight) {
         // Create a coverage mask for the requested region
         boolean[][] covered = new boolean[outHeight][outWidth];
 
@@ -247,8 +261,10 @@ public class WhiteBackgroundImageServer implements ImageServer<BufferedImage> {
             whiteValues[band] = this.maxValue;
         }
 
-        logger.trace("Filling uncovered regions with white value {} for {} bands (effective bit depth from metadata)",
-                    this.maxValue, numBands);
+        logger.trace(
+                "Filling uncovered regions with white value {} for {} bands (effective bit depth from metadata)",
+                this.maxValue,
+                numBands);
 
         // Fill uncovered pixels
         for (int y = 0; y < outHeight; y++) {
@@ -402,7 +418,8 @@ public class WhiteBackgroundImageServer implements ImageServer<BufferedImage> {
     }
 
     @Override
-    public BufferedImage readRegion(double downsample, int x, int y, int width, int height, int z, int t) throws IOException {
+    public BufferedImage readRegion(double downsample, int x, int y, int width, int height, int z, int t)
+            throws IOException {
         return readRegion(RegionRequest.createInstance(getPath(), downsample, x, y, width, height, z, t));
     }
 

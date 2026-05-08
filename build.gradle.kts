@@ -6,6 +6,8 @@ plugins {
     // QuPath Gradle extension convention plugin
     id("qupath-conventions")
     id("maven-publish")
+    // Auto-formatting (palantirJavaFormat) -- gates the build via `check`
+    id("com.diffplug.spotless") version "7.0.2"
     // Static bug detection
     id("com.github.spotbugs") version "6.5.0"
     // Note: Platform detection (osdetector) is already provided by qupath-conventions
@@ -70,6 +72,18 @@ dependencies {
     testImplementation(libs.junit)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
+}
+
+// ---------------------------------------------------------------------------
+// Spotless -- auto-formatting (gates the build via `check`)
+// ---------------------------------------------------------------------------
+spotless {
+    java {
+        target("src/**/*.java")
+        palantirJavaFormat("2.90.0")
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
 }
 
 // ---------------------------------------------------------------------------

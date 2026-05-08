@@ -1,11 +1,11 @@
 package qupath.ext.basicstitching.stitching;
 
+import java.nio.file.*;
+import java.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.basicstitching.utilities.UtilityFunctions;
 import qupath.lib.regions.ImageRegion;
-import java.nio.file.*;
-import java.util.*;
 
 /**
  * Stitching strategy that reads a TileConfiguration.txt for image positions.
@@ -50,8 +50,8 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
      * @return A list of TileMapping objects representing each tile's file, image region, and subdirectory.
      */
     @Override
-    public List<TileMapping> prepareStitching(String folderPath, double pixelSizeInMicrons,
-                                              double baseDownsample, String matchingString) {
+    public List<TileMapping> prepareStitching(
+            String folderPath, double pixelSizeInMicrons, double baseDownsample, String matchingString) {
         logger.info("Preparing stitching using TileConfiguration.txt strategy for folder: {}", folderPath);
         List<TileMapping> mappings = new ArrayList<>();
         Path rootdir = Paths.get(folderPath);
@@ -101,7 +101,8 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
      * @param baseDownsample Downsample factor
      * @return List of tile mappings for this directory
      */
-    private List<TileMapping> processDirectory(Path path, Path configPath, double pixelSizeInMicrons, double baseDownsample) {
+    private List<TileMapping> processDirectory(
+            Path path, Path configPath, double pixelSizeInMicrons, double baseDownsample) {
         List<TileMapping> mappings = new ArrayList<>();
 
         try {
@@ -152,15 +153,14 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
                 }
                 if (pos != null && dims != null) {
                     ImageRegion region = ImageRegion.createInstance(
-                            (int)Math.round(pos.x),
-                            (int)Math.round(pos.y),
+                            (int) Math.round(pos.x),
+                            (int) Math.round(pos.y),
                             dims.get("width"),
                             dims.get("height"),
-                            0, 0
-                    );
+                            0,
+                            0);
                     mappings.add(new TileMapping(
-                            tifPath.toFile(), region, path.getFileName().toString()
-                    ));
+                            tifPath.toFile(), region, path.getFileName().toString()));
                     logger.debug("Mapped {} at ({}, {}) from config", filename, pos.x, pos.y);
                 } else {
                     logger.warn("Missing config position or TIFF dimensions for {}", filename);
@@ -176,7 +176,8 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
     /**
      * Parse a TileConfiguration.txt file and return a mapping of file names to positions.
      */
-    private static Map<String, Position> parseTileConfig(Path configPath, double pixelSizeInMicrons, double baseDownsample) {
+    private static Map<String, Position> parseTileConfig(
+            Path configPath, double pixelSizeInMicrons, double baseDownsample) {
         Map<String, Position> map = new HashMap<>();
         boolean flipY = flipStitchingY;
         boolean flipX = flipStitchingX;
@@ -218,6 +219,10 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
     /** Holds a 2D position. */
     private static class Position {
         final double x, y;
-        Position(double x, double y) { this.x = x; this.y = y; }
+
+        Position(double x, double y) {
+            this.x = x;
+            this.y = y;
+        }
     }
 }

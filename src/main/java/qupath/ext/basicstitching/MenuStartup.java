@@ -3,6 +3,7 @@
 // =======================================================================================
 package qupath.ext.basicstitching;
 
+import java.util.ResourceBundle;
 import javafx.scene.control.MenuItem;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,8 +11,6 @@ import qupath.ext.basicstitching.functions.StitchingGUI;
 import qupath.lib.common.Version;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.extensions.QuPathExtension;
-
-import java.util.ResourceBundle;
 
 /**
  * TODO: create public functions so that stitching can be run from command line or a script
@@ -22,8 +21,7 @@ public class MenuStartup implements QuPathExtension {
 
     private static final Logger logger = LoggerFactory.getLogger(MenuStartup.class);
     private static final ResourceBundle res = ResourceBundle.getBundle("qupath.ext.basicstitching.ui.strings");
-    private static final Version EXTENSION_QUPATH_VERSION =
-            Version.parse("v0.6.0");
+    private static final Version EXTENSION_QUPATH_VERSION = Version.parse("v0.6.0");
 
     @Override
     public void installExtension(QuPathGUI qupath) {

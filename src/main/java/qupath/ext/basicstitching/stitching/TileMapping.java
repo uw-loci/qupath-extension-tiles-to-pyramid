@@ -1,7 +1,7 @@
 package qupath.ext.basicstitching.stitching;
 
-import qupath.lib.regions.ImageRegion;
 import java.io.File;
+import qupath.lib.regions.ImageRegion;
 
 public class TileMapping {
     public final File file;

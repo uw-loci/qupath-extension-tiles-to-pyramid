@@ -1,10 +1,9 @@
 package qupath.ext.basicstitching.assembly.direct;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.IOException;
 import java.util.function.Consumer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Generates downsampled pyramid levels by reading 2x2 blocks from the previous
@@ -27,9 +26,14 @@ public class PyramidLevelGenerator {
      * @param chunkSize Chunk size in pixels
      * @param progressCallback Progress callback (0.0 to 1.0 across all levels)
      */
-    public static void generateLevels(ZarrOutputWriter writer, int numLevels,
-                                      int baseWidth, int baseHeight, int chunkSize,
-                                      Consumer<Double> progressCallback) throws IOException {
+    public static void generateLevels(
+            ZarrOutputWriter writer,
+            int numLevels,
+            int baseWidth,
+            int baseHeight,
+            int chunkSize,
+            Consumer<Double> progressCallback)
+            throws IOException {
         if (numLevels <= 1) {
             return;
         }
@@ -42,8 +46,7 @@ public class PyramidLevelGenerator {
         for (int level = 1; level < numLevels; level++) {
             int levelW = writer.getLevelWidth(level);
             int levelH = writer.getLevelHeight(level);
-            totalChunks += (int) Math.ceil((double) levelW / chunkSize) *
-                           (int) Math.ceil((double) levelH / chunkSize);
+            totalChunks += (int) Math.ceil((double) levelW / chunkSize) * (int) Math.ceil((double) levelH / chunkSize);
         }
 
         int processedChunks = 0;
@@ -57,8 +60,7 @@ public class PyramidLevelGenerator {
             int chunksX = (int) Math.ceil((double) currW / chunkSize);
             int chunksY = (int) Math.ceil((double) currH / chunkSize);
 
-            logger.info("Generating pyramid level {}: {}x{} ({} chunks)",
-                    level, currW, currH, chunksX * chunksY);
+            logger.info("Generating pyramid level {}: {}x{} ({} chunks)", level, currW, currH, chunksX * chunksY);
 
             for (int cy = 0; cy < chunksY; cy++) {
                 for (int cx = 0; cx < chunksX; cx++) {
@@ -83,12 +85,10 @@ public class PyramidLevelGenerator {
                     int actualDstH = Math.min(outH, (srcH + 1) / 2);
 
                     // Downsample 2x via area averaging
-                    Object dstData = downsample2x(srcData, srcW, srcH,
-                            actualDstW, actualDstH, nChannels, is16Bit);
+                    Object dstData = downsample2x(srcData, srcW, srcH, actualDstW, actualDstH, nChannels, is16Bit);
 
                     // Write to current level
-                    writer.writeRawData(dstData, level,
-                            cy * chunkSize, cx * chunkSize, actualDstH, actualDstW);
+                    writer.writeRawData(dstData, level, cy * chunkSize, cx * chunkSize, actualDstH, actualDstW);
 
                     processedChunks++;
                     if (progressCallback != null && totalChunks > 0) {
@@ -103,8 +103,8 @@ public class PyramidLevelGenerator {
      * Downsample data by 2x using area averaging.
      * For multi-channel data, the flat array is laid out as [C, H, W].
      */
-    private static Object downsample2x(Object srcData, int srcW, int srcH,
-                                       int dstW, int dstH, int nChannels, boolean is16Bit) {
+    private static Object downsample2x(
+            Object srcData, int srcW, int srcH, int dstW, int dstH, int nChannels, boolean is16Bit) {
         if (is16Bit) {
             short[] src = (short[]) srcData;
             short[] dst = new short[nChannels * dstH * dstW];
@@ -121,8 +121,7 @@ public class PyramidLevelGenerator {
     /**
      * Downsample 8-bit data by area-averaging 2x2 pixel blocks.
      */
-    private static void downsampleByte(byte[] src, byte[] dst,
-                                       int srcW, int srcH, int dstW, int dstH, int nChannels) {
+    private static void downsampleByte(byte[] src, byte[] dst, int srcW, int srcH, int dstW, int dstH, int nChannels) {
         int srcPlane = srcH * srcW;
         int dstPlane = dstH * dstW;
 
@@ -164,8 +163,8 @@ public class PyramidLevelGenerator {
     /**
      * Downsample 16-bit data by area-averaging 2x2 pixel blocks.
      */
-    private static void downsampleShort(short[] src, short[] dst,
-                                        int srcW, int srcH, int dstW, int dstH, int nChannels) {
+    private static void downsampleShort(
+            short[] src, short[] dst, int srcW, int srcH, int dstW, int dstH, int nChannels) {
         int srcPlane = srcH * srcW;
         int dstPlane = dstH * dstW;
 

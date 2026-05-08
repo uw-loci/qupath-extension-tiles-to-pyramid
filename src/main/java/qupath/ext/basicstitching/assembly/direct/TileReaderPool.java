@@ -1,12 +1,5 @@
 package qupath.ext.basicstitching.assembly.direct;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import javax.imageio.ImageIO;
-import javax.imageio.ImageReadParam;
-import javax.imageio.ImageReader;
-import javax.imageio.stream.ImageInputStream;
 import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.io.File;
@@ -14,6 +7,12 @@ import java.io.IOException;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import javax.imageio.ImageIO;
+import javax.imageio.ImageReadParam;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Bounded pool of open {@link ImageReader} instances with LRU eviction.
@@ -115,7 +114,8 @@ public class TileReaderPool implements AutoCloseable {
      * @param height Region height to read
      * @return BufferedImage containing the requested region
      */
-    public synchronized BufferedImage readRegion(File file, int srcX, int srcY, int width, int height) throws IOException {
+    public synchronized BufferedImage readRegion(File file, int srcX, int srcY, int width, int height)
+            throws IOException {
         ReaderEntry entry = getOrCreateReader(file);
         ImageReadParam param = entry.reader.getDefaultReadParam();
         param.setSourceRegion(new Rectangle(srcX, srcY, width, height));
