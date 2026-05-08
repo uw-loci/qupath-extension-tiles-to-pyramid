@@ -7,10 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+*No unreleased changes.*
+
+## [0.3.0] - 2026-05-07
+
 ### Added
-- Automated GitHub release workflow
-- **ChannelMerger**: post-stitch helper that combines N single-channel pyramids into one multichannel OME-TIFF, used after per-channel stitching for widefield IF and BF+IF acquisitions
-- **ChannelMergeImageServer**: minimal multi-channel `ImageServer` adapter used internally by `ChannelMerger`; fans tile reads out to N same-shape source servers and concatenates their channels in source order
+- Automated GitHub release workflow + `notify-catalog` workflow that auto-bumps `qupath-catalog-qpsc` on release.
+- **ChannelMerger**: post-stitch helper that combines N single-channel pyramids into one multichannel OME-TIFF, used after per-channel stitching for widefield IF and BF+IF acquisitions. Supports explicit per-channel colors.
+- **ChannelMergeImageServer**: minimal multi-channel `ImageServer` adapter used internally by `ChannelMerger`; fans tile reads out to N same-shape source servers and concatenates their channels in source order.
+- **OME_TIFF_VIA_ZARR output format**: accelerated stitching path that writes through Zarr.
+- `flipStitchingX` flag to mirror `flipStitchingY` in `TileConfigurationTxtStrategy`.
+- Tooltips on field labels in StitchingGUI that previously had none.
+- SpotBugs static analysis (effort=MAX, confidence=HIGH).
+
+### Changed
+- Build upgraded to QuPath 0.7.0 / Java 25; Gradle wrapper bumped to 9.2.1.
+- Foojay toolchain resolver added so Gradle auto-fetches the JDK.
+- `PyramidImageWriter` matches server + writer pyramid levels; only enables `channelsInterleaved()` for RGB sources.
+- `OMEZarrWriter` API call updated for QuPath 0.7.0.
+- Global semaphore added to serialize OME-TIFF pyramid writes.
+
+### Fixed
+- `PyramidImageWriter.scaledDownsampling` scale-factor misuse.
+- Asset URL field name in catalog notify (gh CLI uses `url` not `browser_download_url`).
 
 ## [0.2.0] - 2026-03-15
 
