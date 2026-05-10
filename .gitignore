@@ -40,3 +40,8 @@ hs_err*.log
 *thumbs.db
 bin/
 codemap/
+
+# Internal Claude collaboration files (do not ship)
+CLAUDE.md
+TOC.md
+claude-reports/
