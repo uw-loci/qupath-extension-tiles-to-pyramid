@@ -4,6 +4,8 @@ import com.bc.zarr.Compressor;
 import com.bc.zarr.CompressorFactory;
 import java.awt.image.BufferedImage;
 import java.io.File;
+import java.io.FileNotFoundException;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -34,6 +36,21 @@ public class PyramidImageWriter {
      * Concurrent writes cause NPE at high pyramid levels (downsample=64).
      */
     private static final Semaphore TIFF_WRITE_GATE = new Semaphore(1);
+
+    /**
+     * Retry policy for the OME-TIFF write when Windows reports the temp file
+     * is held by another process. BioFormats' two-phase OME-TIFF write reopens
+     * the file in {@code PyramidOMETiffWriter.close()} to patch in IFD offsets
+     * and the OME-XML footer; if a real-time antivirus, Windows Search
+     * indexer, or Explorer preview is scanning the just-flushed file at that
+     * moment, the reopen throws {@code FileNotFoundException}: "The process
+     * cannot access the file because it is being used by another process."
+     * Total backoff sums to ~50s -- enough to outlast typical AV scan windows
+     * on multi-GB files without trapping users in indefinite retries.
+     */
+    private static final int OMETIFF_MAX_ATTEMPTS = 3;
+
+    private static final long[] OMETIFF_RETRY_BACKOFF_MS = {5_000L, 15_000L, 30_000L};
 
     /**
      * Write the server using the specified output format.
@@ -209,9 +226,71 @@ public class PyramidImageWriter {
             if (pyramidServer.isRGB()) {
                 builder.channelsInterleaved();
             }
-            builder.build().writeSeries(tempOutput);
 
-            pyramidServer.close();
+            // Retry the writeSeries call on Windows file-lock failures. The
+            // BioFormats close() reopens the temp file to patch metadata,
+            // which fails if antivirus or Search indexer is scanning the
+            // just-finished multi-GB file. Each attempt rewrites from scratch
+            // (BioFormats doesn't expose a partial-recovery API); we clean up
+            // the incomplete temp file between attempts.
+            Exception lastException = null;
+            try {
+                for (int attempt = 1; attempt <= OMETIFF_MAX_ATTEMPTS; attempt++) {
+                    if (attempt > 1) {
+                        long backoff = OMETIFF_RETRY_BACKOFF_MS[attempt - 2];
+                        logger.warn(
+                                "Retrying OME-TIFF write (attempt {}/{}) after {} ms backoff to outlast file-lock holder",
+                                attempt,
+                                OMETIFF_MAX_ATTEMPTS,
+                                backoff);
+                        try {
+                            Thread.sleep(backoff);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            throw new RuntimeException("Interrupted during OME-TIFF write retry backoff", ie);
+                        }
+                        cleanupTempFile(tempOutput);
+                    }
+                    try {
+                        builder.build().writeSeries(tempOutput);
+                        lastException = null;
+                        break;
+                    } catch (Exception e) {
+                        lastException = e;
+                        if (!isWindowsFileLockException(e)) {
+                            // Not a retryable failure -- rethrow immediately.
+                            throw e;
+                        }
+                        if (attempt >= OMETIFF_MAX_ATTEMPTS) {
+                            logger.error(
+                                    "OME-TIFF write still blocked by file lock after {} attempts. "
+                                            + "Another process (antivirus, Windows Search indexer, Explorer preview, "
+                                            + "or a cloud-sync client) is holding {} open during the BioFormats "
+                                            + "close()/IFD-patch step. Exclude the SlideImages folder from real-time "
+                                            + "scanning to fix.",
+                                    OMETIFF_MAX_ATTEMPTS,
+                                    tempOutput,
+                                    e);
+                            throw e;
+                        }
+                        logger.warn(
+                                "OME-TIFF write attempt {}/{} blocked by file lock on '{}': {}. "
+                                        + "Most likely cause: real-time antivirus / Windows Search indexer / Explorer "
+                                        + "preview scanning the just-flushed file. Retrying after backoff.",
+                                attempt,
+                                OMETIFF_MAX_ATTEMPTS,
+                                tempOutput,
+                                e.getMessage());
+                    }
+                }
+            } finally {
+                pyramidServer.close();
+            }
+            if (lastException != null) {
+                // Defensive: every catch above either breaks the loop on success
+                // or throws on retry exhaustion; this branch should be unreachable.
+                throw lastException;
+            }
 
             // Write succeeded -- rename temp file to final output
             renameTempToFinal(tempOutput, finalOutput);
@@ -229,6 +308,39 @@ public class PyramidImageWriter {
             TIFF_WRITE_GATE.release();
             logger.info("Released TIFF write gate for: {}", filename);
         }
+    }
+
+    /**
+     * True if {@code throwable} (or any cause in its chain) indicates that the
+     * OS refused to open a file because another process holds a lock on it.
+     * Distinguishes the Windows AV / Search-indexer race during BioFormats'
+     * close()-time IFD patch from real I/O failures (disk full, missing
+     * directory) so we only retry the former.
+     *
+     * <p>Windows surfaces this as {@link FileNotFoundException} with the
+     * message "The process cannot access the file because it is being used by
+     * another process." -- the BioFormats stack wraps it as it propagates up
+     * from {@code RandomAccessFile.open0}, so we walk the cause chain. The NIO
+     * path also surfaces {@link AccessDeniedException} for the same condition
+     * under some Java versions.
+     */
+    static boolean isWindowsFileLockException(Throwable throwable) {
+        Throwable cause = throwable;
+        while (cause != null) {
+            if (cause instanceof AccessDeniedException) {
+                return true;
+            }
+            if (cause instanceof FileNotFoundException) {
+                String message = cause.getMessage();
+                if (message != null
+                        && (message.contains("being used by another process")
+                                || message.contains("Access is denied"))) {
+                    return true;
+                }
+            }
+            cause = cause.getCause();
+        }
+        return false;
     }
 
     /**
