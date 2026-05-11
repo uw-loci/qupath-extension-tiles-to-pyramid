@@ -41,14 +41,23 @@ String finalImageName = StitchingWorkflow.run(
 
 File: `StitchingWorkflow.java`
 
-Executes the workflow logic:
+Executes the workflow logic. From 0.3.2 onward there are two entry points:
 
 ```java
-StitchingStrategy strategy = StitchingStrategyFactory.getStrategy(stitchingType);
-List<TileMapping> mappings = strategy.prepareStitching(folderPath, pixelSizeMicrons, baseDownsample, matchingString);
-SparseImageServer server = ImageAssembler.assemble(mappings, pixelSizeMicrons, zSpacingMicrons);
-String written = PyramidImageWriter.write(server, outputPath, outBase, compressionType, baseDownsample);
+// Legacy entry point: returns the last successful output path, or null.
+String outputPath = StitchingWorkflow.run(config);
+
+// Preferred entry point (0.3.2+): returns every output path and the
+// per-subdirectory failure list. Lets callers report per-angle results
+// instead of guessing from the single last-path return.
+StitchingWorkflow.StitchingResult result = StitchingWorkflow.runDetailed(config);
+for (String out : result.outputs()) { ... }
+for (String failed : result.failedSubdirs()) { ... }
 ```
+
+`run()` delegates to `runDetailed().lastOutput()` so existing callers compile unchanged. The orchestration inside is the same: strategy -> tile mappings -> per-subdirectory `ImageAssembler.assemble` + `PyramidImageWriter.write`.
+
+Set `config.setOutputFilename("samplename")` to prefix each per-subdirectory output with a sample name; the default is the subdirectory name only.
 
 ### 4. **TileConfigurationTxtStrategy** (Mapping Tiles)
 
@@ -68,11 +77,11 @@ Converts tile mappings into a stitched `SparseImageServer`:
 SparseImageServer server = ImageAssembler.assemble(mappings, pixelSizeMicrons, zSpacingMicrons);
 ```
 
-### 6. **PyramidImageWriter** (OME-TIFF Output)
+### 6. **PyramidImageWriter** (OME-TIFF / OME-ZARR Output)
 
 File: `PyramidImageWriter.java`
 
-Writes the assembled image as a pyramidal OME-TIFF:
+Writes the assembled image as a pyramidal OME-TIFF or OME-ZARR:
 
 ```java
 String written = PyramidImageWriter.write(
@@ -80,9 +89,17 @@ String written = PyramidImageWriter.write(
     outputPath,
     outBase,
     compressionType,
-    baseDownsample
+    baseDownsample,
+    StitchingConfig.OutputFormat.OME_TIFF,   // or OME_ZARR
+    progressCallback                          // optional Consumer<Double>
 );
 ```
+
+Robustness machinery (0.3.1 / 0.3.2; see `claude-reports/2026-05-11_stitching-critical-review.md`):
+
+- **Single global write gate.** A static `Semaphore(1)` serialises OME-TIFF writes -- BioFormats' `TiffWriter` is not thread-safe across writer instances (it shares `initialized` array state and J2K codec state across threads). Acquired with `tryAcquire(30, MINUTES)` so a wedged writer surfaces as a clear error instead of hanging every subsequent stitch.
+- **Write-time retry.** Up to 3 attempts with 5/15/30 s backoff, gated on `isWindowsFileLockException`. The most common AV-scan window is the BioFormats `PyramidOMETiffWriter.close()` step that reopens the temp file to patch IFD offsets and the OME-XML footer. Retry only fires for that specific exception class; real I/O errors fail immediately.
+- **Rename-before-close.** The temp -> final rename runs before `pyramidServer.close()` in both `writeOMETIFF` and `writeOMEZARR`, so a close-time exception cannot delete a successfully-written pyramid. The rename itself is also retried under the same backoff policy (AV scanners can pick up the file in the ms between writer close and rename).
 
 ### ChannelMergeImageServer
 
