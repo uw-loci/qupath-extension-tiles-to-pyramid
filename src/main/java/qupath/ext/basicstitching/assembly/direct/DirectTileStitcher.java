@@ -136,17 +136,28 @@ public class DirectTileStitcher {
 
                 logger.info("Writing OME-TIFF via CompositorImageServer (memory-efficient read path)...");
 
-                // 5. Delegate to existing PyramidImageWriter for TIFF output
-                String written = PyramidImageWriter.write(
-                        server,
-                        outputPath,
-                        filename,
-                        config.compressionType,
-                        config.baseDownsample,
-                        StitchingConfig.OutputFormat.OME_TIFF,
-                        progressCallback);
-
-                server.close();
+                // 5. Delegate to existing PyramidImageWriter for TIFF output.
+                // Try-finally so a write-time exception cannot leak the
+                // CompositorImageServer's references to the tile reader pool
+                // and the spatial index.
+                String written;
+                try {
+                    written = PyramidImageWriter.write(
+                            server,
+                            outputPath,
+                            filename,
+                            config.compressionType,
+                            config.baseDownsample,
+                            StitchingConfig.OutputFormat.OME_TIFF,
+                            progressCallback);
+                } finally {
+                    try {
+                        server.close();
+                    } catch (Exception closeEx) {
+                        logger.warn(
+                                "Error closing CompositorImageServer after direct stitch: {}", closeEx.getMessage());
+                    }
+                }
 
                 long elapsed = System.currentTimeMillis() - t0;
                 if (written != null) {

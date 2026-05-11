@@ -21,9 +21,27 @@ public class StitchingConfig {
      * Optional output filename base. When set, the stitched output file will be named
      * {@code outputFilename + "_" + subdirName} instead of just {@code subdirName}.
      * This allows callers to include the sample name in the output filename.
-     * Set after construction if needed.
+     *
+     * <p>Field kept public for source compatibility with existing callers; new
+     * call sites should prefer {@link #setOutputFilename(String)} /
+     * {@link #getOutputFilename()} so the dependency is visible to the
+     * compiler. The workflow accesses this via the typed getter -- the
+     * previous reflection-based access has been removed.
      */
     public String outputFilename;
+
+    /** @return the optional output filename base, or {@code null} if unset. */
+    public String getOutputFilename() {
+        return outputFilename;
+    }
+
+    /**
+     * Set the optional output filename base. Typed setter that replaces
+     * direct field access -- in production code this is the preferred path.
+     */
+    public void setOutputFilename(String outputFilename) {
+        this.outputFilename = outputFilename;
+    }
 
     /**
      * Output format options for stitched images.

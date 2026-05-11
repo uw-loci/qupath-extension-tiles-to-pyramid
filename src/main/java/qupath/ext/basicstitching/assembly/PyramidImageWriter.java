@@ -53,6 +53,15 @@ public class PyramidImageWriter {
     private static final long[] OMETIFF_RETRY_BACKOFF_MS = {5_000L, 15_000L, 30_000L};
 
     /**
+     * Bound on how long a stitch will wait for {@link #TIFF_WRITE_GATE}.
+     * Generous enough that no real big-file stitch will trip on it (the
+     * 537-tile / 4.1 GB MetroHealth case completed in ~9 minutes including
+     * Pyramid generation), but bounded enough to surface a wedged thread
+     * rather than hang every subsequent stitch forever.
+     */
+    private static final int TIFF_WRITE_GATE_TIMEOUT_MIN = 30;
+
+    /**
      * Write the server using the specified output format.
      * Delegates to format-specific methods based on outputFormat parameter.
      *
@@ -162,12 +171,25 @@ public class PyramidImageWriter {
         String tempOutput = finalOutput.replace(".ome.tif", ".writing.ome.tif");
 
         // Serialize OME-TIFF writes: BioFormats' TiffWriter NPEs when multiple
-        // writers are active concurrently (corrupts pyramid level 3+).
+        // writers are active concurrently (corrupts pyramid level 3+). Bounded
+        // timeout so a wedged writer thread (network-drive stall, antivirus
+        // refusing to release a file) surfaces as a clear failure instead of
+        // an indefinite hang for every subsequent stitch.
+        boolean acquired;
         try {
-            TIFF_WRITE_GATE.acquire();
+            acquired = TIFF_WRITE_GATE.tryAcquire(TIFF_WRITE_GATE_TIMEOUT_MIN, java.util.concurrent.TimeUnit.MINUTES);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             logger.error("Interrupted waiting for TIFF write gate");
+            return null;
+        }
+        if (!acquired) {
+            logger.error(
+                    "TIFF write gate not acquired within {} minutes for '{}'. "
+                            + "Another stitch is wedged (network-drive stall, antivirus hold, or stuck thread). "
+                            + "Aborting this stitch rather than waiting indefinitely.",
+                    TIFF_WRITE_GATE_TIMEOUT_MIN,
+                    filename);
             return null;
         }
 
@@ -223,8 +245,19 @@ public class PyramidImageWriter {
                     .parallelize(true)
                     .compression(comp)
                     .downsamples(downsamples);
-            if (pyramidServer.isRGB()) {
+            // channelsInterleaved() is only valid for a true RGB raster: 3
+            // samples-per-pixel packed BIP. A misclassified non-3-channel
+            // image (e.g. a 4-channel fluorescence server that reports
+            // isRGB=true) would otherwise have all-but-the-first channel
+            // silently dropped by BioFormats' codec layer. Require both
+            // conditions explicitly.
+            if (pyramidServer.isRGB() && pyramidServer.nChannels() == 3) {
                 builder.channelsInterleaved();
+            } else if (pyramidServer.isRGB()) {
+                logger.warn(
+                        "Server reports isRGB=true but nChannels={} (not 3). "
+                                + "Skipping channelsInterleaved() to avoid silent channel loss.",
+                        pyramidServer.nChannels());
             }
 
             // Retry the writeSeries call on Windows file-lock failures. The
@@ -233,8 +266,14 @@ public class PyramidImageWriter {
             // just-finished multi-GB file. Each attempt rewrites from scratch
             // (BioFormats doesn't expose a partial-recovery API); we clean up
             // the incomplete temp file between attempts.
-            Exception lastException = null;
+            //
+            // CRITICAL ORDER: rename runs BEFORE pyramidServer.close() so a
+            // close-time exception cannot delete a successfully-written
+            // pyramid. The BioFormats writer has already released its own
+            // file handle by the time writeSeries returns; the source
+            // server's close() does not touch the output file.
             try {
+                Exception lastException = null;
                 for (int attempt = 1; attempt <= OMETIFF_MAX_ATTEMPTS; attempt++) {
                     if (attempt > 1) {
                         long backoff = OMETIFF_RETRY_BACKOFF_MS[attempt - 2];
@@ -283,17 +322,34 @@ public class PyramidImageWriter {
                                 e.getMessage());
                     }
                 }
-            } finally {
-                pyramidServer.close();
-            }
-            if (lastException != null) {
-                // Defensive: every catch above either breaks the loop on success
-                // or throws on retry exhaustion; this branch should be unreachable.
-                throw lastException;
-            }
+                if (lastException != null) {
+                    // Defensive: every catch above either breaks the loop on success
+                    // or throws on retry exhaustion; this branch should be unreachable.
+                    throw lastException;
+                }
 
-            // Write succeeded -- rename temp file to final output
-            renameTempToFinal(tempOutput, finalOutput);
+                // Write succeeded -- rename temp file to final output BEFORE
+                // we close the source server. Same retry policy: AV scanners
+                // routinely open the just-finished multi-GB file the moment
+                // its handle is released, so the rename can hit the same
+                // "used by another process" failure as the close-time IFD
+                // patch did.
+                renameTempToFinalWithRetry(tempOutput, finalOutput);
+            } finally {
+                // Source-server close is best-effort: at this point either the
+                // output is renamed into place (success) or the temp file has
+                // already been cleaned up by the catch below, so a close
+                // failure cannot corrupt user data. Demote to a warning.
+                try {
+                    pyramidServer.close();
+                } catch (Exception closeEx) {
+                    logger.warn(
+                            "Source pyramid server close() threw after a successful pyramid write; "
+                                    + "output is already on disk at {}: {}",
+                            finalOutput,
+                            closeEx.getMessage());
+                }
+            }
 
             logger.info(
                     "Finished writing pyramid in {}s: {}",
@@ -361,8 +417,12 @@ public class PyramidImageWriter {
         levels.add(d);
         while (true) {
             double next = d * 2.0;
-            int nextW = (int) (imgW / next);
-            int nextH = (int) (imgH / next);
+            // Use Math.ceil so dimensions that would otherwise truncate to
+            // exactly tileSize-1 don't drop a pyramid level we could have
+            // kept. The downstream writer uses the same ceil-rounding when
+            // it allocates rasters, so this keeps the two in sync.
+            int nextW = (int) Math.ceil(imgW / next);
+            int nextH = (int) Math.ceil(imgH / next);
             if (nextW < tileSize || nextH < tileSize) {
                 break;
             }
@@ -424,6 +484,7 @@ public class PyramidImageWriter {
         // This prevents destroying an existing good ZARR if stitching fails partway through.
         String tempOutput = finalOutput.replace(".ome.zarr", ".writing.ome.zarr");
 
+        ImageServer<BufferedImage> pyramidServer = null;
         try {
             // ZARR compression setup - more flexible than TIFF
             Compressor compressor = createZarrCompressor(compressionType);
@@ -436,7 +497,7 @@ public class PyramidImageWriter {
             logger.debug("Using temp directory during write: {}", tempOutput);
 
             // Pyramidalize server (in case original was not)
-            ImageServer<BufferedImage> pyramidServer = ImageServers.pyramidalize(server);
+            pyramidServer = ImageServers.pyramidalize(server);
 
             long t0 = System.currentTimeMillis();
 
@@ -457,13 +518,16 @@ public class PyramidImageWriter {
                 logger.debug("Progress callback provided but not supported by current OMEZarrWriter API");
             }
 
+            // CRITICAL ORDER: rename runs BEFORE pyramidServer.close() so a
+            // close-time exception cannot delete a successfully-written ZARR.
+            // The writer's own resources are released by its writeImage() call;
+            // the source server's close() does not touch the output directory.
+            // Same Windows AV-lock retry on the rename as the OME-TIFF path --
+            // although ZARR rename is a directory move, Windows still serialises
+            // it through the file system and AV can hold individual chunk files.
             OMEZarrWriter writer = builder.build(tempOutput);
             writer.writeImage();
-
-            pyramidServer.close();
-
-            // Write succeeded -- rename temp directory to final output
-            renameTempToFinal(tempOutput, finalOutput);
+            renameTempToFinalWithRetry(tempOutput, finalOutput);
 
             logger.info(
                     "Finished writing pyramid in {}s: {}",
@@ -474,6 +538,16 @@ public class PyramidImageWriter {
             logger.error("Failed to write pyramid OME-ZARR", e);
             cleanupTempPath(tempOutput);
             return null;
+        } finally {
+            if (pyramidServer != null) {
+                try {
+                    pyramidServer.close();
+                } catch (Exception closeEx) {
+                    logger.warn(
+                            "Source pyramid server close() threw after OME-ZARR write attempt: {}",
+                            closeEx.getMessage());
+                }
+            }
         }
     }
 
@@ -560,6 +634,68 @@ public class PyramidImageWriter {
             Files.move(tempFile.toPath(), finalFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
         }
         logger.debug("Renamed temp output to final: {}", finalPath);
+    }
+
+    /**
+     * Same as {@link #renameTempToFinal} but retries on Windows file-lock
+     * exceptions. The just-finished multi-GB temp file is a common AV scan
+     * target the moment its handle is released, so a rename initiated milliseconds
+     * later can hit the same "used by another process" failure that the
+     * BioFormats close()-time IFD patch hits. Same retry budget as the write
+     * phase: 3 attempts with 5 / 15 / 30 second backoff.
+     */
+    private static void renameTempToFinalWithRetry(String tempPath, String finalPath) throws Exception {
+        Exception lastException = null;
+        for (int attempt = 1; attempt <= OMETIFF_MAX_ATTEMPTS; attempt++) {
+            if (attempt > 1) {
+                long backoff = OMETIFF_RETRY_BACKOFF_MS[attempt - 2];
+                logger.warn(
+                        "Retrying temp -> final rename (attempt {}/{}) after {} ms backoff: '{}' -> '{}'",
+                        attempt,
+                        OMETIFF_MAX_ATTEMPTS,
+                        backoff,
+                        tempPath,
+                        finalPath);
+                try {
+                    Thread.sleep(backoff);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException("Interrupted during rename retry backoff", ie);
+                }
+            }
+            try {
+                renameTempToFinal(tempPath, finalPath);
+                return;
+            } catch (Exception e) {
+                lastException = e;
+                if (!isWindowsFileLockException(e)) {
+                    // Not a retryable failure -- rethrow immediately so the
+                    // caller's cleanup logic runs.
+                    throw e;
+                }
+                if (attempt >= OMETIFF_MAX_ATTEMPTS) {
+                    logger.error(
+                            "Temp -> final rename still blocked by file lock after {} attempts. "
+                                    + "Another process is holding '{}' open during the rename. "
+                                    + "Exclude the output folder from real-time scanning to fix.",
+                            OMETIFF_MAX_ATTEMPTS,
+                            tempPath,
+                            e);
+                    throw e;
+                }
+                logger.warn(
+                        "Rename attempt {}/{} blocked by file lock on '{}': {}. "
+                                + "Most likely cause: antivirus / Search indexer / Explorer preview "
+                                + "scanning the just-finished file. Retrying.",
+                        attempt,
+                        OMETIFF_MAX_ATTEMPTS,
+                        tempPath,
+                        e.getMessage());
+            }
+        }
+        if (lastException != null) {
+            throw lastException;
+        }
     }
 
     /**
