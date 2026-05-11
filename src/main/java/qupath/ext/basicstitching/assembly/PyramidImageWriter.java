@@ -38,6 +38,17 @@ public class PyramidImageWriter {
     private static final Semaphore TIFF_WRITE_GATE = new Semaphore(1);
 
     /**
+     * Diagnostic hook controlled via {@link #setTiffGateBypassedForTesting(boolean)}.
+     * When {@code true}, {@link #writeOMETIFF} skips the JVM-wide gate so a test
+     * harness can deliberately overlap writes and measure whether the failure
+     * mode the gate exists to prevent still reproduces with a given compression
+     * codec. Production callers must never set this -- a non-bypassed gate is
+     * the only thing keeping multi-angle PPM stitches from corrupting each
+     * other's OME-TIFFs.
+     */
+    private static volatile boolean TIFF_GATE_BYPASSED_FOR_TESTING = false;
+
+    /**
      * Retry policy for the OME-TIFF write when Windows reports the temp file
      * is held by another process. BioFormats' two-phase OME-TIFF write reopens
      * the file in {@code PyramidOMETiffWriter.close()} to patch in IFD offsets
@@ -175,25 +186,34 @@ public class PyramidImageWriter {
         // timeout so a wedged writer thread (network-drive stall, antivirus
         // refusing to release a file) surfaces as a clear failure instead of
         // an indefinite hang for every subsequent stitch.
+        // Capture once at entry so a mid-write toggle cannot leave us with
+        // unbalanced acquire/release.
+        final boolean bypassGate = TIFF_GATE_BYPASSED_FOR_TESTING;
         boolean acquired;
-        try {
-            acquired = TIFF_WRITE_GATE.tryAcquire(TIFF_WRITE_GATE_TIMEOUT_MIN, java.util.concurrent.TimeUnit.MINUTES);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            logger.error("Interrupted waiting for TIFF write gate");
-            return null;
-        }
-        if (!acquired) {
-            logger.error(
-                    "TIFF write gate not acquired within {} minutes for '{}'. "
-                            + "Another stitch is wedged (network-drive stall, antivirus hold, or stuck thread). "
-                            + "Aborting this stitch rather than waiting indefinitely.",
-                    TIFF_WRITE_GATE_TIMEOUT_MIN,
-                    filename);
-            return null;
-        }
+        if (bypassGate) {
+            logger.warn("[TEST HARNESS] Bypassing TIFF write gate for: {}", filename);
+            acquired = true;
+        } else {
+            try {
+                acquired =
+                        TIFF_WRITE_GATE.tryAcquire(TIFF_WRITE_GATE_TIMEOUT_MIN, java.util.concurrent.TimeUnit.MINUTES);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                logger.error("Interrupted waiting for TIFF write gate");
+                return null;
+            }
+            if (!acquired) {
+                logger.error(
+                        "TIFF write gate not acquired within {} minutes for '{}'. "
+                                + "Another stitch is wedged (network-drive stall, antivirus hold, or stuck thread). "
+                                + "Aborting this stitch rather than waiting indefinitely.",
+                        TIFF_WRITE_GATE_TIMEOUT_MIN,
+                        filename);
+                return null;
+            }
 
-        logger.info("Acquired TIFF write gate for: {}", filename);
+            logger.info("Acquired TIFF write gate for: {}", filename);
+        }
 
         try {
             OMEPyramidWriter.CompressionType comp = UtilityFunctions.getCompressionType(compressionType);
@@ -361,8 +381,34 @@ public class PyramidImageWriter {
             cleanupTempFile(tempOutput);
             return null;
         } finally {
-            TIFF_WRITE_GATE.release();
-            logger.info("Released TIFF write gate for: {}", filename);
+            if (!bypassGate) {
+                TIFF_WRITE_GATE.release();
+                logger.info("Released TIFF write gate for: {}", filename);
+            }
+        }
+    }
+
+    /**
+     * Test-only hook: when {@code true}, {@link #writeOMETIFF} skips the
+     * JVM-wide write gate so a diagnostic harness can deliberately overlap
+     * writes and observe whether BioFormats {@code TiffWriter} hazards
+     * (intra-instance NPE and process-wide JAI J2K corruption) reproduce
+     * with a given compression codec.
+     *
+     * <p>Production code must never call this with {@code true}. Doing so
+     * reintroduces the very hazards the gate exists to prevent.
+     *
+     * @param bypassed {@code true} to bypass the gate, {@code false} to restore
+     *     normal serialization
+     */
+    public static void setTiffGateBypassedForTesting(boolean bypassed) {
+        TIFF_GATE_BYPASSED_FOR_TESTING = bypassed;
+        if (bypassed) {
+            logger.warn("TIFF write gate BYPASSED for testing. "
+                    + "This re-exposes the BioFormats concurrent-writer hazards the gate prevents. "
+                    + "Do not run production stitches in this state.");
+        } else {
+            logger.info("TIFF write gate restored to normal (one stitch at a time).");
         }
     }
 
