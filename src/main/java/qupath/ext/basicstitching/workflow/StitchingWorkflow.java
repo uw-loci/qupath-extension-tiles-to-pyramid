@@ -255,7 +255,9 @@ public class StitchingWorkflow {
                         // 4c. Write output pyramid (TIFF or ZARR based on config)
                         String formatName = config.outputFormat == null
                                 ? "OME-TIFF"
-                                : (config.outputFormat == StitchingConfig.OutputFormat.OME_ZARR ? "OME-ZARR" : "OME-TIFF");
+                                : (config.outputFormat == StitchingConfig.OutputFormat.OME_ZARR
+                                        ? "OME-ZARR"
+                                        : "OME-TIFF");
                         logger.info("Writing {} pyramid for '{}'...", formatName, subdirName);
 
                         String written = PyramidImageWriter.write(
@@ -264,11 +266,12 @@ public class StitchingWorkflow {
                                 outBase,
                                 config.compressionType,
                                 config.baseDownsample,
-                                config.outputFormat != null ? config.outputFormat : StitchingConfig.OutputFormat.OME_TIFF,
+                                config.outputFormat != null
+                                        ? config.outputFormat
+                                        : StitchingConfig.OutputFormat.OME_TIFF,
                                 progress -> logger.debug(
                                         "Write progress for '{}': {}%",
-                                        subdirName,
-                                        String.format("%.1f", progress * 100)));
+                                        subdirName, String.format("%.1f", progress * 100)));
 
                         if (written != null) {
                             logger.info("Successfully wrote: {}", written);

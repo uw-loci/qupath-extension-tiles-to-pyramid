@@ -363,6 +363,61 @@ logger.qupath.ext.basicstitching=DEBUG
 
 ### Core Classes
 
+#### `StitchingWorkflow`
+Main orchestration class for stitching operations.
+
+**Key Methods:**
+- `run(StitchingConfig)`: Execute workflow, returns last successful output path (backward compatible)
+- `runDetailed(StitchingConfig)`: Execute workflow, returns detailed `StitchingResult` with per-subdirectory success/failure tracking
+
+**Example - Backward Compatible (Single Output):**
+```java
+StitchingConfig config = new StitchingConfig(
+    "Filename[x,y] with coordinates in microns",
+    "/path/to/input",
+    "/path/to/output",
+    "LZW",
+    0.5,
+    1.0,
+    ".",
+    1.0,
+    StitchingConfig.OutputFormat.OME_TIFF
+);
+String lastPath = StitchingWorkflow.run(config);
+```
+
+**Example - Detailed Results (Multi-Angle Workflows):**
+```java
+// For multi-angle acquisitions where one angle may legitimately fail
+StitchingResult result = StitchingWorkflow.runDetailed(config);
+if (result.hasAnyOutput()) {
+    result.outputs().forEach(path -> logger.info("Stitched: {}", path));
+}
+if (result.failureCount() > 0) {
+    logger.warn("Failed subdirectories: {}", result.failedSubdirs());
+}
+```
+
+#### `StitchingResult`
+Detailed result record returned by `runDetailed()`.
+
+**Fields:**
+- `outputs()`: List of successfully written file paths (insertion order preserved)
+- `successCount()`: Number of successfully stitched subdirectories
+- `failureCount()`: Number of failed subdirectories
+- `failedSubdirs()`: Names of subdirectories that failed to stitch
+
+**Convenience Methods:**
+- `hasAnyOutput()`: Returns true if at least one subdirectory succeeded
+- `lastOutput()`: Returns the last successful output path (for backward compatibility)
+
+#### `StitchingConfig`
+Configuration class for stitching operations.
+
+**Typed Accessors for Output Filename:**
+- `getOutputFilename()`: Retrieve the configured output filename base
+- `setOutputFilename(String)`: Set the output filename base (preferred over direct field access)
+
 #### `StitchingImplementations`
 Main coordination class for stitching operations.
 

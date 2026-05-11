@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 *No unreleased changes.*
 
+## [0.3.2] - 2026-05-11
+
+### Added
+- **New API for detailed stitching results**: `StitchingResult` record and `runDetailed()` method allow callers to inspect per-subdirectory success/failure, improving integration with multi-angle workflows (e.g., PPM acquisitions where one angle may legitimately fail while others succeed).
+- Typed getter/setter methods on `StitchingConfig.outputFilename` for type-safe programmatic configuration.
+
+### Fixed
+- **RGB channel validation**: Added explicit check that server is both `isRGB()` AND `nChannels() == 3` before calling `channelsInterleaved()`. Prevents silent channel loss on misclassified multi-channel images (e.g., 4-channel fluorescence incorrectly flagged as RGB).
+- **TIFF write gate timeout**: Added 30-minute timeout to prevent indefinite hangs when the shared write gate is wedged by a stalled thread (network drive hang, antivirus file lock, etc.). Failed stitches now report a clear error instead of blocking all subsequent operations.
+- **Windows file-lock retry on rename**: The just-finished multi-GB temp file is a common antivirus scan target the moment its handle closes. Added retry logic with backoff (5s, 15s, 30s) to `renameTempToFinal()` to match the existing write-phase retry behavior, improving reliability on Windows systems with aggressive scanning.
+- **Improved resource cleanup**: Wrapped all ImageServer close operations in try-finally blocks to ensure cleanup even when write operations throw exceptions. Demoted close-time exceptions to warnings after a successful write (data is already on disk).
+
 ## [0.3.1] - 2026-05-11
 
 ### Fixed
