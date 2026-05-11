@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 *No unreleased changes.*
 
+## [0.3.1] - 2026-05-11
+
+### Fixed
+- **OME-TIFF write robustness on Windows**: Added retry logic for file-lock failures that occur when antivirus, Windows Search indexer, or Explorer preview scans the temporary file during BioFormats' IFD-patching step. Failed writes now retry with backoff (5s, 15s, 30s) before reporting failure, with diagnostic messages directing users to exclude SlideImages folder from real-time scanning.
+
 ## [0.3.0] - 2026-05-07
 
 ### Added
