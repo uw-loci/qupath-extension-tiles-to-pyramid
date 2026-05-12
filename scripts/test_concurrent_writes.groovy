@@ -151,14 +151,36 @@ def verifyOutput = { Path file ->
         int W = server.getWidth()
         int H = server.getHeight()
         int s = SAMPLE_REGION_SIZE
-        SAMPLE_REGION_FRACTIONS.each { fr ->
-            int x = Math.max(0, Math.min((int) (fr[0] * W), W - s))
-            int y = Math.max(0, Math.min((int) (fr[1] * H), H - s))
-            int w = Math.min(s, W)
-            int h = Math.min(s, H)
-            def req = RegionRequest.createInstance(server.getPath(), 1.0, x, y, w, h)
-            def img = server.readRegion(req)
-            result.sampleHashes << sha256(imageBytes(img))
+        int nRes = server.nResolutions()
+        // Hash sample squares at every pyramid level. The original concurrent-
+        // write corruption was reported at the highest downsample (level 6 of
+        // 7 in the failing case), so a level-0-only check is necessary but
+        // not sufficient -- upper levels are where intra-writer worker pools
+        // generate the most tiles per second and any shared state has the
+        // most chance to interleave.
+        for (int level = 0; level < nRes; level++) {
+            double ds = server.getDownsampleForResolution(level)
+            // level0W/H is the size of the level-0 region whose downsampled
+            // read returns an s-by-s tile at this level. RegionRequest takes
+            // level-0 coordinates and a downsample factor.
+            int level0W = (int) Math.ceil(s * ds)
+            int level0H = (int) Math.ceil(s * ds)
+            if (level0W > W || level0H > H) {
+                // This level is smaller than one sample square -- hash the
+                // entire level instead. Cheap: at downsample 64 a 43k-wide
+                // image becomes 677px.
+                def req = RegionRequest.createInstance(server.getPath(), ds, 0, 0, W, H)
+                def img = server.readRegion(req)
+                result.sampleHashes << "L${level}_full=${sha256(imageBytes(img))}"
+                continue
+            }
+            SAMPLE_REGION_FRACTIONS.each { fr ->
+                int x = Math.max(0, Math.min((int) (fr[0] * W), W - level0W))
+                int y = Math.max(0, Math.min((int) (fr[1] * H), H - level0H))
+                def req = RegionRequest.createInstance(server.getPath(), ds, x, y, level0W, level0H)
+                def img = server.readRegion(req)
+                result.sampleHashes << "L${level}_${(int) (fr[0] * 10)}${(int) (fr[1] * 10)}=${sha256(imageBytes(img))}"
+            }
         }
     } catch (Throwable t) {
         result.error = "${t.class.simpleName}: ${t.message}"
