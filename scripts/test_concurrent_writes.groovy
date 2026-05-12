@@ -75,10 +75,20 @@ def TRIALS = 4
 def PIXEL_SIZE_UM = 0.5
 def Z_SPACING_UM = 1.0
 
-// Where in the level-0 image to sample pixels for the integrity check.
-// Pick three points that should be inside the stitched area; outputs that
-// silently corrupted will return garbage or all-zero bytes here.
-def SAMPLE_POINTS = [[1024, 1024, 256, 256], [4096, 4096, 256, 256], [8192, 8192, 256, 256]]
+// Pixel regions to hash for the integrity check, in STITCHED-OUTPUT pixel
+// coordinates at full resolution (downsample = 1.0). Each entry is
+// [x, y, width, height] -- a w-by-h region starting at column x, row y of
+// the just-written OME-TIFF. Not stage microns, not source-tile coords.
+// J2K silent corruption shows up as garbage / all-zero bytes in these regions,
+// so spreading the samples across the stitch is more revealing than clustering
+// them; the defaults below sample three diagonal regions sized to the image
+// at runtime so they work for both small (~2k px) and big (~80k px) stitches.
+def SAMPLE_REGION_FRACTIONS = [
+    [0.20, 0.20],
+    [0.50, 0.50],
+    [0.80, 0.80],
+]
+def SAMPLE_REGION_SIZE = 256  // pixels per side of each sample square
 
 // ---- END USER CONFIG -------------------------------------------------------
 
@@ -138,15 +148,15 @@ def verifyOutput = { Path file ->
     try {
         server = ImageServers.buildServer(file.toUri())
         result.opened = true
-        SAMPLE_POINTS.each { sp ->
-            int x = sp[0], y = sp[1], w = sp[2], h = sp[3]
-            int xClamped = Math.min(x, server.getWidth() - w)
-            int yClamped = Math.min(y, server.getHeight() - h)
-            if (xClamped < 0 || yClamped < 0) {
-                result.sampleHashes << "OOB(${x},${y})"
-                return
-            }
-            def req = RegionRequest.createInstance(server.getPath(), 1.0, xClamped, yClamped, w, h)
+        int W = server.getWidth()
+        int H = server.getHeight()
+        int s = SAMPLE_REGION_SIZE
+        SAMPLE_REGION_FRACTIONS.each { fr ->
+            int x = Math.max(0, Math.min((int) (fr[0] * W), W - s))
+            int y = Math.max(0, Math.min((int) (fr[1] * H), H - s))
+            int w = Math.min(s, W)
+            int h = Math.min(s, H)
+            def req = RegionRequest.createInstance(server.getPath(), 1.0, x, y, w, h)
             def img = server.readRegion(req)
             result.sampleHashes << sha256(imageBytes(img))
         }
