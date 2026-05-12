@@ -7,7 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-*No unreleased changes.*
+### Fixed
+- **Removed JVM-wide OME-TIFF write gate**: The serializing semaphore added in 0.3.0 as a workaround for BioFormats `TiffWriter` concurrency hazards (NPE at high pyramid levels) has been removed after diagnostic testing confirmed concurrent writes are now safe. 64 parallel J2K-compressed writes across 8 trials with multi-level pixel verification showed zero corruption, NPEs, or failed opens. Concurrent multi-angle stitches can now proceed without waiting for serialization.
 
 ## [0.3.2] - 2026-05-11
 

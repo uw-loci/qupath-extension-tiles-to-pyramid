@@ -33,7 +33,6 @@ import java.security.MessageDigest
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import qupath.ext.basicstitching.assembly.PyramidImageWriter
 import qupath.ext.basicstitching.assembly.direct.DirectTileStitcher
 import qupath.ext.basicstitching.config.StitchingConfig
 import qupath.ext.basicstitching.stitching.TileConfigurationTxtStrategy
@@ -231,9 +230,11 @@ def runConcurrentWrites = { String comp, int parallelism, int trial ->
     return trialResults
 }
 
-// 2. Reference write: gate ON, single thread. This is our known-good baseline.
-log "=== Reference write (gate ON, sequential) ==="
-PyramidImageWriter.setTiffGateBypassedForTesting(false)
+// 2. Reference write: single thread (run one write at a time by hand). The
+//    original JVM-wide gate that guaranteed serialization was removed on
+//    2026-05-12 after this script came back clean; for diagnostic purposes the
+//    "sequential" baseline is just one parallel-write batch of size 1.
+log "=== Reference write (single-thread baseline) ==="
 def referenceHashes = [:]  // compression -> list of sample hashes
 COMPRESSIONS.each { comp ->
     log "Reference for ${comp}..."
@@ -254,10 +255,9 @@ COMPRESSIONS.each { comp ->
     }
 }
 
-// 3. Concurrent trials: gate OFF.
+// 3. Concurrent trials.
 log ""
-log "=== Concurrent trials (gate OFF, parallelism=${PARALLELISM}) ==="
-PyramidImageWriter.setTiffGateBypassedForTesting(true)
+log "=== Concurrent trials (parallelism=${PARALLELISM}) ==="
 def allResults = [:]  // compression -> list of trial outcomes
 try {
     COMPRESSIONS.each { comp ->
@@ -290,7 +290,8 @@ try {
         allResults[comp] = compResults
     }
 } finally {
-    PyramidImageWriter.setTiffGateBypassedForTesting(false)
+    // No gate state to restore -- left here as a placeholder so future
+    // diagnostic changes have a clear hook point.
 }
 
 // 4. Summary.
