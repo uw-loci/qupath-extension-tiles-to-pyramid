@@ -7,6 +7,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.lib.images.servers.ImageChannel;
@@ -42,6 +43,16 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
     private final ImageServerMetadata metadata;
     private final boolean isRGB;
     private final String id;
+
+    // Set true once close() has been called. Once true, readRegion() returns an
+    // empty tile instead of routing into the compositor / reader pool. Without
+    // this gate, downsample-level prefetch tasks spawned by QuPath's
+    // PyramidGeneratingImageServer keep arriving after writeSeries returns, race
+    // past close() / readerPool close, and try to open new ImageReaders for tile
+    // files that the calling workflow has already moved or deleted -- producing
+    // thousands of "Cannot create ImageInputStream for: ..." warnings during
+    // multi-angle stitching cleanup.
+    private final AtomicBoolean closed = new AtomicBoolean(false);
 
     /**
      * Create a compositor-backed ImageServer.
@@ -135,6 +146,15 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
         if (srcW <= 0 || srcH <= 0) {
             int outW = (int) Math.max(1, Math.round(w / downsample));
             int outH = (int) Math.max(1, Math.round(h / downsample));
+            return createEmptyTile(outW, outH);
+        }
+
+        // If close() has run, the source tile directory may have already been
+        // moved / deleted by the surrounding workflow. Skip the I/O path and
+        // hand back an empty tile so stragglers don't log read failures.
+        if (closed.get()) {
+            int outW = (int) Math.max(1, Math.round(srcW / downsample));
+            int outH = (int) Math.max(1, Math.round(srcH / downsample));
             return createEmptyTile(outW, outH);
         }
 
@@ -335,6 +355,7 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
     public void close() throws Exception {
         // Reader pool is owned by the caller (DirectTileStitcher)
         // Do not close it here
+        closed.set(true);
         logger.debug("CompositorImageServer closed");
     }
 }
