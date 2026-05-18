@@ -198,7 +198,29 @@ public class PyramidImageWriter {
             double[] downsamples = computePyramidDownsamples(imgW, imgH, baseDownsample, tileSize);
             logger.info(
                     "Pyramid levels: {} (downsamples={})", downsamples.length, java.util.Arrays.toString(downsamples));
-            ImageServer<BufferedImage> pyramidServer = ImageServers.pyramidalize(server, downsamples);
+            // Pyramidalize with a preferred tile size of 1024 (different from
+            // the writer's 512). Why: OMEPyramidWriter has an optimization
+            // branch (lines ~740-758) that uses the source server's native
+            // TileRequestManager output directly when ALL of these match
+            // simultaneously: downsample, x/y origin, level width, level
+            // height, and BOTH preferred tile dimensions. On PyramidGenerating
+            // (pyramidalize-wrapped) servers, that branch produces tile counts
+            // that disagree with the per-level dimensions stored in the
+            // TiffWriter at any level whose width or height is not a clean
+            // multiple of the tile size (very common for stitched mosaics).
+            // The TiffWriter then rejects overflow tiles with
+            // FormatException: X:1024 must be < 854 or similar, and the upper
+            // pyramid levels of the output .ome.tif end up all-black.
+            //
+            // Reporting a server preferred tile size of 1024 while the writer
+            // is configured with tileSize(512) causes the optimization to be
+            // bypassed -- writer.tileWidth != server.preferredTileWidth -- and
+            // OMEPyramidWriter falls through to the safe Math.min(w-xx,
+            // tileWidth) iteration that never overflows. Pixel reads still
+            // serve any requested 512-px tile; only the iteration metadata
+            // hint differs.
+            ImageServer<BufferedImage> pyramidServer =
+                    ImageServers.pyramidalizeTiled(server, 1024, 1024, downsamples);
 
             long t0 = System.currentTimeMillis();
 
