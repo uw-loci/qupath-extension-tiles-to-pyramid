@@ -219,8 +219,7 @@ public class PyramidImageWriter {
             // tileWidth) iteration that never overflows. Pixel reads still
             // serve any requested 512-px tile; only the iteration metadata
             // hint differs.
-            ImageServer<BufferedImage> pyramidServer =
-                    ImageServers.pyramidalizeTiled(server, 1024, 1024, downsamples);
+            ImageServer<BufferedImage> pyramidServer = ImageServers.pyramidalizeTiled(server, 1024, 1024, downsamples);
 
             long t0 = System.currentTimeMillis();
 
