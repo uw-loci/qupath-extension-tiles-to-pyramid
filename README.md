@@ -7,7 +7,7 @@ A basic image stitching extension for QuPath that combines multiple image tiles 
 
 ## Features
 
-- **Multiple Stitching Strategies**: Support for filename-based coordinates, TileConfiguration.txt files, and Vectra metadata
+- **Multiple Stitching Strategies**: Support for filename-based coordinates, TileConfiguration.txt files, Vectra metadata, and MicroManager MMStack metadata
 - **Dual Output Formats**: Choose between traditional OME-TIFF or cloud-native OME-ZARR
 - **Pyramidal Output**: Generates multi-resolution pyramids for efficient viewing at all scales
 - **Flexible Compression**: Supports various compression formats (TIFF: JPEG, LZW, ZIP; ZARR: zstd, lz4, blosc)
@@ -116,6 +116,18 @@ For Akoya/PerkinElmer Vectra imaging systems:
 - Reads positioning information directly from TIFF metadata tags
 - Uses `TAG_X_POSITION`, `TAG_Y_POSITION`, and resolution tags
 - No additional configuration files required
+
+#### 4. MicroManager Metadata (MMStack)
+For MicroManager 2 multi-position acquisitions with sidecar metadata:
+- Reads tile positions from `*_metadata.txt` JSON sidecar files
+- Uses authoritative per-tile stage coordinates (FrameKey-0-0-0.XPositionUm / YPositionUm)
+- Falls back to Summary.StagePositions labels if a sidecar is missing or malformed
+- No additional configuration files required
+
+**Usage:**
+- Tiles and their `_metadata.txt` sidecars should be in the same folder
+- Example filenames: `acq_MMStack_Pos-0_000.ome.tif` and `acq_MMStack_Pos-0_000_metadata.txt`
+- For stage-inverted scopes, use the `flipStitchingX` and `flipStitchingY` flags to negate coordinates
 
 ### Configuration Parameters
 
