@@ -253,7 +253,8 @@ public class StitchingGUI {
                 .addAll(
                         "Vectra tiles with metadata",
                         "Filename[x,y] with coordinates in microns",
-                        "Coordinates in TileConfiguration.txt file");
+                        "Coordinates in TileConfiguration.txt file",
+                        "MicroManager metadata (MMStack)");
 
         stitchingGridBox.setValue(QPPreferences.getStitchingMethodSaved());
         stitchingGridBox.setOnAction(e -> updateComponentsBasedOnSelection(pane));

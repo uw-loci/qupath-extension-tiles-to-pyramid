@@ -53,6 +53,8 @@ dependencies {
     shadow(libs.bundles.qupath)
     shadow(libs.bundles.logging)
     shadow(libs.qupath.fxtras)
+    // Gson is used by MicroManagerMetadataStrategy to parse MMStack metadata files
+    shadow(libs.gson)
 
     // bioformats plugin needed for OMEPyramidWriter and OMEZarrWriter
     implementation("io.github.qupath:qupath-extension-bioformats:0.6.0-rc4")
