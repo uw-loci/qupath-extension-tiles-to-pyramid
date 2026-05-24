@@ -27,7 +27,11 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build with Gradle
-        run: ./gradlew build
+        # Explicitly invoke shadowJar so the released artifact is the
+        # ~170 MB *-all.jar that bundles implementation deps (jzarr,
+        # BioFormats). `./gradlew build` alone only produces the lean
+        # ~100 KB plain jar, which omits those deps and fails at runtime.
+        run: ./gradlew build shadowJar
 
       - name: Find JAR file
         id: find_jar
