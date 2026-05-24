@@ -81,6 +81,13 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
         // Cached label -> (xUm, yUm) from any Summary.StagePositions block we
         // encounter. Used as a fallback when a TIFF lacks a sidecar.
         Map<String, double[]> labelToPosUm = new HashMap<>();
+        // Cached label -> series index. MicroManager writes OME-XML in
+        // Summary.StagePositions order, so the array position IS the series
+        // index BioFormats reports when it opens any of the per-position
+        // OME-TIFFs. Without this, the ImageAssembler reads series 0 of each
+        // file -- which is always the SAME dataset position -- and the output
+        // becomes 9 copies of Pos[0]'s pixels at 9 different locations.
+        Map<String, Integer> labelToSeriesIndex = new HashMap<>();
 
         List<Path> metadataFiles = new ArrayList<>();
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(rootdir, "*_metadata.txt")) {
@@ -120,7 +127,8 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
                 if (summary != null && labelToPosUm.isEmpty()) {
                     JsonArray positions = optArray(summary, "StagePositions");
                     if (positions != null) {
-                        for (JsonElement el : positions) {
+                        for (int idx = 0; idx < positions.size(); idx++) {
+                            JsonElement el = positions.get(idx);
                             if (!el.isJsonObject()) continue;
                             JsonObject entry = el.getAsJsonObject();
                             String label = optString(entry, "Label");
@@ -129,8 +137,14 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
                             if (xy != null) {
                                 labelToPosUm.put(label, xy);
                             }
+                            // Capture the series index this label maps to in
+                            // the OME companion -- see the field-level comment.
+                            labelToSeriesIndex.put(label, idx);
                         }
-                        logger.debug("Cached {} StagePositions labels", labelToPosUm.size());
+                        logger.debug(
+                                "Cached {} StagePositions labels, {} series indices",
+                                labelToPosUm.size(),
+                                labelToSeriesIndex.size());
                     }
                 }
 
@@ -220,14 +234,12 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
         int totalTiles = tiffFiles.size();
         for (Path tif : tiffFiles) {
             String filename = tif.getFileName().toString();
+            String mmLabel = extractMMStackLabel(filename);
             double[] posUm = filenameToPosUm.get(filename);
-            if (posUm == null) {
-                String label = extractMMStackLabel(filename);
-                if (label != null) {
-                    posUm = labelToPosUm.get(label);
-                    if (posUm != null) {
-                        logger.debug("Tile {} resolved via Summary.StagePositions label '{}'", filename, label);
-                    }
+            if (posUm == null && mmLabel != null) {
+                posUm = labelToPosUm.get(mmLabel);
+                if (posUm != null) {
+                    logger.debug("Tile {} resolved via Summary.StagePositions label '{}'", filename, mmLabel);
                 }
             }
             if (posUm == null) {
@@ -253,8 +265,25 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
             double y = rawY / (effectivePixelSize * baseDownsample);
             ImageRegion region = ImageRegion.createInstance(
                     (int) Math.round(x), (int) Math.round(y), dims.get("width"), dims.get("height"), 0, 0);
-            mappings.add(new TileMapping(tif.toFile(), region, subdirName));
-            logger.debug("Mapped {} at stage ({}, {}) um -> pixel ({}, {})", filename, posUm[0], posUm[1], x, y);
+
+            // Each per-position OME-TIFF is presented by BioFormats as N
+            // series (one per position in the dataset). Picking series 0 for
+            // every file would return the same pixel data (Pos[0]) at every
+            // location. Use the StagePositions-array index for this tile's
+            // label as its series index; fall back to 0 if the label is
+            // missing (single-series file or non-MMStack TIFF).
+            Integer si = mmLabel != null ? labelToSeriesIndex.get(mmLabel) : null;
+            int seriesIndex = si != null ? si : 0;
+
+            mappings.add(new TileMapping(tif.toFile(), region, subdirName, seriesIndex));
+            logger.debug(
+                    "Mapped {} at stage ({}, {}) um -> pixel ({}, {}) series {}",
+                    filename,
+                    posUm[0],
+                    posUm[1],
+                    x,
+                    y,
+                    seriesIndex);
         }
 
         logger.info("Total tiles mapped from MMStack metadata: {}", mappings.size());

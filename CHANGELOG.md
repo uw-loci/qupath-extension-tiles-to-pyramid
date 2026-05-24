@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-05-23
+
+### Fixed
+- **MMStack stitches showed the same tile content in every grid cell**: MicroManager MMStack OME-TIFFs are a multifile dataset -- every per-position `.ome.tif` carries OME-XML that describes the whole dataset, so when BioFormats opens any one file it presents it as N series (one per position). `ImageAssembler` was always picking `serverBuilders.get(0)`, which corresponds to the dataset's first position regardless of which physical file was opened. The result: 9 copies of Pos[0]'s pixels at 9 different grid locations, with correct positioning but identical content. `MicroManagerMetadataStrategy` now records each tile's series index (from its position in `Summary.StagePositions[]`), and `ImageAssembler` uses `serverBuilders.get(mapping.seriesIndex)`. Verified against a real 3x3 MMStack: 9 distinct pixel sums in the output now match the 9 per-series sums of the source dataset.
+
+### Changed
+- **`TileMapping` gains a `seriesIndex` field** (default 0; previous 3-arg constructor preserved for back-compat). Used by `ImageAssembler` to pick the correct series when a tile file exposes multiple series.
+
 ## [0.4.1] - 2026-05-23
 
 ### Added

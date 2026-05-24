@@ -74,7 +74,22 @@ public class ImageAssembler {
                 logger.error("No server builders for file: {}", file.getName());
                 continue;
             }
-            builder.jsonRegion(region, 1.0, serverBuilders.get(0));
+            // For multi-series files (e.g. MicroManager MMStack OME-TIFFs
+            // where each per-position file is presented as N series),
+            // strategies set mapping.seriesIndex so each tile gets the
+            // correct series. Default is 0; clamp out-of-range to 0 with a
+            // warning so a stale index can never silently read the wrong
+            // pixels.
+            int seriesIndex = mapping.seriesIndex;
+            if (seriesIndex < 0 || seriesIndex >= serverBuilders.size()) {
+                logger.warn(
+                        "Series index {} out of range for {} (only {} series available); using series 0",
+                        seriesIndex,
+                        file.getName(),
+                        serverBuilders.size());
+                seriesIndex = 0;
+            }
+            builder.jsonRegion(region, 1.0, serverBuilders.get(seriesIndex));
             coveredRegions.add(region);
             nTiles++;
         }
