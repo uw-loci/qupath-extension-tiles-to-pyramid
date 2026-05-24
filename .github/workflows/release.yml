@@ -32,7 +32,13 @@ jobs:
       - name: Find JAR file
         id: find_jar
         run: |
-          JAR_PATH=$(find build/libs -name "*.jar" -not -name "*-javadoc.jar" -not -name "*-sources.jar" | head -n 1)
+          # Prefer the shadow ("-all") jar so the released artifact bundles
+          # implementation deps (jzarr, BioFormats) the lean jar omits. Fall
+          # back to the plain jar only if -all is missing.
+          JAR_PATH=$(find build/libs -name "*-all.jar" | head -n 1)
+          if [ -z "$JAR_PATH" ]; then
+            JAR_PATH=$(find build/libs -name "*.jar" -not -name "*-javadoc.jar" -not -name "*-sources.jar" -not -name "*-all.jar" | head -n 1)
+          fi
           JAR_NAME=$(basename "$JAR_PATH")
           echo "jar_path=$JAR_PATH" >> $GITHUB_OUTPUT
           echo "jar_name=$JAR_NAME" >> $GITHUB_OUTPUT
