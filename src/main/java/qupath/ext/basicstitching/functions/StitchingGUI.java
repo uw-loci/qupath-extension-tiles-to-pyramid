@@ -22,6 +22,7 @@ import javafx.stage.Modality;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.basicstitching.config.StitchingConfig;
+import qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy;
 import qupath.ext.basicstitching.utilities.QPPreferences;
 import qupath.ext.basicstitching.workflow.StitchingWorkflow;
 import qupath.lib.gui.scripting.QPEx;
@@ -43,6 +44,8 @@ public class StitchingGUI {
     static ComboBox<String> compressionBox = new ComboBox<>();
     static ComboBox<StitchingConfig.OutputFormat> outputFormatBox = new ComboBox<>();
     static TextField pixelSizeField = new TextField(QPPreferences.getImagePixelSizeInMicronsSaved());
+    static CheckBox pixelSizeOverrideCheckbox = new CheckBox("Manually edit pixel size");
+    static Label pixelSizeSourceLabel = new Label("");
     static TextField downsampleField = new TextField(QPPreferences.getDownsampleSaved());
     static TextField matchStringField = new TextField(QPPreferences.getSearchStringSaved());
     static ComboBox<String> stitchingGridBox = new ComboBox<>();
@@ -186,6 +189,11 @@ public class StitchingGUI {
         addDownsampleComponents(pane);
         addGitHubLinkComponent(pane);
 
+        // Initial autofill from the restored folder preference. The textProperty
+        // listener only fires on later changes; this seeds the pixel size +
+        // source label from whatever folder is already in the field.
+        autoFillPixelSizeFromFolder();
+
         // Update the components' visibility based on the current selection
         updateComponentsBasedOnSelection(pane);
         addFudgeFactorComponents(pane);
@@ -234,6 +242,7 @@ public class StitchingGUI {
         guiElementPositions.put(compressionLabel, currentPosition++);
         guiElementPositions.put(outputFormatLabel, currentPosition++);
         guiElementPositions.put(pixelSizeLabel, currentPosition++);
+        guiElementPositions.put(pixelSizeOverrideCheckbox, currentPosition++);
         guiElementPositions.put(downsampleLabel, currentPosition++);
         guiElementPositions.put(matchStringLabel, currentPosition++);
         guiElementPositions.put(githubLink, currentPosition++);
@@ -315,6 +324,12 @@ public class StitchingGUI {
             }
         });
 
+        // Any folder-field change (browse, type, paste) re-auto-fills any
+        // values we can read from the folder's MMStack metadata. The autofill
+        // helper is a no-op when the manual-override checkbox is ticked, so
+        // user edits to the pixel size are preserved while overriding.
+        folderField.textProperty().addListener((obs, oldVal, newVal) -> autoFillPixelSizeFromFolder());
+
         Tooltip folderTooltip = new Tooltip("Root folder containing the tile images to stitch.");
         folderLabel.setTooltip(folderTooltip);
         folderField.setTooltip(folderTooltip);
@@ -366,13 +381,87 @@ public class StitchingGUI {
 
     /**
      * Adds pixel size input components to the specified GridPane.
+     *
+     * <p>The field is uneditable by default so the value cannot be changed
+     * by accident; when an input folder is selected the field is auto-filled
+     * from the MMStack {@code FrameKey-0-0-0.PixelSizeUm} metadata (or left
+     * as the saved preference when no MMStack metadata is present). Ticking
+     * the "Manually edit pixel size" checkbox unlocks the field; unticking
+     * it restores the auto-detected value.
      */
     private static void addPixelSizeComponents(GridPane pane) {
-        Tooltip pixelSizeTooltip = new Tooltip("Pixel size in microns for the tile images.");
+        Tooltip pixelSizeTooltip = new Tooltip("Pixel size in microns for the tile images.\n"
+                + "Auto-detected from MMStack metadata in the selected folder when available.\n"
+                + "Tick 'Manually edit pixel size' to override.");
         pixelSizeLabel.setTooltip(pixelSizeTooltip);
         pixelSizeField.setTooltip(pixelSizeTooltip);
+        pixelSizeField.setEditable(false);
+        pixelSizeSourceLabel.setStyle("-fx-font-size: 0.85em; -fx-text-fill: #666;");
+
+        // Default: field is locked. Checking the box unlocks it; unchecking
+        // restores the auto-detected value (or the saved default if no MMStack
+        // metadata was found in the current folder).
+        pixelSizeOverrideCheckbox.setSelected(false);
+        pixelSizeOverrideCheckbox.setOnAction(e -> {
+            boolean manual = pixelSizeOverrideCheckbox.isSelected();
+            pixelSizeField.setEditable(manual);
+            if (manual) {
+                pixelSizeSourceLabel.setText("(manual override)");
+                pixelSizeField.requestFocus();
+            } else {
+                // Re-auto-fill from the currently selected folder so we don't
+                // silently keep the user's last typed value while pretending
+                // the field is locked.
+                autoFillPixelSizeFromFolder();
+            }
+        });
+        Tooltip overrideTooltip = new Tooltip("By default the pixel size is auto-detected from MMStack metadata "
+                + "and cannot be edited. Tick this box to type a value manually.");
+        pixelSizeOverrideCheckbox.setTooltip(overrideTooltip);
 
         addToGrid(pane, pixelSizeLabel, pixelSizeField);
+
+        // Put the source label in column 2 next to the field.
+        Integer pxRow = guiElementPositions.get(pixelSizeLabel);
+        if (pxRow != null) {
+            pane.add(pixelSizeSourceLabel, 2, pxRow);
+        }
+
+        // The override checkbox sits on its own row in column 1.
+        Integer chkRow = guiElementPositions.get(pixelSizeOverrideCheckbox);
+        if (chkRow != null) {
+            pane.add(pixelSizeOverrideCheckbox, 1, chkRow);
+        }
+    }
+
+    /**
+     * Read the MMStack metadata in the currently selected folder and update
+     * the pixel size field accordingly. No-op when the override checkbox is
+     * ticked (the user wants their value preserved). Safe to call from any
+     * folder-state change.
+     */
+    private static void autoFillPixelSizeFromFolder() {
+        if (pixelSizeOverrideCheckbox.isSelected()) {
+            return;
+        }
+        String path = folderField.getText();
+        if (path == null || path.trim().isEmpty()) {
+            pixelSizeSourceLabel.setText("");
+            return;
+        }
+        File folder = new File(path.trim());
+        if (!folder.isDirectory()) {
+            pixelSizeSourceLabel.setText("");
+            return;
+        }
+        Double mmPixelSize = MicroManagerMetadataStrategy.detectPixelSizeUm(folder);
+        if (mmPixelSize != null && mmPixelSize > 0) {
+            pixelSizeField.setText(String.valueOf(mmPixelSize));
+            pixelSizeSourceLabel.setText("(from MMStack metadata)");
+            logger.info("Auto-filled pixel size {} um from MMStack metadata in {}", mmPixelSize, folder);
+        } else {
+            pixelSizeSourceLabel.setText("(no MMStack metadata - tick 'Manually edit' to set)");
+        }
     }
 
     /**
@@ -409,6 +498,8 @@ public class StitchingGUI {
 
         pixelSizeLabel.setVisible(!hidePixelSize);
         pixelSizeField.setVisible(!hidePixelSize);
+        pixelSizeOverrideCheckbox.setVisible(!hidePixelSize);
+        pixelSizeSourceLabel.setVisible(!hidePixelSize);
 
         // Show fudge factor components only for Vectra
         boolean showFudgeFactor = "Vectra tiles with metadata".equals(selectedValue);

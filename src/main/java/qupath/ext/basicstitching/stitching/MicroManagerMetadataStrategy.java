@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import java.io.File;
 import java.io.IOException;
 import java.io.Reader;
 import java.nio.file.DirectoryStream;
@@ -98,6 +99,12 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
         }
         logger.info("Found {} MMStack metadata file(s) in {}", metadataFiles.size(), folderPath);
 
+        // Detected pixel size from any sidecar's FrameKey-0-0-0.PixelSizeUm.
+        // When set, this OVERRIDES the caller's pixelSizeInMicrons argument --
+        // the MMStack metadata is authoritative for pixel size. The argument is
+        // kept as a fallback in case no sidecar reports PixelSizeUm.
+        Double detectedPixelSizeUm = null;
+
         for (Path metaPath : metadataFiles) {
             try (Reader reader = Files.newBufferedReader(metaPath)) {
                 JsonObject root = GSON.fromJson(reader, JsonObject.class);
@@ -133,6 +140,16 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
                     logger.debug("No FrameKey-0-0-0 in {}, skipping", metaPath.getFileName());
                     continue;
                 }
+
+                // First-sidecar PixelSizeUm wins. Every sidecar in a single
+                // acquisition carries the same value, so this is idempotent.
+                if (detectedPixelSizeUm == null) {
+                    Double frameSize = optDouble(frame, "PixelSizeUm");
+                    if (frameSize != null && frameSize > 0) {
+                        detectedPixelSizeUm = frameSize;
+                    }
+                }
+
                 String tileFile = optString(frame, "FileName");
                 Double xUm = optDouble(frame, "XPositionUm");
                 Double yUm = optDouble(frame, "YPositionUm");
@@ -146,6 +163,34 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
             } catch (Exception e) {
                 logger.warn("Failed to parse {}: {}", metaPath.getFileName(), e.getMessage());
             }
+        }
+
+        // Decide which pixel size drives the um->px conversion. MMStack
+        // metadata wins when available; caller value is the fallback.
+        double effectivePixelSize;
+        if (detectedPixelSizeUm != null) {
+            effectivePixelSize = detectedPixelSizeUm;
+            if (Math.abs(detectedPixelSizeUm - pixelSizeInMicrons) > 1e-9) {
+                logger.info(
+                        "Using MMStack metadata pixel size {} um/px (caller value {} ignored -- "
+                                + "MMStack sidecar is authoritative)",
+                        detectedPixelSizeUm,
+                        pixelSizeInMicrons);
+            } else {
+                logger.info("Using MMStack metadata pixel size {} um/px", detectedPixelSizeUm);
+            }
+        } else {
+            effectivePixelSize = pixelSizeInMicrons;
+            logger.info(
+                    "No PixelSizeUm in MMStack sidecars; falling back to caller pixel size {} um/px",
+                    pixelSizeInMicrons);
+        }
+        if (effectivePixelSize <= 0) {
+            logger.error(
+                    "Effective pixel size is {} um/px (must be > 0); cannot map tiles. "
+                            + "Provide a valid pixel size via the dialog override.",
+                    effectivePixelSize);
+            return mappings;
         }
 
         // Pass 2: enumerate TIFFs and build TileMappings, falling back to the
@@ -204,8 +249,8 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
             double rawY = posUm[1];
             if (flipX) rawX = -rawX;
             if (flipY) rawY = -rawY;
-            double x = rawX / (pixelSizeInMicrons * baseDownsample);
-            double y = rawY / (pixelSizeInMicrons * baseDownsample);
+            double x = rawX / (effectivePixelSize * baseDownsample);
+            double y = rawY / (effectivePixelSize * baseDownsample);
             ImageRegion region = ImageRegion.createInstance(
                     (int) Math.round(x), (int) Math.round(y), dims.get("width"), dims.get("height"), 0, 0);
             mappings.add(new TileMapping(tif.toFile(), region, subdirName));
@@ -214,6 +259,39 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
 
         logger.info("Total tiles mapped from MMStack metadata: {}", mappings.size());
         return mappings;
+    }
+
+    /**
+     * Scan a folder for MMStack sidecars and return the first non-null
+     * {@code FrameKey-0-0-0.PixelSizeUm} value found. Used by the dialog
+     * to auto-fill the pixel-size field before stitching runs.
+     *
+     * @param folder directory to scan; non-recursive
+     * @return detected pixel size in microns ({@code > 0}), or {@code null}
+     *         if no sidecar reports a usable value
+     */
+    public static Double detectPixelSizeUm(File folder) {
+        if (folder == null || !folder.isDirectory()) return null;
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(folder.toPath(), "*_metadata.txt")) {
+            for (Path p : stream) {
+                if (p.getFileName().toString().contains(":")) continue;
+                try (Reader reader = Files.newBufferedReader(p)) {
+                    JsonObject root = GSON.fromJson(reader, JsonObject.class);
+                    if (root == null) continue;
+                    JsonObject frame = optObject(root, "FrameKey-0-0-0");
+                    if (frame == null) continue;
+                    Double ps = optDouble(frame, "PixelSizeUm");
+                    if (ps != null && ps > 0) {
+                        return ps;
+                    }
+                } catch (Exception e) {
+                    logger.debug("Could not parse {} for pixel size: {}", p.getFileName(), e.getMessage());
+                }
+            }
+        } catch (IOException e) {
+            logger.debug("Could not list MMStack sidecars in {}: {}", folder, e.getMessage());
+        }
+        return null;
     }
 
     /**

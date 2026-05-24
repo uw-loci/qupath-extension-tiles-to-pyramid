@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-05-23
+
+### Added
+- **MMStack pixel size auto-fill in StitchingGUI**: When the Stitch Images dialog opens or a folder is selected, the pixel-size field is auto-populated from the first `*_metadata.txt` sidecar's `FrameKey-0-0-0.PixelSizeUm`. A small label next to the field reports the source (`(from MMStack metadata)` / `(no MMStack metadata - tick 'Manually edit' to set)` / `(manual override)`).
+- **"Manually edit pixel size" checkbox**: The pixel size field is now uneditable by default so users cannot accidentally type over the auto-detected value. Ticking the checkbox unlocks the field; unticking it re-runs auto-fill from the current folder.
+
+### Changed
+- **MicroManager strategy treats MMStack metadata as authoritative for pixel size**: `MicroManagerMetadataStrategy.prepareStitching` now reads `FrameKey-0-0-0.PixelSizeUm` from the first sidecar and uses it for the um->px conversion regardless of the value passed in by the caller. The caller value is kept as a fallback for sidecars that don't record `PixelSizeUm`. Divergent values are logged so the choice is visible. This means an incorrect (or zero) value typed in the dialog cannot silently produce a misaligned stitch when the metadata has the correct answer.
+
 ## [0.4.0] - 2026-05-23
 
 ### Added
