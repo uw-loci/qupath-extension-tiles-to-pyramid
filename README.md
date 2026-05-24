@@ -122,6 +122,7 @@ For MicroManager 2 multi-position acquisitions with sidecar metadata:
 - Reads tile positions from `*_metadata.txt` JSON sidecar files
 - Uses authoritative per-tile stage coordinates (FrameKey-0-0-0.XPositionUm / YPositionUm)
 - Falls back to Summary.StagePositions labels if a sidecar is missing or malformed
+- Auto-detects pixel size from `FrameKey-0-0-0.PixelSizeUm` in the metadata
 - No additional configuration files required
 
 **Usage:**
@@ -129,13 +130,19 @@ For MicroManager 2 multi-position acquisitions with sidecar metadata:
 - Example filenames: `acq_MMStack_Pos-0_000.ome.tif` and `acq_MMStack_Pos-0_000_metadata.txt`
 - For stage-inverted scopes, use the `flipStitchingX` and `flipStitchingY` flags to negate coordinates
 
+**Pixel Size Auto-fill:**
+- When you open the Stitch Images dialog or select an input folder, the pixel-size field is automatically filled from the first `*_metadata.txt` sidecar's `FrameKey-0-0-0.PixelSizeUm`
+- The field is **locked by default** to prevent accidental edits — a label shows the source (`(from MMStack metadata)` / `(no MMStack metadata - tick 'Manually edit' to set)` / `(manual override)`)
+- Tick **"Manually edit pixel size"** if you need to override the detected value; unticking it restores the auto-detected value
+- The stitching strategy treats the MMStack metadata as authoritative for pixel size — an incorrect dialog value cannot silently produce misaligned stitches when the metadata has the correct answer
+
 ### Configuration Parameters
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | **Input Folder** | Root directory containing image subdirectories | Required |
 | **Output Folder** | Directory for stitched output files | Required |
-| **Pixel Size (um)** | Physical size of each pixel in microns | 0.5 |
+| **Pixel Size (um)** | Physical size of each pixel in microns. Auto-detected from MMStack `*_metadata.txt` sidecars when available; field is locked by default. Tick "Manually edit pixel size" to override. | 0.5 (or detected from metadata) |
 | **Base Downsample** | Downsampling factor for output | 1.0 |
 | **Compression** | Compression algorithm (TIFF: LZW, JPEG; ZARR: zstd, lz4) | LZW |
 | **Output Format** | OME-TIFF (single file) or OME-ZARR (directory) | OME-TIFF |
