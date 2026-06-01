@@ -15,7 +15,7 @@ A basic image stitching extension for QuPath that combines multiple image tiles 
 - **Batch Processing**: Process multiple slides simultaneously with matching criteria
 - **Multi-subdirectory Support**: Automatically creates separate outputs for each matched subdirectory
 - **Robust Error Handling**: Comprehensive logging and validation for troubleshooting
-- **Memory Efficient**: Direct tile stitcher for 500+ tiles uses ~40 MB steady state (vs 2-4+ GB)
+- **Memory Efficient**: Direct tile stitcher uses ~40 MB steady state regardless of tile count (vs 2-4+ GB with legacy SparseImageServer approach)
 - **Parallel Writing**: ZARR format utilizes multi-threaded tile writing for faster output
 - **Large Acquisition Support**: Handles 1600+ tiles without OOM via spatial indexing and bounded reader pool
 - **Multichannel Merge**: Combine N same-shape single-channel pyramids (from per-channel stitching) into one multichannel OME-TIFF via `ChannelMerger` / `ChannelMergeImageServer`
@@ -358,8 +358,8 @@ output_folder/
 - **Example**: "5.0" matches both "5.0" and "-5.0"; use "." instead
 
 #### Out of Memory Errors
-- **Cause**: For < 500 tiles, insufficient JVM heap space. For 500+ tiles, the direct stitcher activates automatically and uses ~40 MB regardless of tile count.
-- **Solution**: For smaller acquisitions, increase heap size or use higher downsample values. For large acquisitions (500+ tiles), the memory-efficient direct path is used automatically.
+- **Cause**: All acquisitions now use the memory-efficient direct stitcher, which uses ~40 MB steady state regardless of tile count. If memory issues occur, it may indicate a problem with the system environment or JVM configuration.
+- **Solution**: Increase JVM heap size if needed, use higher downsample values for initial processing, or reduce the number of concurrent operations. The direct stitcher's bounded memory usage should handle most configurations.
 - **Command**: `java -Xmx16G -jar QuPath.jar`
 
 ### Debug Logging
@@ -508,7 +508,7 @@ This project was developed with assistance from [Claude](https://claude.ai) (Ant
 <summary><h2>Changelog</h2></summary>
 
 ### Version 0.2.0 (Direct Stitcher + ZARR Support)
-- **NEW**: Memory-efficient direct tile stitcher for large acquisitions (500+ tiles)
+- **NEW**: Memory-efficient direct tile stitcher for all acquisitions
   - Bypasses SparseImageServer entirely -- prevents OOM with 1600+ tiles
   - TileSpatialIndex: O(1) tile lookup via grid (replaces O(N) linear scan)
   - TileReaderPool: LRU cache with max 8 open files (vs 1600 open servers)
@@ -524,7 +524,6 @@ This project was developed with assistance from [Claude](https://claude.ai) (Ant
 - **NEW**: BlendStrategy interface for extensible overlap handling
 - **ENHANCED**: GUI now includes output format selection dropdown
 - **ENHANCED**: Automatic compression mapping (TIFF types to ZARR equivalents)
-- Backward compatible: acquisitions < 500 tiles use existing SparseImageServer path
 
 ### Version 0.1.0
 - Initial Java conversion from Groovy implementation

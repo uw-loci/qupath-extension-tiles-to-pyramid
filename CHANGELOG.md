@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Silently-corrupt OME-TIFF pyramid levels**: stitched mosaics whose dimensions are not a clean multiple of the tile size could produce an OME-TIFF whose full-resolution level was intact but whose downsampled pyramid levels were black, with no thrown exception. Root cause was QuPath's `OMEPyramidWriter` tile-iteration optimization branch. The new `DirectTiffOutputWriter` drives Bio-Formats with only the correct `Math.min`-clamped tile loop, so partial edge tiles are handled correctly by construction. It also writes straight to the final path (no temp-file rename), removing the Windows "being used by another process" rename failures. Note: interleaved RGB requires the writer-level `TiffWriter.setInterleaved(true)` flag (separate from the OME `PixelsInterleaved` metadata).
+
+### Changed
+- **Unified stitching pipeline**: All tile counts now route through the direct tile stitcher (previously only used for 500+ tiles). This simplifies the code path while maintaining memory efficiency and performance benefits across all acquisition sizes. `PyramidImageWriter.writeOMETIFF` now delegates to `DirectTiffOutputWriter`; `ImageAssembler` and `WhiteBackgroundImageServer` (the SparseImageServer path) are removed.
+
+### Removed
+- **OME_TIFF_VIA_ZARR output format**: This accelerated ZARR-to-TIFF conversion mode has been removed. Use OME_ZARR for fast output to a cloud-native format, or OME_TIFF for single-file compatibility; the choice is made directly rather than through a hybrid intermediate step.
+
 ## [0.4.2] - 2026-05-23
 
 ### Fixed
