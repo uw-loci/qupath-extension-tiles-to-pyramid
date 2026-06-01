@@ -1,6 +1,5 @@
 package qupath.ext.basicstitching.workflow;
 
-import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -8,15 +7,12 @@ import java.util.Map;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import qupath.ext.basicstitching.assembly.ImageAssembler;
-import qupath.ext.basicstitching.assembly.PyramidImageWriter;
 import qupath.ext.basicstitching.assembly.direct.DirectTileStitcher;
 import qupath.ext.basicstitching.config.StitchingConfig;
 import qupath.ext.basicstitching.stitching.StitchingStrategy;
 import qupath.ext.basicstitching.stitching.StitchingStrategyFactory;
 import qupath.ext.basicstitching.stitching.TileMapping;
 import qupath.lib.common.GeneralTools;
-import qupath.lib.images.servers.ImageServer;
 
 /**
  * Orchestrates the complete stitching workflow:
@@ -189,108 +185,31 @@ public class StitchingWorkflow {
                 logger.info("=== Processing subdirectory: '{}' ({} tiles) ===", subdirName, subdirMappings.size());
 
                 try {
-                    // Direct stitching for large tile counts (bypasses SparseImageServer)
-                    if (DirectTileStitcher.shouldUseDirectStitching(subdirMappings.size())) {
-                        logger.info(
-                                "Using direct tile stitcher for {} tiles (threshold: {})", subdirMappings.size(), 500);
-                        String outBase;
-                        if (config.outputFilename != null && !config.outputFilename.isBlank()) {
-                            outBase = config.outputFilename + "_" + subdirName;
-                        } else {
-                            outBase = subdirName;
-                        }
-                        String written = DirectTileStitcher.stitch(
-                                subdirMappings,
-                                config.outputPath,
-                                outBase,
-                                config,
-                                progress -> logger.debug(
-                                        "Direct stitch progress: {}%", String.format("%.1f", progress * 100)));
-                        if (written != null) {
-                            logger.info("Successfully wrote (direct): {}", written);
-                            outputs.add(written);
-                            successCount++;
-                        } else {
-                            logger.error("Direct stitching failed for subdirectory: {}", subdirName);
-                            failedSubdirs.add(subdirName);
-                            failureCount++;
-                        }
-                        continue;
+                    // All tile counts go through the direct tile stitcher: it
+                    // bypasses SparseImageServer (bounded memory) and writes via
+                    // DirectTiffOutputWriter (OME-TIFF) or the JZarr chunk writer.
+                    logger.info("Stitching {} tiles via the direct tile stitcher", subdirMappings.size());
+                    String outBase;
+                    if (config.outputFilename != null && !config.outputFilename.isBlank()) {
+                        outBase = config.outputFilename + "_" + subdirName;
+                    } else {
+                        outBase = subdirName;
                     }
-
-                    // 4a. Assemble image server for this subdirectory (standard path)
-                    // Note: For RGB images, this automatically wraps with white background
-                    logger.info("Assembling image server...");
-                    ImageServer<BufferedImage> server =
-                            ImageAssembler.assemble(subdirMappings, config.pixelSizeInMicrons, config.zSpacingMicrons);
-
-                    if (server == null) {
-                        logger.error("Failed to assemble image server for subdirectory: {}", subdirName);
+                    String written = DirectTileStitcher.stitch(
+                            subdirMappings,
+                            config.outputPath,
+                            outBase,
+                            config,
+                            progress ->
+                                    logger.debug("Direct stitch progress: {}%", String.format("%.1f", progress * 100)));
+                    if (written != null) {
+                        logger.info("Successfully wrote: {}", written);
+                        outputs.add(written);
+                        successCount++;
+                    } else {
+                        logger.error("Stitching failed for subdirectory: {}", subdirName);
                         failedSubdirs.add(subdirName);
                         failureCount++;
-                        continue;
-                    }
-                    logger.info(
-                            "Successfully assembled {} tiles into image server (type: {})",
-                            subdirMappings.size(),
-                            server.getServerType());
-
-                    // Wrap the write + import in try-finally so the assembled
-                    // ImageServer is always closed -- previously a write
-                    // exception leaked the server (and its tile reader pool /
-                    // file handles) silently.
-                    try {
-                        // 4b. Determine output filename from typed config field.
-                        String configuredName = config.getOutputFilename();
-                        String outBase;
-                        if (configuredName != null && !configuredName.isBlank()) {
-                            // If outputFilename is specified, append subdirectory name
-                            outBase = configuredName + "_" + subdirName;
-                            logger.info("Using configured output filename with subdir: {}", outBase);
-                        } else {
-                            outBase = subdirName;
-                            logger.info("Using subdirectory name as output base: {}", outBase);
-                        }
-
-                        // 4c. Write output pyramid (TIFF or ZARR based on config)
-                        String formatName = config.outputFormat == null
-                                ? "OME-TIFF"
-                                : (config.outputFormat == StitchingConfig.OutputFormat.OME_ZARR
-                                        ? "OME-ZARR"
-                                        : "OME-TIFF");
-                        logger.info("Writing {} pyramid for '{}'...", formatName, subdirName);
-
-                        String written = PyramidImageWriter.write(
-                                server,
-                                config.outputPath,
-                                outBase,
-                                config.compressionType,
-                                config.baseDownsample,
-                                config.outputFormat != null
-                                        ? config.outputFormat
-                                        : StitchingConfig.OutputFormat.OME_TIFF,
-                                progress -> logger.debug(
-                                        "Write progress for '{}': {}%",
-                                        subdirName, String.format("%.1f", progress * 100)));
-
-                        if (written != null) {
-                            logger.info("Successfully wrote: {}", written);
-                            outputs.add(written);
-                            successCount++;
-                        } else {
-                            logger.error("Failed to write pyramid for subdirectory: {}", subdirName);
-                            failedSubdirs.add(subdirName);
-                            failureCount++;
-                        }
-                    } finally {
-                        try {
-                            server.close();
-                        } catch (Exception closeEx) {
-                            logger.warn(
-                                    "Error closing assembled server for subdirectory '{}': {}",
-                                    subdirName,
-                                    closeEx.getMessage());
-                        }
                     }
 
                 } catch (Exception e) {

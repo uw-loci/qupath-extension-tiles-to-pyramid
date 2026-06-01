@@ -21,25 +21,21 @@ public class ZarrFormatTest {
     public void testOutputFormatEnumValues() {
         StitchingConfig.OutputFormat[] formats = StitchingConfig.OutputFormat.values();
 
-        assertEquals(3, formats.length, "Should have exactly 3 output formats");
+        assertEquals(2, formats.length, "Should have exactly 2 output formats");
 
         boolean hasOMETIFF = false;
         boolean hasOMEZARR = false;
-        boolean hasOMETIFFViaZarr = false;
 
         for (StitchingConfig.OutputFormat format : formats) {
             if (format == StitchingConfig.OutputFormat.OME_TIFF) {
                 hasOMETIFF = true;
             } else if (format == StitchingConfig.OutputFormat.OME_ZARR) {
                 hasOMEZARR = true;
-            } else if (format == StitchingConfig.OutputFormat.OME_TIFF_VIA_ZARR) {
-                hasOMETIFFViaZarr = true;
             }
         }
 
         assertTrue(hasOMETIFF, "Should have OME_TIFF format");
         assertTrue(hasOMEZARR, "Should have OME_ZARR format");
-        assertTrue(hasOMETIFFViaZarr, "Should have OME_TIFF_VIA_ZARR format");
     }
 
     /**

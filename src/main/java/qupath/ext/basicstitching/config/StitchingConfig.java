@@ -57,27 +57,16 @@ public class StitchingConfig {
          * OME-ZARR format - directory-based cloud-native format.
          * Provides better compression, parallel writing, and cloud storage compatibility.
          */
-        OME_ZARR,
-
-        /**
-         * Accelerated OME-TIFF: stitch to ZARR in parallel (fast), then convert
-         * to OME-TIFF in the background. The user gets images immediately via ZARR
-         * while the final single-file TIFF is produced unattended.
-         *
-         * <p>The tiles-to-pyramid library treats this identically to {@link #OME_ZARR}
-         * for the initial stitch. The calling application (e.g. QPSC) is responsible
-         * for queuing the background ZARR-to-TIFF conversion and cleanup.</p>
-         */
-        OME_TIFF_VIA_ZARR;
+        OME_ZARR;
 
         /** True if the initial stitch should produce ZARR output. */
         public boolean stitchAsZarr() {
-            return this == OME_ZARR || this == OME_TIFF_VIA_ZARR;
+            return this == OME_ZARR;
         }
 
         /** True if the final delivered format is OME-TIFF. */
         public boolean finalFormatIsTiff() {
-            return this == OME_TIFF || this == OME_TIFF_VIA_ZARR;
+            return this == OME_TIFF;
         }
     }
 
