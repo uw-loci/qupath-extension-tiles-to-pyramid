@@ -31,6 +31,13 @@ import qupath.lib.regions.RegionRequest;
  * Writes a pyramidal OME-TIFF directly through Bio-Formats, bypassing QuPath's
  * {@code OMEPyramidWriter}.
  *
+ * <p><b>Provenance.</b> This is an independent implementation written against the
+ * Bio-Formats {@code TiffWriter} API (BSD-2). It is not derived from QuPath's
+ * GPL {@code OMEPyramidWriter}: the decomposition, the tile loop, and the
+ * pixel-packing are written from scratch, and the only QuPath symbol referenced
+ * is the public {@code OMEPyramidWriter.CompressionType} enum. It was written
+ * specifically to avoid the edge-tile corruption described below.
+ *
  * <p><b>Why this exists.</b> QuPath's {@code OMEPyramidWriter} has an
  * optimization branch that reuses a pyramidalized source server's native
  * tile-request grid when several conditions line up. For stitched mosaics whose

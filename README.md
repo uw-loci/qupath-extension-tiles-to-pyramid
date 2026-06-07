@@ -488,7 +488,9 @@ cd qupath-basic-stitching
 
 ## License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+This project's own source is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+Note that this is a QuPath extension and is built to run inside QuPath, which is licensed under the [GPL v3](https://www.gnu.org/licenses/gpl-3.0.html). The Apache-2.0 license applies to this extension's new, independently written code (which uses QuPath's public API and does not subclass or copy QuPath core classes). A distribution that bundles this extension together with QuPath - including the combined "fat" jar that ships QuPath dependencies - is a combined work conveyed under the terms of the GPL.
 
 ## Support
 
@@ -498,7 +500,13 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 ## Acknowledgments
 
-The OME-ZARR writing approach in this extension was informed by Leo Leplat's ZARR implementation in QuPath core (`qupath.lib.images.writers.ome.zarr`) and the [qupath-extension-stitching](https://github.com/qupath/qupath-extension-stitching).
+The stitching approach in this extension originated with Pete Bankhead's QuPath script for merging TIFF fields of view into a single pyramidal OME-TIFF ([gist](https://gist.github.com/petebankhead/b5a86caa333de1fdcff6bdee72a20abe)), which is where the idea of reading tile positions from TIFF metadata started.
+
+This extension evolved from the earlier `uw-loci/BasicStitching` and `uw-loci/basic-stitching` extensions; the stitching code was ported to Java and substantially extended (direct tile stitcher, OME-ZARR output, additional metadata strategies).
+
+The OME-ZARR writing approach was informed by Leo Leplat's ZARR implementation in QuPath core (`qupath.lib.images.writers.ome.zarr`) and the [qupath-extension-stitching](https://github.com/qupath/qupath-extension-stitching).
+
+The pyramidal OME-TIFF writer (`DirectTiffOutputWriter`) is an independent implementation written against the Bio-Formats `TiffWriter` API; it does not derive from QuPath's `OMEPyramidWriter` (it was written to avoid a silent edge-tile pyramid-corruption issue in that writer and references only its public `CompressionType` enum).
 
 ## AI-Assisted Development
 
