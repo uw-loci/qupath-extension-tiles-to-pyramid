@@ -2,6 +2,9 @@ package qupath.ext.basicstitching.stitching;
 
 import java.nio.file.*;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.basicstitching.utilities.UtilityFunctions;
@@ -31,6 +34,18 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
 
     /** Mirror of {@link #flipStitchingY} for the X axis. */
     public static volatile boolean flipStitchingX = false;
+
+    /**
+     * Directory-name patterns that encode the z-slice and timepoint of a tile
+     * when a Z-stack and/or time series is preserved rather than projected. The
+     * acquisition writes preserved planes under {@code z{zz}/} (single
+     * timepoint) or {@code t{tt}/z{zz}/} (Z + T). Flat / projected layouts have
+     * no such directories, so every tile resolves to z=0, t=0 and the output is
+     * unchanged. See the 5D stitching design in the extension docs.
+     */
+    private static final Pattern Z_DIR = Pattern.compile("^z(\\d+)$", Pattern.CASE_INSENSITIVE);
+
+    private static final Pattern T_DIR = Pattern.compile("^t(\\d+)$", Pattern.CASE_INSENSITIVE);
     /**
      * Prepares tile mappings for image stitching based on coordinates in TileConfiguration.txt files.
      *
@@ -114,7 +129,8 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
                 return mappings;
             }
 
-            // First try to find TIFF files directly in the main directory
+            // First try to find TIFF files directly in the main directory (flat /
+            // projected layout -- these are all z=0, t=0).
             List<Path> tiffFiles = new ArrayList<>();
             try (DirectoryStream<Path> tifStream = Files.newDirectoryStream(path, "*.tif*")) {
                 for (Path tifPath : tifStream) {
@@ -122,20 +138,17 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
                 }
             }
 
-            // If no TIFF files found in main directory, look in angle-specific subdirectories
+            // If none found at the top level, the tiles live in subdirectories:
+            // either an angle subdir (legacy one-level nesting) or preserved
+            // Z/T planes under z{zz}/ or t{tt}/z{zz}/. Walk recursively; the
+            // plane indices are derived from the directory names per tile, so an
+            // angle-only nesting still resolves to z=0, t=0 (unchanged).
             if (tiffFiles.isEmpty()) {
-                logger.info("No TIFF files found in main directory {}, searching angle subdirectories", path);
-                try (DirectoryStream<Path> angleStream = Files.newDirectoryStream(path)) {
-                    for (Path anglePath : angleStream) {
-                        if (Files.isDirectory(anglePath)) {
-                            try (DirectoryStream<Path> tifStream = Files.newDirectoryStream(anglePath, "*.tif*")) {
-                                for (Path tifPath : tifStream) {
-                                    tiffFiles.add(tifPath);
-                                    logger.debug("Found TIFF file in angle directory: {}", tifPath);
-                                }
-                            }
-                        }
-                    }
+                logger.info("No TIFF files at top level of {}, searching subdirectories (angle and/or z/t)", path);
+                try (Stream<Path> walk = Files.walk(path)) {
+                    walk.filter(Files::isRegularFile)
+                            .filter(TileConfigurationTxtStrategy::isTiff)
+                            .forEach(tiffFiles::add);
                 }
             }
 
@@ -152,16 +165,17 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
                     logger.info("Tile dimension progress: {}/{} files processed", processed, tileCount);
                 }
                 if (pos != null && dims != null) {
+                    int[] zt = parseZT(path.relativize(tifPath));
                     ImageRegion region = ImageRegion.createInstance(
                             (int) Math.round(pos.x),
                             (int) Math.round(pos.y),
                             dims.get("width"),
                             dims.get("height"),
-                            0,
-                            0);
+                            zt[0],
+                            zt[1]);
                     mappings.add(new TileMapping(
                             tifPath.toFile(), region, path.getFileName().toString()));
-                    logger.debug("Mapped {} at ({}, {}) from config", filename, pos.x, pos.y);
+                    logger.debug("Mapped {} at ({}, {}) z={} t={} from config", filename, pos.x, pos.y, zt[0], zt[1]);
                 } else {
                     logger.warn("Missing config position or TIFF dimensions for {}", filename);
                 }
@@ -171,6 +185,40 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
         }
 
         return mappings;
+    }
+
+    /** True if the path's file name ends in .tif or .tiff (case-insensitive). */
+    private static boolean isTiff(Path p) {
+        String name = p.getFileName().toString().toLowerCase(Locale.ROOT);
+        return name.endsWith(".tif") || name.endsWith(".tiff");
+    }
+
+    /**
+     * Derive the (z, t) plane indices for a tile from its path relative to the
+     * group directory. Directory segments matching {@code z{zz}} / {@code t{tt}}
+     * set the respective index; any other segments (e.g. an angle subdir) and
+     * the file name itself are ignored, so a flat or angle-only layout yields
+     * {@code {0, 0}}.
+     *
+     * @param relative tile path relative to the group directory
+     * @return a two-element array {@code {z, t}}
+     */
+    private static int[] parseZT(Path relative) {
+        int z = 0;
+        int t = 0;
+        for (Path seg : relative) {
+            String name = seg.toString();
+            Matcher mz = Z_DIR.matcher(name);
+            if (mz.matches()) {
+                z = Integer.parseInt(mz.group(1));
+                continue;
+            }
+            Matcher mt = T_DIR.matcher(name);
+            if (mt.matches()) {
+                t = Integer.parseInt(mt.group(1));
+            }
+        }
+        return new int[] {z, t};
     }
 
     /**
