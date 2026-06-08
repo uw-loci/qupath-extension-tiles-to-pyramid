@@ -308,7 +308,17 @@ public final class DirectTiffOutputWriter {
         return buf;
     }
 
-    /** Populate the OME metadata for a single-series, single-Z, single-T image. */
+    /**
+     * Populate the OME metadata for a single-series, single-Z, single-T image.
+     *
+     * <p>The required OME fields (Image/Pixels IDs, endianness, dimension order,
+     * pixel type, X/Y/Z/C/T sizes, per-channel IDs and samples-per-pixel) are set
+     * through Bio-Formats' own {@link MetadataTools#populateMetadata} helper, so
+     * they follow the OME data model / Bio-Formats conventions rather than being
+     * hand-rolled. The fields the helper does not cover -- channel interleaving,
+     * channel colours and names, physical pixel size, and pyramid resolution sizes
+     * -- are set explicitly afterwards.
+     */
     private static void initializeMetadata(
             IMetadata meta,
             ImageServer<BufferedImage> source,
@@ -320,36 +330,46 @@ public final class DirectTiffOutputWriter {
 
         int series = 0;
         int nChannels = source.nChannels();
-
-        meta.setImageID("Image:0", series);
-        meta.setPixelsID("Pixels:0", series);
-        meta.setPixelsBigEndian(Boolean.TRUE, series);
-        meta.setPixelsDimensionOrder(DimensionOrder.XYCZT, series);
-        meta.setPixelsType(toOmePixelType(pixelType), series);
-
         double base = downsamples[0];
-        meta.setPixelsSizeX(new PositiveInteger((int) (width / base)), series);
-        meta.setPixelsSizeY(new PositiveInteger((int) (height / base)), series);
-        meta.setPixelsSizeZ(new PositiveInteger(1), series);
-        meta.setPixelsSizeT(new PositiveInteger(1), series);
-        meta.setPixelsSizeC(new PositiveInteger(nChannels), series);
+        int sizeX = (int) (width / base);
+        int sizeY = (int) (height / base);
 
-        if (exportRGB) {
-            // Order/IDs mirror QuPath's OMEPyramidWriter exactly: a single logical
-            // channel ("Channel:0") carrying 3 samples-per-pixel, interleaved.
-            meta.setChannelID("Channel:0", series, 0);
-            meta.setPixelsInterleaved(Boolean.TRUE, series);
-            meta.setChannelSamplesPerPixel(new PositiveInteger(nChannels), series, 0);
-        } else {
-            meta.setPixelsInterleaved(Boolean.FALSE, series);
+        // Channels are written either as a single interleaved plane carrying N
+        // samples (RGB) or as N planar single-sample channels. In OME terms that is
+        // sizeC = N with samplesPerPixel = N (RGB) or 1 (planar).
+        int samplesPerPixel = exportRGB ? nChannels : 1;
+
+        // Required OME fields via the Bio-Formats helper. littleEndian = false
+        // because packPlane() emits 16-bit samples big-endian; single Z, single T.
+        MetadataTools.populateMetadata(
+                meta,
+                series,
+                null, // image name
+                false, // littleEndian -> big-endian
+                DimensionOrder.XYCZT.getValue(),
+                toOmePixelType(pixelType).getValue(),
+                sizeX,
+                sizeY,
+                1, // sizeZ
+                nChannels, // sizeC
+                1, // sizeT
+                samplesPerPixel);
+
+        // Re-assert big-endian explicitly: packPlane() writes 16-bit samples
+        // big-endian, so the OME metadata must agree regardless of the helper's
+        // internal default.
+        meta.setPixelsBigEndian(Boolean.TRUE, series);
+
+        // Fields populateMetadata does not set: interleaving, channel colours and
+        // names. (Channel IDs and samples-per-pixel are already set by the helper.)
+        meta.setPixelsInterleaved(exportRGB ? Boolean.TRUE : Boolean.FALSE, series);
+        if (!exportRGB) {
             for (int c = 0; c < nChannels; c++) {
-                meta.setChannelID("Channel:0:" + c, series, c);
-                meta.setChannelSamplesPerPixel(new PositiveInteger(1), series, c);
                 ImageChannel channel = source.getChannel(c);
                 Integer color = channel.getColor();
                 if (color != null) {
-                    // Alpha 0 matches QuPath's OMEPyramidWriter convention and
-                    // round-trips correctly through its reader.
+                    // OME Color packs RGBA; an alpha of 0 is the OME-TIFF convention
+                    // used by Bio-Formats readers for opaque channel colours.
                     meta.setChannelColor(
                             new Color((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF, 0), series, c);
                 }
