@@ -76,7 +76,9 @@ image_tile[1000,2500].tif
 - Extension automatically calculates tile positions and overlaps
 
 #### 2. TileConfiguration.txt File
-For ImageJ/Fiji tile configuration format:
+For ImageJ/Fiji tile configuration format. The XY positions come from `TileConfiguration.txt`; optionally, z-slice and timepoint indices are derived from directory names if tiles are organized in `z{zz}/` or `t{tt}/z{zz}/` subdirectories.
+
+**Basic 2D layout (flat or projected):**
 ```
 # Define the number of dimensions we are working on
 dim = 2
@@ -88,10 +90,51 @@ tile_003.tif; ; (0.0, 1024.0)
 tile_004.tif; ; (1024.0, 1024.0)
 ```
 
+**5D layout with preserved Z-stack (single timepoint):**
+Tiles are organized under `z{zz}/` subdirectories; the TileConfiguration.txt file lives in the root and defines the XY mosaic:
+```
+root/
++-- TileConfiguration.txt (defines XY positions)
++-- z00/
+|   +-- tile_001.tif
+|   +-- tile_002.tif
+|   +-- tile_003.tif
+|   +-- tile_004.tif
++-- z01/
+|   +-- tile_001.tif
+|   +-- tile_002.tif
+|   +-- tile_003.tif
+|   +-- tile_004.tif
++-- z02/
+    +-- tile_001.tif
+    +-- tile_002.tif
+    +-- tile_003.tif
+    +-- tile_004.tif
+```
+
+**5D layout with preserved Z-stack and time series:**
+Tiles are organized under `t{tt}/z{zz}/` nested subdirectories; TileConfiguration.txt lives in the root:
+```
+root/
++-- TileConfiguration.txt (defines XY positions)
++-- t00/
+|   +-- z00/
+|   |   +-- tile_001.tif, tile_002.tif, ...
+|   +-- z01/
+|   |   +-- tile_001.tif, tile_002.tif, ...
++-- t01/
+    +-- z00/
+    |   +-- tile_001.tif, tile_002.tif, ...
+    +-- z01/
+        +-- tile_001.tif, tile_002.tif, ...
+```
+
 **Usage:**
-- Each subdirectory must contain a `TileConfiguration.txt` file
-- Coordinates represent pixel positions
+- Each group must contain a `TileConfiguration.txt` file (at the root for z/t layouts, or in each angle subdirectory for flat/projected)
+- Coordinates in the config represent pixel positions in the XY mosaic
 - Automatically scaled based on pixel size and downsample settings
+- Tile filenames in the config must match across all z/t planes (the stitcher recursively finds tiles by name, regardless of z/t nesting)
+- Flat / projected layouts (no z/t subdirectories) resolve to z=0, t=0 and produce 2D output, unchanged from prior behavior
 
 **Batch Processing Multiple Subdirectories:**
 When the matching string matches multiple subdirectories, each subdirectory is stitched independently:
