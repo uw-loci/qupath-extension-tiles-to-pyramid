@@ -56,16 +56,30 @@ public class ChunkCompositor {
     }
 
     /**
-     * Composite source tiles into an output chunk buffer.
-     * Coordinates are in origin-translated space (0-based).
+     * Composite the level-0 plane at {@code (z, t)} for a chunk. Convenience for
+     * 2D stitches (z = t = 0).
+     */
+    public BufferedImage compositeChunk(int chunkX, int chunkY, int chunkW, int chunkH) throws IOException {
+        return compositeChunk(0, 0, chunkX, chunkY, chunkW, chunkH);
+    }
+
+    /**
+     * Composite source tiles into an output chunk buffer for one (z, t) plane.
+     * Coordinates are in origin-translated space (0-based). Only tiles whose
+     * {@code region} is at the requested z-slice and timepoint contribute; tiles
+     * at other z/t are skipped, so an interleaved 5D tile set assembles into the
+     * correct plane.
      *
+     * @param z Z-slice index to composite
+     * @param t Timepoint index to composite
      * @param chunkX Chunk X position in the full image
      * @param chunkY Chunk Y position in the full image
      * @param chunkW Chunk width (may be less than chunk size at image edge)
      * @param chunkH Chunk height (may be less than chunk size at image edge)
      * @return Composited BufferedImage
      */
-    public BufferedImage compositeChunk(int chunkX, int chunkY, int chunkW, int chunkH) throws IOException {
+    public BufferedImage compositeChunk(int z, int t, int chunkX, int chunkY, int chunkW, int chunkH)
+            throws IOException {
         // Query spatial index for contributing tiles
         List<TileMapping> tiles = spatialIndex.query(chunkX, chunkY, chunkW, chunkH);
 
@@ -77,6 +91,12 @@ public class ChunkCompositor {
 
         // Composite each contributing tile
         for (TileMapping tile : tiles) {
+            // Skip tiles that belong to a different z-slice or timepoint. The XY
+            // spatial index is shared across all z/t, so the same cell can hold
+            // tiles from every plane; the (z, t) filter selects the current one.
+            if (tile.region.getZ() != z || tile.region.getT() != t) {
+                continue;
+            }
             // Tile position in origin-translated coords
             int tileX = tile.region.getX() - originX;
             int tileY = tile.region.getY() - originY;

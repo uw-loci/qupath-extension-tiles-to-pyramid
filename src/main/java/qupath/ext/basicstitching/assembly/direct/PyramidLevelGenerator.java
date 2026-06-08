@@ -40,14 +40,17 @@ public class PyramidLevelGenerator {
 
         int nChannels = writer.getNumChannels();
         boolean is16Bit = writer.getBitDepth() > 8;
+        int sizeZ = writer.getSizeZ();
+        int sizeT = writer.getSizeT();
 
-        // Count total chunks across all levels for progress tracking
+        // Count total chunks across all levels and planes for progress tracking
         int totalChunks = 0;
         for (int level = 1; level < numLevels; level++) {
             int levelW = writer.getLevelWidth(level);
             int levelH = writer.getLevelHeight(level);
             totalChunks += (int) Math.ceil((double) levelW / chunkSize) * (int) Math.ceil((double) levelH / chunkSize);
         }
+        totalChunks *= sizeZ * sizeT;
 
         int processedChunks = 0;
 
@@ -60,39 +63,54 @@ public class PyramidLevelGenerator {
             int chunksX = (int) Math.ceil((double) currW / chunkSize);
             int chunksY = (int) Math.ceil((double) currH / chunkSize);
 
-            logger.info("Generating pyramid level {}: {}x{} ({} chunks)", level, currW, currH, chunksX * chunksY);
+            logger.info(
+                    "Generating pyramid level {}: {}x{} ({} chunks x {} z x {} t)",
+                    level,
+                    currW,
+                    currH,
+                    chunksX * chunksY,
+                    sizeZ,
+                    sizeT);
 
-            for (int cy = 0; cy < chunksY; cy++) {
-                for (int cx = 0; cx < chunksX; cx++) {
-                    int outW = Math.min(chunkSize, currW - cx * chunkSize);
-                    int outH = Math.min(chunkSize, currH - cy * chunkSize);
+            // Each (z, t) plane is downsampled independently; channels are carried
+            // within the per-plane [C, H, W] block by downsample2x.
+            for (int t = 0; t < sizeT; t++) {
+                for (int z = 0; z < sizeZ; z++) {
+                    for (int cy = 0; cy < chunksY; cy++) {
+                        for (int cx = 0; cx < chunksX; cx++) {
+                            int outW = Math.min(chunkSize, currW - cx * chunkSize);
+                            int outH = Math.min(chunkSize, currH - cy * chunkSize);
 
-                    // Source region in previous level (2x the output region)
-                    int srcX = cx * chunkSize * 2;
-                    int srcY = cy * chunkSize * 2;
-                    int srcW = Math.min(outW * 2, prevW - srcX);
-                    int srcH = Math.min(outH * 2, prevH - srcY);
+                            // Source region in previous level (2x the output region)
+                            int srcX = cx * chunkSize * 2;
+                            int srcY = cy * chunkSize * 2;
+                            int srcW = Math.min(outW * 2, prevW - srcX);
+                            int srcH = Math.min(outH * 2, prevH - srcY);
 
-                    if (srcW <= 0 || srcH <= 0) {
-                        continue;
-                    }
+                            if (srcW <= 0 || srcH <= 0) {
+                                continue;
+                            }
 
-                    // Read source data from previous level
-                    Object srcData = writer.readRawData(level - 1, srcY, srcX, srcH, srcW);
+                            // Read source data from previous level for this plane
+                            Object srcData = writer.readRawData(level - 1, z, t, srcY, srcX, srcH, srcW);
 
-                    // Compute actual downsampled dimensions
-                    int actualDstW = Math.min(outW, (srcW + 1) / 2);
-                    int actualDstH = Math.min(outH, (srcH + 1) / 2);
+                            // Compute actual downsampled dimensions
+                            int actualDstW = Math.min(outW, (srcW + 1) / 2);
+                            int actualDstH = Math.min(outH, (srcH + 1) / 2);
 
-                    // Downsample 2x via area averaging
-                    Object dstData = downsample2x(srcData, srcW, srcH, actualDstW, actualDstH, nChannels, is16Bit);
+                            // Downsample 2x via area averaging
+                            Object dstData =
+                                    downsample2x(srcData, srcW, srcH, actualDstW, actualDstH, nChannels, is16Bit);
 
-                    // Write to current level
-                    writer.writeRawData(dstData, level, cy * chunkSize, cx * chunkSize, actualDstH, actualDstW);
+                            // Write to current level for this plane
+                            writer.writeRawData(
+                                    dstData, level, z, t, cy * chunkSize, cx * chunkSize, actualDstH, actualDstW);
 
-                    processedChunks++;
-                    if (progressCallback != null && totalChunks > 0) {
-                        progressCallback.accept((double) processedChunks / totalChunks);
+                            processedChunks++;
+                            if (progressCallback != null && totalChunks > 0) {
+                                progressCallback.accept((double) processedChunks / totalChunks);
+                            }
+                        }
                     }
                 }
             }

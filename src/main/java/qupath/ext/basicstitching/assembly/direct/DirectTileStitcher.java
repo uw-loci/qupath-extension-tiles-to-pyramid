@@ -112,7 +112,15 @@ public class DirectTileStitcher {
             TileSpatialIndex index = new TileSpatialIndex(mappings, DEFAULT_CHUNK_SIZE);
             int imageWidth = index.getImageWidth();
             int imageHeight = index.getImageHeight();
-            logger.info("Full image: {}x{} pixels ({} tiles)", imageWidth, imageHeight, mappings.size());
+            int zCount = countZSlices(mappings);
+            int tCount = countTimepoints(mappings);
+            logger.info(
+                    "Full image: {}x{} pixels ({} tiles, {} z-slices, {} timepoints)",
+                    imageWidth,
+                    imageHeight,
+                    mappings.size(),
+                    zCount,
+                    tCount);
 
             // 3. Create compositor and reader pool (try-with-resources for cleanup on exception)
             boolean whiteBackground = dims.isRGB();
@@ -131,6 +139,8 @@ public class DirectTileStitcher {
                         dims.nChannels(),
                         dims.isRGB(),
                         dims.bitDepth(),
+                        zCount,
+                        tCount,
                         config.pixelSizeInMicrons,
                         config.zSpacingMicrons);
 
@@ -207,7 +217,15 @@ public class DirectTileStitcher {
             TileSpatialIndex index = new TileSpatialIndex(mappings, DEFAULT_CHUNK_SIZE);
             int imageWidth = index.getImageWidth();
             int imageHeight = index.getImageHeight();
-            logger.info("Full image: {}x{} pixels ({} tiles)", imageWidth, imageHeight, mappings.size());
+            int zCount = countZSlices(mappings);
+            int tCount = countTimepoints(mappings);
+            logger.info(
+                    "Full image: {}x{} pixels ({} tiles, {} z-slices, {} timepoints)",
+                    imageWidth,
+                    imageHeight,
+                    mappings.size(),
+                    zCount,
+                    tCount);
 
             // 3. Compute pyramid levels
             int numLevels = computePyramidLevels(imageWidth, imageHeight, DEFAULT_CHUNK_SIZE);
@@ -227,6 +245,8 @@ public class DirectTileStitcher {
                         dims.nChannels(),
                         dims.isRGB(),
                         dims.bitDepth(),
+                        zCount,
+                        tCount,
                         config.pixelSizeInMicrons,
                         config.zSpacingMicrons,
                         DEFAULT_CHUNK_SIZE,
@@ -240,33 +260,49 @@ public class DirectTileStitcher {
                     ChunkCompositor compositor = new ChunkCompositor(
                             readerPool, index, blend, whiteBackground, dims.isRGB(), dims.bitDepth());
 
-                    // 7. Write level 0 chunks in scanline order
+                    // 7. Write level 0 chunks in scanline order, one (z, t) plane at
+                    // a time. The compositor selects only the tiles at the requested
+                    // z-slice and timepoint, so an interleaved 5D tile set assembles
+                    // into the correct planes.
                     int chunksX = (int) Math.ceil((double) imageWidth / DEFAULT_CHUNK_SIZE);
                     int chunksY = (int) Math.ceil((double) imageHeight / DEFAULT_CHUNK_SIZE);
-                    int totalChunks = chunksX * chunksY;
+                    int totalChunks = chunksX * chunksY * zCount * tCount;
 
-                    logger.info("Writing {} level-0 chunks ({}x{} grid)...", totalChunks, chunksX, chunksY);
+                    logger.info(
+                            "Writing {} level-0 chunks ({}x{} grid x {} z x {} t)...",
+                            totalChunks,
+                            chunksX,
+                            chunksY,
+                            zCount,
+                            tCount);
 
                     int processed = 0;
-                    for (int cy = 0; cy < chunksY; cy++) {
-                        for (int cx = 0; cx < chunksX; cx++) {
-                            int chunkX = cx * DEFAULT_CHUNK_SIZE;
-                            int chunkY = cy * DEFAULT_CHUNK_SIZE;
-                            int chunkW = Math.min(DEFAULT_CHUNK_SIZE, imageWidth - chunkX);
-                            int chunkH = Math.min(DEFAULT_CHUNK_SIZE, imageHeight - chunkY);
+                    for (int t = 0; t < tCount; t++) {
+                        for (int z = 0; z < zCount; z++) {
+                            for (int cy = 0; cy < chunksY; cy++) {
+                                for (int cx = 0; cx < chunksX; cx++) {
+                                    int chunkX = cx * DEFAULT_CHUNK_SIZE;
+                                    int chunkY = cy * DEFAULT_CHUNK_SIZE;
+                                    int chunkW = Math.min(DEFAULT_CHUNK_SIZE, imageWidth - chunkX);
+                                    int chunkH = Math.min(DEFAULT_CHUNK_SIZE, imageHeight - chunkY);
 
-                            BufferedImage chunk = compositor.compositeChunk(chunkX, chunkY, chunkW, chunkH);
-                            writer.writeChunk(chunk, 0, chunkX, chunkY);
+                                    BufferedImage chunk =
+                                            compositor.compositeChunk(z, t, chunkX, chunkY, chunkW, chunkH);
+                                    writer.writeChunk(chunk, 0, z, t, chunkX, chunkY);
 
-                            processed++;
-                            if (progressCallback != null) {
-                                // Level 0 is ~80% of total work
-                                progressCallback.accept(0.8 * processed / totalChunks);
-                            }
-                            if (processed % 100 == 0) {
-                                logger.info(
-                                        "Level 0 progress: {}/{} chunks ({}%)",
-                                        processed, totalChunks, String.format("%.1f", 100.0 * processed / totalChunks));
+                                    processed++;
+                                    if (progressCallback != null) {
+                                        // Level 0 is ~80% of total work
+                                        progressCallback.accept(0.8 * processed / totalChunks);
+                                    }
+                                    if (processed % 100 == 0) {
+                                        logger.info(
+                                                "Level 0 progress: {}/{} chunks ({}%)",
+                                                processed,
+                                                totalChunks,
+                                                String.format("%.1f", 100.0 * processed / totalChunks));
+                                    }
+                                }
                             }
                         }
                     }
@@ -300,6 +336,30 @@ public class DirectTileStitcher {
             logger.error("Direct stitching (OME-ZARR) failed", e);
             return null;
         }
+    }
+
+    /**
+     * Number of z-slices implied by the tile mappings: {@code max(region.z) + 1}.
+     * Returns 1 for a flat (single-plane) tile set.
+     */
+    static int countZSlices(List<TileMapping> mappings) {
+        int max = 0;
+        for (TileMapping m : mappings) {
+            max = Math.max(max, m.region.getZ());
+        }
+        return max + 1;
+    }
+
+    /**
+     * Number of timepoints implied by the tile mappings: {@code max(region.t) + 1}.
+     * Returns 1 for a single-timepoint tile set.
+     */
+    static int countTimepoints(List<TileMapping> mappings) {
+        int max = 0;
+        for (TileMapping m : mappings) {
+            max = Math.max(max, m.region.getT());
+        }
+        return max + 1;
     }
 
     /**

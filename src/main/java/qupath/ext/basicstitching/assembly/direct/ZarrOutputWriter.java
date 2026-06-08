@@ -48,6 +48,66 @@ public class ZarrOutputWriter implements AutoCloseable {
     private boolean isRGB;
     private int bitDepth;
     private int chunkSize;
+    private int sizeZ = 1;
+    private int sizeT = 1;
+    private double zSpacingMicrons;
+
+    // --- Axis layout (NGFF TCZYX subset) ---
+    // The arrays carry only the axes that are non-singleton, in TCZYX order:
+    // t (if sizeT>1), c (if nChannels>1), z (if sizeZ>1), then always y, x. This
+    // keeps the 2D / multichannel output identical to before and adds z/t only
+    // when present.
+
+    private boolean hasT() {
+        return sizeT > 1;
+    }
+
+    private boolean hasC() {
+        return nChannels > 1;
+    }
+
+    private boolean hasZ() {
+        return sizeZ > 1;
+    }
+
+    /**
+     * Build a present-axes coordinate array (shape or offset) in TCZYX order,
+     * dropping any singleton t/c/z axis so the rank matches the JZarr arrays.
+     */
+    private int[] axes(int tv, int cv, int zv, int yv, int xv) {
+        int n = 2 + (hasT() ? 1 : 0) + (hasC() ? 1 : 0) + (hasZ() ? 1 : 0);
+        int[] a = new int[n];
+        int i = 0;
+        if (hasT()) {
+            a[i++] = tv;
+        }
+        if (hasC()) {
+            a[i++] = cv;
+        }
+        if (hasZ()) {
+            a[i++] = zv;
+        }
+        a[i++] = yv;
+        a[i] = xv;
+        return a;
+    }
+
+    /** Present axis names in TCZYX order, matching {@link #axes}. */
+    private List<String> axisNames() {
+        List<String> names = new ArrayList<>();
+        if (hasT()) {
+            names.add("t");
+        }
+        if (hasC()) {
+            names.add("c");
+        }
+        if (hasZ()) {
+            names.add("z");
+        }
+        names.add("y");
+        names.add("x");
+        return names;
+    }
 
     /**
      * Create a ZARR writer.
@@ -80,6 +140,8 @@ public class ZarrOutputWriter implements AutoCloseable {
             int nChannels,
             boolean isRGB,
             int bitDepth,
+            int zCount,
+            int tCount,
             double pixelSizeMicrons,
             double zSpacingMicrons,
             int chunkSize,
@@ -90,13 +152,18 @@ public class ZarrOutputWriter implements AutoCloseable {
         this.nChannels = nChannels;
         this.isRGB = isRGB;
         this.bitDepth = bitDepth;
+        this.sizeZ = Math.max(1, zCount);
+        this.sizeT = Math.max(1, tCount);
+        this.zSpacingMicrons = zSpacingMicrons;
         this.chunkSize = chunkSize;
 
         logger.info(
-                "Initializing ZARR writer: {}x{}, {} channels, {} bit, {} levels, chunk={}",
+                "Initializing ZARR writer: {}x{}, {} channels, {} z, {} t, {} bit, {} levels, chunk={}",
                 imageWidth,
                 imageHeight,
                 nChannels,
+                sizeZ,
+                sizeT,
                 bitDepth,
                 numPyramidLevels,
                 chunkSize);
@@ -117,15 +184,10 @@ public class ZarrOutputWriter implements AutoCloseable {
             int levelChunkW = Math.min(chunkSize, levelW);
             int levelChunkH = Math.min(chunkSize, levelH);
 
-            int[] shape;
-            int[] chunks;
-            if (nChannels > 1) {
-                shape = new int[] {nChannels, levelH, levelW};
-                chunks = new int[] {nChannels, levelChunkH, levelChunkW};
-            } else {
-                shape = new int[] {levelH, levelW};
-                chunks = new int[] {levelChunkH, levelChunkW};
-            }
+            // Full extent on every axis; chunk one (t, z) plane at a time, whole
+            // channel axis per chunk (matches the previous [c,y,x] chunking).
+            int[] shape = axes(sizeT, nChannels, sizeZ, levelH, levelW);
+            int[] chunks = axes(1, nChannels, 1, levelChunkH, levelChunkW);
 
             ArrayParams params = new ArrayParams()
                     .shape(shape)
@@ -137,13 +199,9 @@ public class ZarrOutputWriter implements AutoCloseable {
             Path arrayPath = outputPath.resolve("s" + level);
             levelArrays[level] = ZarrArray.create(arrayPath, params);
 
-            // Write array dimension attributes
+            // Write array dimension attributes (present axes, TCZYX order)
             Map<String, Object> arrayAttrs = new LinkedHashMap<>();
-            if (nChannels > 1) {
-                arrayAttrs.put("_ARRAY_DIMENSIONS", List.of("c", "y", "x"));
-            } else {
-                arrayAttrs.put("_ARRAY_DIMENSIONS", List.of("y", "x"));
-            }
+            arrayAttrs.put("_ARRAY_DIMENSIONS", axisNames());
             levelArrays[level].writeAttributes(arrayAttrs);
 
             logger.debug(
@@ -163,10 +221,16 @@ public class ZarrOutputWriter implements AutoCloseable {
      * Write NGFF 0.4 multiscales and omero metadata to root .zattrs.
      */
     private void writeNGFFMetadata(double pixelSizeMicrons, int numPyramidLevels) throws IOException {
-        // Build axes
+        // Build axes (present axes only, TCZYX order)
         List<Map<String, Object>> axes = new ArrayList<>();
-        if (nChannels > 1) {
+        if (hasT()) {
+            axes.add(Map.of("name", "t", "type", "time", "unit", "second"));
+        }
+        if (hasC()) {
             axes.add(Map.of("name", "c", "type", "channel"));
+        }
+        if (hasZ()) {
+            axes.add(Map.of("name", "z", "type", "space", "unit", "micrometer"));
         }
         axes.add(Map.of("name", "y", "type", "space", "unit", "micrometer"));
         axes.add(Map.of("name", "x", "type", "space", "unit", "micrometer"));
@@ -177,7 +241,9 @@ public class ZarrOutputWriter implements AutoCloseable {
             double scale = Math.pow(2, level);
 
             List<Double> scaleValues = new ArrayList<>();
-            if (nChannels > 1) scaleValues.add(1.0);
+            if (hasT()) scaleValues.add(1.0);
+            if (hasC()) scaleValues.add(1.0);
+            if (hasZ()) scaleValues.add(zSpacingMicrons > 0 ? zSpacingMicrons : 1.0);
             scaleValues.add(pixelSizeMicrons * scale);
             scaleValues.add(pixelSizeMicrons * scale);
 
@@ -251,28 +317,31 @@ public class ZarrOutputWriter implements AutoCloseable {
      * @param chunkX X position in pixels within the level
      * @param chunkY Y position in pixels within the level
      */
-    public void writeChunk(BufferedImage image, int level, int chunkX, int chunkY) throws IOException {
+    public void writeChunk(BufferedImage image, int level, int z, int t, int chunkX, int chunkY) throws IOException {
         int w = image.getWidth();
         int h = image.getHeight();
         ZarrArray array = levelArrays[level];
 
         try {
             if (isRGB && nChannels > 1) {
-                writeRGBChunk(array, image, w, h, chunkX, chunkY);
+                writeRGBChunk(array, image, w, h, z, t, chunkX, chunkY);
             } else if (bitDepth > 8) {
-                write16BitChunk(array, image, w, h, chunkX, chunkY);
+                write16BitChunk(array, image, w, h, z, t, chunkX, chunkY);
             } else {
-                write8BitChunk(array, image, w, h, chunkX, chunkY);
+                write8BitChunk(array, image, w, h, z, t, chunkX, chunkY);
             }
         } catch (Exception e) {
-            throw new IOException("Error writing chunk at level=" + level + " (" + chunkX + "," + chunkY + ")", e);
+            throw new IOException(
+                    "Error writing chunk at level=" + level + " z=" + z + " t=" + t + " (" + chunkX + "," + chunkY
+                            + ")",
+                    e);
         }
     }
 
     /**
-     * Write RGB chunk as [C=3, Y, X] byte data.
+     * Write RGB chunk as [C=3, Y, X] byte data into the (z, t) plane.
      */
-    private void writeRGBChunk(ZarrArray array, BufferedImage image, int w, int h, int chunkX, int chunkY)
+    private void writeRGBChunk(ZarrArray array, BufferedImage image, int w, int h, int z, int t, int chunkX, int chunkY)
             throws Exception {
         byte[] data = new byte[nChannels * h * w];
         for (int y = 0; y < h; y++) {
@@ -284,45 +353,35 @@ public class ZarrOutputWriter implements AutoCloseable {
                 data[2 * h * w + idx] = (byte) (rgb & 0xFF); // B -> channel 2
             }
         }
-        array.write(data, new int[] {nChannels, h, w}, new int[] {0, chunkY, chunkX});
+        array.write(data, axes(1, nChannels, 1, h, w), axes(t, 0, z, chunkY, chunkX));
     }
 
     /**
-     * Write 16-bit single-channel chunk.
+     * Write 16-bit single-channel chunk into the (z, t) plane.
      */
-    private void write16BitChunk(ZarrArray array, BufferedImage image, int w, int h, int chunkX, int chunkY)
-            throws Exception {
+    private void write16BitChunk(
+            ZarrArray array, BufferedImage image, int w, int h, int z, int t, int chunkX, int chunkY) throws Exception {
         int[] samples = new int[h * w];
         image.getRaster().getSamples(0, 0, w, h, 0, samples);
         short[] data = new short[h * w];
         for (int i = 0; i < samples.length; i++) {
             data[i] = (short) samples[i];
         }
-
-        if (nChannels > 1) {
-            array.write(data, new int[] {1, h, w}, new int[] {0, chunkY, chunkX});
-        } else {
-            array.write(data, new int[] {h, w}, new int[] {chunkY, chunkX});
-        }
+        array.write(data, axes(1, 1, 1, h, w), axes(t, 0, z, chunkY, chunkX));
     }
 
     /**
-     * Write 8-bit single-channel chunk.
+     * Write 8-bit single-channel chunk into the (z, t) plane.
      */
-    private void write8BitChunk(ZarrArray array, BufferedImage image, int w, int h, int chunkX, int chunkY)
-            throws Exception {
+    private void write8BitChunk(
+            ZarrArray array, BufferedImage image, int w, int h, int z, int t, int chunkX, int chunkY) throws Exception {
         int[] samples = new int[h * w];
         image.getRaster().getSamples(0, 0, w, h, 0, samples);
         byte[] data = new byte[h * w];
         for (int i = 0; i < samples.length; i++) {
             data[i] = (byte) samples[i];
         }
-
-        if (nChannels > 1) {
-            array.write(data, new int[] {1, h, w}, new int[] {0, chunkY, chunkX});
-        } else {
-            array.write(data, new int[] {h, w}, new int[] {chunkY, chunkX});
-        }
+        array.write(data, axes(1, 1, 1, h, w), axes(t, 0, z, chunkY, chunkX));
     }
 
     /**
@@ -336,18 +395,16 @@ public class ZarrOutputWriter implements AutoCloseable {
      * @param height Data height
      * @param width Data width
      */
-    public void writeRawData(Object data, int level, int offsetY, int offsetX, int height, int width)
+    public void writeRawData(Object data, int level, int z, int t, int offsetY, int offsetX, int height, int width)
             throws IOException {
         try {
             ZarrArray array = levelArrays[level];
-            if (nChannels > 1) {
-                array.write(data, new int[] {nChannels, height, width}, new int[] {0, offsetY, offsetX});
-            } else {
-                array.write(data, new int[] {height, width}, new int[] {offsetY, offsetX});
-            }
+            array.write(data, axes(1, nChannels, 1, height, width), axes(t, 0, z, offsetY, offsetX));
         } catch (Exception e) {
             throw new IOException(
-                    "Error writing raw data at level " + level + " offset=(" + offsetX + "," + offsetY + ")", e);
+                    "Error writing raw data at level " + level + " z=" + z + " t=" + t + " offset=(" + offsetX + ","
+                            + offsetY + ")",
+                    e);
         }
     }
 
@@ -362,17 +419,16 @@ public class ZarrOutputWriter implements AutoCloseable {
      * @param width Read width
      * @return Flat array (byte[] for 8-bit, short[] for 16-bit)
      */
-    public Object readRawData(int level, int offsetY, int offsetX, int height, int width) throws IOException {
+    public Object readRawData(int level, int z, int t, int offsetY, int offsetX, int height, int width)
+            throws IOException {
         try {
             ZarrArray array = levelArrays[level];
-            if (nChannels > 1) {
-                return array.read(new int[] {nChannels, height, width}, new int[] {0, offsetY, offsetX});
-            } else {
-                return array.read(new int[] {height, width}, new int[] {offsetY, offsetX});
-            }
+            return array.read(axes(1, nChannels, 1, height, width), axes(t, 0, z, offsetY, offsetX));
         } catch (Exception e) {
             throw new IOException(
-                    "Error reading data at level " + level + " offset=(" + offsetX + "," + offsetY + ")", e);
+                    "Error reading data at level " + level + " z=" + z + " t=" + t + " offset=(" + offsetX + ","
+                            + offsetY + ")",
+                    e);
         }
     }
 
@@ -388,6 +444,14 @@ public class ZarrOutputWriter implements AutoCloseable {
 
     public int getNumChannels() {
         return nChannels;
+    }
+
+    public int getSizeZ() {
+        return sizeZ;
+    }
+
+    public int getSizeT() {
+        return sizeT;
     }
 
     public boolean isRGB() {

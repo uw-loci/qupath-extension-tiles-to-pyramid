@@ -64,6 +64,8 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
      * @param nChannels Number of channels (3 for RGB, 1 for grayscale)
      * @param isRGB Whether the image is RGB
      * @param bitDepth Bits per sample (8 or 16)
+     * @param zCount Number of z-slices (>= 1)
+     * @param tCount Number of timepoints (>= 1)
      * @param pixelSizeMicrons Pixel size for metadata
      * @param zSpacingMicrons Z-spacing for metadata
      */
@@ -75,6 +77,8 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
             int nChannels,
             boolean isRGB,
             int bitDepth,
+            int zCount,
+            int tCount,
             double pixelSizeMicrons,
             double zSpacingMicrons) {
         this.compositor = compositor;
@@ -105,6 +109,8 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
                 .pixelType(pixelType)
                 .rgb(isRGB)
                 .channels(channels)
+                .sizeZ(Math.max(1, zCount))
+                .sizeT(Math.max(1, tCount))
                 .preferredTileSize(512, 512);
 
         if (pixelSizeMicrons > 0) {
@@ -137,6 +143,8 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
         int y = request.getY();
         int w = request.getWidth();
         int h = request.getHeight();
+        int z = request.getZ();
+        int t = request.getT();
         double downsample = request.getDownsample();
 
         // Clamp to image bounds
@@ -160,11 +168,11 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
 
         // For level-0 reads (downsample=1), composite directly
         if (downsample == 1.0) {
-            return compositor.compositeChunk(x, y, srcW, srcH);
+            return compositor.compositeChunk(z, t, x, y, srcW, srcH);
         }
 
         // For downsampled requests: read full-res region, then scale down
-        BufferedImage fullRes = compositor.compositeChunk(x, y, srcW, srcH);
+        BufferedImage fullRes = compositor.compositeChunk(z, t, x, y, srcW, srcH);
 
         // Scale to requested output size
         int outW = (int) Math.max(1, Math.round(srcW / downsample));

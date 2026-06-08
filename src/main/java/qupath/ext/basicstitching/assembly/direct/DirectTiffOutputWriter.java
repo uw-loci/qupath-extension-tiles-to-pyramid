@@ -107,6 +107,8 @@ public final class DirectTiffOutputWriter {
         PixelType pixelType = source.getPixelType();
         int bytesPerPixel = pixelType.getBytesPerPixel();
         int nChannels = source.nChannels();
+        int sizeZ = Math.max(1, source.nZSlices());
+        int sizeT = Math.max(1, source.nTimepoints());
 
         // RGB is exported interleaved (3 samples-per-pixel in one plane); anything
         // else is planar (one IFD plane per channel). Mirrors the guard in the
@@ -118,10 +120,12 @@ public final class DirectTiffOutputWriter {
         int numLevels = downsamples.length;
 
         logger.info(
-                "Direct OME-TIFF: {}x{}, {} channels, {} bit, RGB={}, {} levels, tile={}, compression={}",
+                "Direct OME-TIFF: {}x{}, {} channels, {} z, {} t, {} bit, RGB={}, {} levels, tile={}, compression={}",
                 fullWidth,
                 fullHeight,
                 nChannels,
+                sizeZ,
+                sizeT,
                 bytesPerPixel * 8,
                 exportRGB,
                 numLevels,
@@ -138,13 +142,19 @@ public final class DirectTiffOutputWriter {
         IMetadata meta = MetadataTools.createOMEXMLMetadata();
         initializeMetadata(meta, source, pixelType, exportRGB, fullWidth, fullHeight, downsamples);
 
-        long estimatedBytes = estimatePixelBytes(fullWidth, fullHeight, nChannels, bytesPerPixel, downsamples);
+        long estimatedBytes = estimatePixelBytes(fullWidth, fullHeight, nChannels, bytesPerPixel, downsamples)
+                * (long) sizeZ
+                * (long) sizeT;
         boolean bigTiff = estimatedBytes >= (Integer.MAX_VALUE - 1024L * 1024L * 100L);
 
-        // Number of TIFF planes per resolution level: 1 for interleaved RGB,
-        // nChannels for planar.
-        int planesPerLevel = exportRGB ? 1 : nChannels;
-        long totalTiles = countTiles(downsamples, fullWidth, fullHeight, tileSize) * planesPerLevel;
+        // Channel planes per (z, t): 1 for interleaved RGB (3 samples in one plane),
+        // nChannels for planar. The total plane count per level is
+        // channelPlanes * sizeZ * sizeT, ordered C-fastest then Z then T (XYCZT).
+        int channelPlanes = exportRGB ? 1 : nChannels;
+        long totalTiles = countTiles(downsamples, fullWidth, fullHeight, tileSize)
+                * (long) channelPlanes
+                * (long) sizeZ
+                * (long) sizeT;
         long writtenTiles = 0;
 
         try (ImageWriter imageWriter = new ImageWriter()) {
@@ -184,36 +194,48 @@ public final class DirectTiffOutputWriter {
                     throw new IOException("Failed to set resolution level " + level, e);
                 }
 
-                for (int plane = 0; plane < planesPerLevel; plane++) {
-                    // One IFD per (level, plane), reused across all tiles of that
-                    // plane so Bio-Formats accumulates the tile offsets into it.
-                    IFD ifd = new IFD();
-                    ifd.put(IFD.TILE_WIDTH, tileSize);
-                    ifd.put(IFD.TILE_LENGTH, tileSize);
+                // Plane order must match the XYCZT dimension order declared in the
+                // metadata: channel fastest, then z, then t. The sequential plane
+                // index increments in exactly that nested order.
+                int planeIndex = 0;
+                for (int t = 0; t < sizeT; t++) {
+                    for (int z = 0; z < sizeZ; z++) {
+                        for (int c = 0; c < channelPlanes; c++) {
+                            // One IFD per (level, plane), reused across all tiles of
+                            // that plane so Bio-Formats accumulates the tile offsets.
+                            IFD ifd = new IFD();
+                            ifd.put(IFD.TILE_WIDTH, tileSize);
+                            ifd.put(IFD.TILE_LENGTH, tileSize);
 
-                    for (int yy = 0; yy < levelH; yy += tileSize) {
-                        int hh = Math.min(tileSize, levelH - yy);
-                        for (int xx = 0; xx < levelW; xx += tileSize) {
-                            int ww = Math.min(tileSize, levelW - xx);
-                            writeTile(
-                                    tiffWriter,
-                                    pyramidServer,
-                                    serverPath,
-                                    ifd,
-                                    plane,
-                                    level,
-                                    d,
-                                    xx,
-                                    yy,
-                                    ww,
-                                    hh,
-                                    exportRGB,
-                                    bytesPerPixel);
+                            for (int yy = 0; yy < levelH; yy += tileSize) {
+                                int hh = Math.min(tileSize, levelH - yy);
+                                for (int xx = 0; xx < levelW; xx += tileSize) {
+                                    int ww = Math.min(tileSize, levelW - xx);
+                                    writeTile(
+                                            tiffWriter,
+                                            pyramidServer,
+                                            serverPath,
+                                            ifd,
+                                            planeIndex,
+                                            c,
+                                            z,
+                                            t,
+                                            level,
+                                            d,
+                                            xx,
+                                            yy,
+                                            ww,
+                                            hh,
+                                            exportRGB,
+                                            bytesPerPixel);
 
-                            writtenTiles++;
-                            if (progressCallback != null && totalTiles > 0) {
-                                progressCallback.accept((double) writtenTiles / totalTiles);
+                                    writtenTiles++;
+                                    if (progressCallback != null && totalTiles > 0) {
+                                        progressCallback.accept((double) writtenTiles / totalTiles);
+                                    }
+                                }
                             }
+                            planeIndex++;
                         }
                     }
                 }
@@ -238,13 +260,24 @@ public final class DirectTiffOutputWriter {
         logger.info("Direct OME-TIFF complete: {}", finalOutputPath);
     }
 
-    /** Read one tile from the pyramidalized server and hand its packed bytes to Bio-Formats. */
+    /**
+     * Read one tile of the (z, t) plane from the pyramidalized server and hand its
+     * packed bytes to Bio-Formats.
+     *
+     * @param planeIndex sequential OME plane index (for {@code saveBytes})
+     * @param channelBand channel band to extract for planar output (ignored for RGB)
+     * @param z z-slice to read
+     * @param t timepoint to read
+     */
     private static void writeTile(
             TiffWriter tiffWriter,
             ImageServer<BufferedImage> pyramidServer,
             String serverPath,
             IFD ifd,
-            int plane,
+            int planeIndex,
+            int channelBand,
+            int z,
+            int t,
             int level,
             double downsample,
             int xx,
@@ -255,7 +288,7 @@ public final class DirectTiffOutputWriter {
             int bytesPerPixel)
             throws IOException, FormatException {
 
-        ImageRegion region = ImageRegion.createInstance(xx, yy, ww, hh, 0, 0);
+        ImageRegion region = ImageRegion.createInstance(xx, yy, ww, hh, z, t);
         TileRequest tile = TileRequest.createInstance(serverPath, level, downsample, region);
         RegionRequest request = tile.getRegionRequest();
         BufferedImage img = pyramidServer.readRegion(request);
@@ -263,14 +296,14 @@ public final class DirectTiffOutputWriter {
         if (img == null) {
             int samples = exportRGB ? 3 : 1;
             byte[] zeros = new byte[ww * hh * bytesPerPixel * samples];
-            tiffWriter.saveBytes(plane, zeros, ifd, xx, yy, ww, hh);
+            tiffWriter.saveBytes(planeIndex, zeros, ifd, xx, yy, ww, hh);
             return;
         }
 
         int aw = img.getWidth();
         int ah = img.getHeight();
-        byte[] buf = exportRGB ? packInterleavedRGB(img, aw, ah) : packPlane(img, plane, aw, ah, bytesPerPixel);
-        tiffWriter.saveBytes(plane, buf, ifd, xx, yy, aw, ah);
+        byte[] buf = exportRGB ? packInterleavedRGB(img, aw, ah) : packPlane(img, channelBand, aw, ah, bytesPerPixel);
+        tiffWriter.saveBytes(planeIndex, buf, ifd, xx, yy, aw, ah);
     }
 
     /** Pack an RGB tile as interleaved R,G,B bytes (3 samples per pixel, BIP). */
@@ -309,7 +342,8 @@ public final class DirectTiffOutputWriter {
     }
 
     /**
-     * Populate the OME metadata for a single-series, single-Z, single-T image.
+     * Populate the OME metadata for a single-series image with the source's
+     * channel, z-slice, and timepoint counts.
      *
      * <p>The required OME fields (Image/Pixels IDs, endianness, dimension order,
      * pixel type, X/Y/Z/C/T sizes, per-channel IDs and samples-per-pixel) are set
@@ -330,6 +364,8 @@ public final class DirectTiffOutputWriter {
 
         int series = 0;
         int nChannels = source.nChannels();
+        int sizeZ = Math.max(1, source.nZSlices());
+        int sizeT = Math.max(1, source.nTimepoints());
         double base = downsamples[0];
         int sizeX = (int) (width / base);
         int sizeY = (int) (height / base);
@@ -350,9 +386,9 @@ public final class DirectTiffOutputWriter {
                 toOmePixelType(pixelType).getValue(),
                 sizeX,
                 sizeY,
-                1, // sizeZ
+                sizeZ,
                 nChannels, // sizeC
-                1, // sizeT
+                sizeT,
                 samplesPerPixel);
 
         // Re-assert big-endian explicitly: packPlane() writes 16-bit samples
