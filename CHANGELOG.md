@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **5D Tiled Stitching (XY-mosaic × channel × Z × T)**: Full support for multi-dimensional image stitching. Tiles can now be tagged with z-slice and timepoint indices; the stitcher assembles them into complete 5D pyramids in both OME-TIFF and OME-ZARR formats. Each (z, t) plane is stitched independently and written in XYCZT dimension order. `DirectStitcher5DTest` provides comprehensive test coverage across grayscale, RGB, single-axis, and merged-multichannel cases.
+
 ### Fixed
 - **Silently-corrupt OME-TIFF pyramid levels**: stitched mosaics whose dimensions are not a clean multiple of the tile size could produce an OME-TIFF whose full-resolution level was intact but whose downsampled pyramid levels were black, with no thrown exception. Root cause was QuPath's `OMEPyramidWriter` tile-iteration optimization branch. The new `DirectTiffOutputWriter` drives Bio-Formats with only the correct `Math.min`-clamped tile loop, so partial edge tiles are handled correctly by construction. It also writes straight to the final path (no temp-file rename), removing the Windows "being used by another process" rename failures. Note: interleaved RGB requires the writer-level `TiffWriter.setInterleaved(true)` flag (separate from the OME `PixelsInterleaved` metadata).
 

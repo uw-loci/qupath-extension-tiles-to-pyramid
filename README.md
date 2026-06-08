@@ -7,6 +7,7 @@ A basic image stitching extension for QuPath that combines multiple image tiles 
 
 ## Features
 
+- **5D Stitching Support**: Assemble tiles into multi-dimensional pyramids: XY mosaic with multiple z-slices and timepoints (full XYCZT support)
 - **Multiple Stitching Strategies**: Support for filename-based coordinates, TileConfiguration.txt files, Vectra metadata, and MicroManager MMStack metadata
 - **Dual Output Formats**: Choose between traditional OME-TIFF or cloud-native OME-ZARR
 - **Pyramidal Output**: Generates multi-resolution pyramids for efficient viewing at all scales
