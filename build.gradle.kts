@@ -100,3 +100,7 @@ spotbugs {
 tasks.withType<com.github.spotbugs.snom.SpotBugsTask>().configureEach {
     reports.create("html") { required.set(true) }
 }
+
+tasks.withType<JavaCompile> {
+    options.release.set(21) // QuPath 0.7 runs on Java 21; pin bytecode target so any build JDK emits loadable classes
+}
