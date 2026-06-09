@@ -104,3 +104,15 @@ tasks.withType<com.github.spotbugs.snom.SpotBugsTask>().configureEach {
 tasks.withType<JavaCompile> {
     options.release.set(21) // QuPath 0.7 runs on Java 21; pin bytecode target so any build JDK emits loadable classes
 }
+// QuPath 0.7.0's maven artifacts are published as requiring JVM 25 (org.gradle.jvm.version=25),
+// even though the QuPath app runs on Java 21. options.release=21 makes Gradle resolve a
+// JVM-21-compatible classpath, which then rejects those JVM-25 artifacts on a clean build. Force
+// the resolvable classpaths to request JVM 25 so the deps resolve; bytecode target (21) is
+// unaffected, so the jar still loads on Java 21. (Upstream QuPath metadata bug; remove if fixed.)
+configurations.configureEach {
+    if (isCanBeResolved) {
+        attributes {
+            attribute(org.gradle.api.attributes.java.TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 25)
+        }
+    }
+}
