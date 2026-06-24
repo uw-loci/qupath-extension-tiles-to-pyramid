@@ -35,7 +35,7 @@ public class MenuStartup implements QuPathExtension {
      */
     @Override
     public String getDescription() {
-        return res.getString("name");
+        return res.getString("description");
     }
 
     /**
@@ -45,7 +45,7 @@ public class MenuStartup implements QuPathExtension {
      */
     @Override
     public String getName() {
-        return "name";
+        return res.getString("name");
     }
 
     private void addMenuItem(QuPathGUI qupath) {

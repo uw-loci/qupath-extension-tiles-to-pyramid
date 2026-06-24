@@ -1,4 +1,4 @@
-# QuPath Basic Stitching Extension
+# QuPath Tiles to Pyramid Extension
 
 > **Part of the [QPSC (QuPath Scope Control)](https://github.com/uw-loci/qupath-extension-qpsc) system.**
 > For complete installation and setup instructions, see the [QPSC Installation Guide](https://github.com/uw-loci/qupath-extension-qpsc/blob/main/documentation/INSTALLATION.md).
@@ -57,7 +57,7 @@ Developers of qpsc may want to also run the following to enable working with qps
 
 ### Accessing the Extension
 1. Open QuPath
-2. Navigate to **Extensions** -> **Basic Stitching** -> **Stitch Images**
+2. Navigate to **Extensions** -> **Tiles to Pyramid** -> **Stitch Images**
 3. The stitching dialog will open
 
 ### Stitching Strategies
