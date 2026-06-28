@@ -113,6 +113,116 @@ class MicroManagerMetadataStrategyTest {
     }
 
     @Test
+    void resolvesPositionsFromSinglePlaneSeriesLayout(@TempDir Path tmp) throws IOException {
+        // SINGLEPLANE_TIFF_SERIES layout: each position is its own subfolder
+        // containing a single-image TIFF and a metadata.txt whose per-tile data
+        // lives in a "Metadata-<relpath>" block (key encodes the file).
+        Path posA = Files.createDirectories(tmp.resolve("Pos-1-000_000"));
+        Path posB = Files.createDirectories(tmp.resolve("Pos-1-001_000"));
+        writeTile(posA.resolve("img_channel000_position000_time000000000_z000.tif"));
+        writeTile(posB.resolve("img_channel000_position001_time000000000_z000.tif"));
+
+        // Stage X is 0 um and 8 um; at 0.5 um/px -> pixels 0 and 16.
+        writeSinglePlaneMetadata(
+                posA.resolve("metadata.txt"),
+                "Pos-1-000_000/img_channel000_position000_time000000000_z000.tif",
+                0.0,
+                0.0);
+        writeSinglePlaneMetadata(
+                posB.resolve("metadata.txt"),
+                "Pos-1-001_000/img_channel000_position001_time000000000_z000.tif",
+                8.0,
+                4.0);
+
+        List<TileMapping> mappings =
+                new MicroManagerMetadataStrategy().prepareStitching(tmp.toString(), 1.0, DOWNSAMPLE, ".");
+
+        assertEquals(2, mappings.size(), "Both single-plane tiles should be mapped");
+        TileMapping a = findByName(mappings, "img_channel000_position000_time000000000_z000.tif");
+        TileMapping b = findByName(mappings, "img_channel000_position001_time000000000_z000.tif");
+        // Pixel size 0.5 um is read from the Metadata block, overriding the
+        // caller's 1.0 argument.
+        assertEquals(0, a.region.getX());
+        assertEquals(0, a.region.getY());
+        assertEquals(16, b.region.getX());
+        assertEquals(8, b.region.getY());
+        // Single-image TIFFs -> series 0 regardless of StagePositions order.
+        assertEquals(0, a.seriesIndex);
+        assertEquals(0, b.seriesIndex);
+        // All single-plane tiles group into one output named after the folder.
+        assertEquals(tmp.getFileName().toString(), a.subdirName);
+        assertEquals(tmp.getFileName().toString(), b.subdirName);
+    }
+
+    @Test
+    void detectsPixelSizeFromSinglePlaneSeriesLayout(@TempDir Path tmp) throws IOException {
+        Path pos = Files.createDirectories(tmp.resolve("Pos-1-000_000"));
+        writeTile(pos.resolve("img_channel000_position000_time000000000_z000.tif"));
+        writeSinglePlaneMetadata(
+                pos.resolve("metadata.txt"),
+                "Pos-1-000_000/img_channel000_position000_time000000000_z000.tif",
+                0.0,
+                0.0);
+
+        Double detected = MicroManagerMetadataStrategy.detectPixelSizeUm(tmp.toFile());
+        assertNotNull(detected);
+        assertEquals(PIXEL_SIZE_UM, detected, 1e-9);
+    }
+
+    @Test
+    void manualOverrideWinsOverMetadataPixelSize(@TempDir Path tmp) throws IOException {
+        // Sidecar reports PixelSizeUm = 0.5 (PIXEL_SIZE_UM); stage X = 8 um.
+        writeTile(tmp.resolve("acq_MMStack_Pos-0_000.ome.tif"));
+        writeSidecar(
+                tmp.resolve("acq_MMStack_Pos-0_000_metadata.txt"),
+                "acq_MMStack_Pos-0_000.ome.tif",
+                8.0,
+                0.0,
+                List.of(),
+                List.of());
+
+        // Default: metadata 0.5 um/px is authoritative -> 8 um maps to 16 px.
+        TileMapping defaultMapping = new MicroManagerMetadataStrategy()
+                .prepareStitching(tmp.toString(), 1.0, DOWNSAMPLE, ".")
+                .get(0);
+        assertEquals(16, defaultMapping.region.getX(), "Metadata pixel size should win by default");
+
+        // Manual override: caller's 1.0 um/px wins -> 8 um maps to 8 px.
+        TileMapping overridden = new MicroManagerMetadataStrategy(true)
+                .prepareStitching(tmp.toString(), 1.0, DOWNSAMPLE, ".")
+                .get(0);
+        assertEquals(8, overridden.region.getX(), "Manual override must beat metadata pixel size");
+    }
+
+    @Test
+    void estimatesPixelSizeFromTileOverlap(@TempDir Path tmp) throws IOException {
+        // Two horizontally adjacent tiles cropped from one textured base with a
+        // known 64 px overlap step. Stage X step is 32 um, so the true pixel
+        // size is 32/64 = 0.5 um/px regardless of any metadata PixelSizeUm.
+        int tile = 128;
+        int baseW = 192; // tile + 64 px step
+        int[][] base = new int[tile][baseW];
+        java.util.Random rng = new java.util.Random(42);
+        for (int y = 0; y < tile; y++) {
+            for (int x = 0; x < baseW; x++) {
+                base[y][x] = rng.nextInt(256);
+            }
+        }
+        Path posA = Files.createDirectories(tmp.resolve("Pos-A"));
+        Path posB = Files.createDirectories(tmp.resolve("Pos-B"));
+        writeGrayTile(posA.resolve("imgA.tif"), base, 0, tile); // cols 0..127
+        writeGrayTile(posB.resolve("imgB.tif"), base, 64, tile); // cols 64..191
+        writeSinglePlaneMetadata(posA.resolve("metadata.txt"), "Pos-A/imgA.tif", 0.0, 0.0);
+        writeSinglePlaneMetadata(posB.resolve("metadata.txt"), "Pos-B/imgB.tif", 32.0, 0.0);
+
+        MicroManagerMetadataStrategy.PixelSizeEstimate est =
+                MicroManagerMetadataStrategy.estimatePixelSizeUm(tmp.toFile());
+        assertTrue(est.ok(), "Estimate should succeed: " + est.message);
+        assertEquals(0.5, est.pixelSizeUm, 0.05, "Estimated pixel size should be ~32um/64px");
+        assertTrue(est.confidence > 0.5, "Noise tiles should correlate strongly: " + est.confidence);
+    }
+
+    @Test
     void extractsLabelFromMMStackFilename() {
         assertEquals(
                 "Pos-3-001_002",
@@ -181,6 +291,49 @@ class MicroManagerMetadataStrategyTest {
         sb.append("    \"XPositionUm\": ").append(xUm).append(",\n");
         sb.append("    \"YPositionUm\": ").append(yUm).append(",\n");
         sb.append("    \"PixelSizeUm\": ").append(PIXEL_SIZE_UM).append("\n");
+        sb.append("  }\n");
+        sb.append("}\n");
+        Files.writeString(path, sb.toString());
+    }
+
+    /**
+     * Write a {@code size x size} 8-bit grayscale TIFF cropped from {@code base}
+     * starting at column {@code xOffset} (full height). Used to build textured,
+     * overlapping tiles for the pixel-size estimator.
+     */
+    private static void writeGrayTile(Path path, int[][] base, int xOffset, int size) throws IOException {
+        BufferedImage img = new BufferedImage(size, size, BufferedImage.TYPE_BYTE_GRAY);
+        for (int y = 0; y < size; y++) {
+            for (int x = 0; x < size; x++) {
+                img.getRaster().setSample(x, y, 0, base[y][xOffset + x]);
+            }
+        }
+        if (!ImageIO.write(img, "TIFF", path.toFile()) && !ImageIO.write(img, "tif", path.toFile())) {
+            throw new IOException("No TIFF writer available for " + path);
+        }
+    }
+
+    /**
+     * Write a minimal SINGLEPLANE_TIFF_SERIES metadata.txt. The per-tile data
+     * lives in a "Metadata-&lt;relFile&gt;" block whose key encodes the file
+     * path relative to the acquisition root. Only the keys read by
+     * {@link MicroManagerMetadataStrategy} are populated.
+     */
+    private static void writeSinglePlaneMetadata(Path path, String relFile, double xUm, double yUm) throws IOException {
+        StringBuilder sb = new StringBuilder();
+        sb.append("{\n");
+        sb.append("  \"Summary\": {\n");
+        sb.append("    \"StagePositions\": []\n");
+        sb.append("  },\n");
+        sb.append("  \"Coords-").append(relFile).append("\": {\n");
+        sb.append("    \"PositionIndex\": 0\n");
+        sb.append("  },\n");
+        sb.append("  \"Metadata-").append(relFile).append("\": {\n");
+        sb.append("    \"Width\": ").append(TILE_W).append(",\n");
+        sb.append("    \"Height\": ").append(TILE_H).append(",\n");
+        sb.append("    \"PixelSizeUm\": ").append(PIXEL_SIZE_UM).append(",\n");
+        sb.append("    \"XPositionUm\": ").append(xUm).append(",\n");
+        sb.append("    \"YPositionUm\": ").append(yUm).append("\n");
         sb.append("  }\n");
         sb.append("}\n");
         Files.writeString(path, sb.toString());

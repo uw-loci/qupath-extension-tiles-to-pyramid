@@ -8,7 +8,7 @@ A basic image stitching extension for QuPath that combines multiple image tiles 
 ## Features
 
 - **5D Stitching Support**: Assemble tiles into multi-dimensional pyramids: XY mosaic with multiple z-slices and timepoints (full XYCZT support)
-- **Multiple Stitching Strategies**: Support for filename-based coordinates, TileConfiguration.txt files, Vectra metadata, and MicroManager MMStack metadata
+- **Multiple Stitching Strategies**: Support for filename-based coordinates, TileConfiguration.txt files, Vectra metadata, and MicroManager metadata (MMStack or single-plane TIFF series)
 - **Dual Output Formats**: Choose between traditional OME-TIFF or cloud-native OME-ZARR
 - **Pyramidal Output**: Generates multi-resolution pyramids for efficient viewing at all scales
 - **Flexible Compression**: Supports various compression formats (TIFF: JPEG, LZW, ZIP; ZARR: zstd, lz4, blosc)
@@ -161,24 +161,39 @@ For Akoya/PerkinElmer Vectra imaging systems:
 - Uses `TAG_X_POSITION`, `TAG_Y_POSITION`, and resolution tags
 - No additional configuration files required
 
-#### 4. MicroManager Metadata (MMStack)
-For MicroManager 2 multi-position acquisitions with sidecar metadata:
+#### 4. MicroManager metadata (MMStack or TIFF series)
+For MicroManager 2 multi-position acquisitions with sidecar metadata. Both on-disk layouts MicroManager produces are supported:
+
+**Flat MMStack** (one OME-TIFF + sidecar per position, all in one folder):
 - Reads tile positions from `*_metadata.txt` JSON sidecar files
-- Uses authoritative per-tile stage coordinates (FrameKey-0-0-0.XPositionUm / YPositionUm)
-- Falls back to Summary.StagePositions labels if a sidecar is missing or malformed
-- Auto-detects pixel size from `FrameKey-0-0-0.PixelSizeUm` in the metadata
+- Uses authoritative per-tile stage coordinates (`FrameKey-0-0-0.XPositionUm` / `YPositionUm`)
+- Each OME-TIFF carries every position as a separate series; the per-label series index is recovered from `Summary.StagePositions`
+- Example filenames: `acq_MMStack_Pos-0_000.ome.tif` and `acq_MMStack_Pos-0_000_metadata.txt`
+
+**Single-plane TIFF series** (`SINGLEPLANE_TIFF_SERIES`; one subfolder per position):
+- Each position is its own subfolder (e.g. `Pos-1-000_000/`) containing a single-image TIFF (`img_channelNNN_positionNNN_..._zNNN.tif`) and a `metadata.txt`
+- Reads per-tile stage coordinates from the `Metadata-<relative/path/to.tif>` block (the JSON key encodes the file name)
+- Each TIFF is a genuine single-image file (series 0)
+
+Common to both:
+- Falls back to `Summary.StagePositions` labels if a per-tile block is missing or malformed
+- Auto-detects pixel size from the metadata's `PixelSizeUm`
+- All tiles found under the selected folder stitch into a single output named after that folder
 - No additional configuration files required
 
 **Usage:**
-- Tiles and their `_metadata.txt` sidecars should be in the same folder
-- Example filenames: `acq_MMStack_Pos-0_000.ome.tif` and `acq_MMStack_Pos-0_000_metadata.txt`
+- Select the acquisition's root folder (the folder containing the sidecars, or the folder containing the per-position subfolders). The strategy scans subfolders, so either layout works.
 - For stage-inverted scopes, use the `flipStitchingX` and `flipStitchingY` flags to negate coordinates
 
 **Pixel Size Auto-fill:**
-- When you open the Stitch Images dialog or select an input folder, the pixel-size field is automatically filled from the first `*_metadata.txt` sidecar's `FrameKey-0-0-0.PixelSizeUm`
-- The field is **locked by default** to prevent accidental edits — a label shows the source (`(from MMStack metadata)` / `(no MMStack metadata - tick 'Manually edit' to set)` / `(manual override)`)
-- Tick **"Manually edit pixel size"** if you need to override the detected value; unticking it restores the auto-detected value
-- The stitching strategy treats the MMStack metadata as authoritative for pixel size — an incorrect dialog value cannot silently produce misaligned stitches when the metadata has the correct answer
+- When you open the Stitch Images dialog or select an input folder, the pixel-size field is automatically filled from the first metadata file's `PixelSizeUm`
+- The field is **locked by default** to prevent accidental edits — a label shows the source (`(from MicroManager metadata)` / `(no MicroManager metadata - tick 'Manually edit' to set)` / `(manual override)`)
+- By default the metadata `PixelSizeUm` is authoritative, so an accidental dialog value cannot silently misalign a stitch when the metadata is correct
+- Tick **"Manually edit pixel size"** to override. When ticked, your value **wins over the metadata** — this is required for scopes whose metadata pixel size is wrong (e.g. laser-scanning microscopes whose zoom factor is not reflected in MicroManager's pixel-size calibration). Symptom of a wrong metadata pixel size: tiles are placed too far apart and overlap regions appear **duplicated** along every seam.
+
+**"Try calculating pixel size..." (measure from overlap):**
+- When the metadata pixel size is untrustworthy, click this button to **measure** the true pixel size directly from the data. It phase-correlates (normalized cross-correlation) the overlapping content of neighbouring tiles, divides the recorded stage step (µm) by the measured pixel shift, and reports the median over several tile pairs.
+- The measured value is written into the field **as a manual override** (so the stitcher uses it) and the source label shows the confidence. If confidence is low (low-texture or low-overlap tiles), verify the result and adjust manually.
 
 ### Configuration Parameters
 

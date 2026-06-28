@@ -30,6 +30,25 @@ public class StitchingConfig {
      */
     public String outputFilename;
 
+    /**
+     * When {@code true}, {@link #pixelSizeInMicrons} is a deliberate manual
+     * override and must win over any pixel size read from acquisition metadata
+     * (e.g. MicroManager {@code PixelSizeUm}). Set from the dialog's
+     * "Manually edit pixel size" checkbox. Defaults to {@code false}, which
+     * keeps the metadata authoritative.
+     */
+    private boolean manualPixelSizeOverride = false;
+
+    /** @return whether {@link #pixelSizeInMicrons} should override metadata pixel size. */
+    public boolean isManualPixelSizeOverride() {
+        return manualPixelSizeOverride;
+    }
+
+    /** Set whether {@link #pixelSizeInMicrons} should override metadata pixel size. */
+    public void setManualPixelSizeOverride(boolean manualPixelSizeOverride) {
+        this.manualPixelSizeOverride = manualPixelSizeOverride;
+    }
+
     /** @return the optional output filename base, or {@code null} if unset. */
     public String getOutputFilename() {
         return outputFilename;

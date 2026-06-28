@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import javafx.application.Platform;
 import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.control.CheckBox;
@@ -46,6 +47,7 @@ public class StitchingGUI {
     static TextField pixelSizeField = new TextField(QPPreferences.getImagePixelSizeInMicronsSaved());
     static CheckBox pixelSizeOverrideCheckbox = new CheckBox("Manually edit pixel size");
     static Label pixelSizeSourceLabel = new Label("");
+    static Button estimatePixelSizeButton = new Button("Try calculating pixel size...");
     static TextField downsampleField = new TextField(QPPreferences.getDownsampleSaved());
     static TextField matchStringField = new TextField(QPPreferences.getSearchStringSaved());
     static ComboBox<String> stitchingGridBox = new ComboBox<>();
@@ -129,6 +131,11 @@ public class StitchingGUI {
                     xFudgeFactor,
                     yFudgeFactor,
                     outputFormat != null ? outputFormat : StitchingConfig.OutputFormat.OME_TIFF);
+
+            // A ticked "Manually edit pixel size" makes the typed value
+            // authoritative -- it must override the (possibly wrong) metadata
+            // PixelSizeUm rather than be silently discarded by the strategy.
+            config.setManualPixelSizeOverride(pixelSizeOverrideCheckbox.isSelected());
 
             // Use the new workflow
             String finalImageName = StitchingWorkflow.run(config);
@@ -263,7 +270,7 @@ public class StitchingGUI {
                         "Vectra tiles with metadata",
                         "Filename[x,y] with coordinates in microns",
                         "Coordinates in TileConfiguration.txt file",
-                        "MicroManager metadata (MMStack)");
+                        "MicroManager metadata (MMStack or TIFF series)");
 
         stitchingGridBox.setValue(QPPreferences.getStitchingMethodSaved());
         stitchingGridBox.setOnAction(e -> updateComponentsBasedOnSelection(pane));
@@ -419,6 +426,16 @@ public class StitchingGUI {
                 + "and cannot be edited. Tick this box to type a value manually.");
         pixelSizeOverrideCheckbox.setTooltip(overrideTooltip);
 
+        // "Try calculating pixel size..." estimates the true pixel size from the
+        // actual tile overlap (phase correlation of neighbouring tiles), for
+        // scopes whose metadata PixelSizeUm is wrong. The result is written into
+        // the field as a manual override so the stitcher actually uses it.
+        estimatePixelSizeButton.setTooltip(new Tooltip(
+                "Measure the pixel size from the overlap between neighbouring tiles in the selected folder.\n"
+                        + "Use this when the metadata pixel size produces duplicated/misaligned tiles.\n"
+                        + "The measured value is applied as a manual override."));
+        estimatePixelSizeButton.setOnAction(e -> estimatePixelSizeFromFolder());
+
         addToGrid(pane, pixelSizeLabel, pixelSizeField);
 
         // Put the source label in column 2 next to the field.
@@ -427,11 +444,62 @@ public class StitchingGUI {
             pane.add(pixelSizeSourceLabel, 2, pxRow);
         }
 
-        // The override checkbox sits on its own row in column 1.
+        // The override checkbox sits on its own row in column 1, with the
+        // estimate button next to it in column 2.
         Integer chkRow = guiElementPositions.get(pixelSizeOverrideCheckbox);
         if (chkRow != null) {
             pane.add(pixelSizeOverrideCheckbox, 1, chkRow);
+            pane.add(estimatePixelSizeButton, 2, chkRow);
         }
+    }
+
+    /**
+     * Estimate the pixel size from tile overlap in the selected folder and, on
+     * success, write it into the field as a manual override. Runs the
+     * measurement off the FX thread so the dialog stays responsive.
+     */
+    private static void estimatePixelSizeFromFolder() {
+        String path = folderField.getText();
+        if (path == null || path.trim().isEmpty()) {
+            showAlertDialog("Select an input folder first.");
+            return;
+        }
+        File folder = new File(path.trim());
+        if (!folder.isDirectory()) {
+            showAlertDialog("Input folder does not exist: " + path);
+            return;
+        }
+        estimatePixelSizeButton.setDisable(true);
+        pixelSizeSourceLabel.setText("(estimating from tile overlap...)");
+        Thread worker = new Thread(
+                () -> {
+                    MicroManagerMetadataStrategy.PixelSizeEstimate est =
+                            MicroManagerMetadataStrategy.estimatePixelSizeUm(folder);
+                    Platform.runLater(() -> {
+                        estimatePixelSizeButton.setDisable(false);
+                        if (est.ok()) {
+                            // Apply as a manual override so the stitcher uses it.
+                            pixelSizeOverrideCheckbox.setSelected(true);
+                            pixelSizeField.setEditable(true);
+                            pixelSizeField.setText(String.valueOf(est.pixelSizeUm));
+                            pixelSizeSourceLabel.setText(String.format(
+                                    "(estimated %.4f um/px, confidence %.2f - applied as override)",
+                                    est.pixelSizeUm, est.confidence));
+                            logger.info("Pixel-size estimate applied: {}", est.message);
+                            if (est.confidence < 0.5) {
+                                showAlertDialog(est.message
+                                        + "\n\nConfidence is low; verify the stitched result and adjust the "
+                                        + "pixel size manually if tiles are mismatched.");
+                            }
+                        } else {
+                            pixelSizeSourceLabel.setText("(estimate failed)");
+                            showAlertDialog("Could not estimate the pixel size.\n\n" + est.message);
+                        }
+                    });
+                },
+                "pixel-size-estimate");
+        worker.setDaemon(true);
+        worker.start();
     }
 
     /**
@@ -457,10 +525,10 @@ public class StitchingGUI {
         Double mmPixelSize = MicroManagerMetadataStrategy.detectPixelSizeUm(folder);
         if (mmPixelSize != null && mmPixelSize > 0) {
             pixelSizeField.setText(String.valueOf(mmPixelSize));
-            pixelSizeSourceLabel.setText("(from MMStack metadata)");
-            logger.info("Auto-filled pixel size {} um from MMStack metadata in {}", mmPixelSize, folder);
+            pixelSizeSourceLabel.setText("(from MicroManager metadata)");
+            logger.info("Auto-filled pixel size {} um from MicroManager metadata in {}", mmPixelSize, folder);
         } else {
-            pixelSizeSourceLabel.setText("(no MMStack metadata - tick 'Manually edit' to set)");
+            pixelSizeSourceLabel.setText("(no MicroManager metadata - tick 'Manually edit' to set)");
         }
     }
 

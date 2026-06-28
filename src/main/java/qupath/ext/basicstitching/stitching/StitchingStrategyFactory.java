@@ -11,7 +11,7 @@ public class StitchingStrategyFactory {
                 return new VectraMetadataStrategy();
             case "Coordinates in TileConfiguration.txt file":
                 return new TileConfigurationTxtStrategy();
-            case "MicroManager metadata (MMStack)":
+            case "MicroManager metadata (MMStack or TIFF series)":
                 return new MicroManagerMetadataStrategy();
             default:
                 throw new IllegalArgumentException("Unknown stitching strategy: " + name);
@@ -30,8 +30,8 @@ public class StitchingStrategyFactory {
                 return new VectraMetadataStrategy(config.xFudgeFactor, config.yFudgeFactor);
             case "Coordinates in TileConfiguration.txt file":
                 return new TileConfigurationTxtStrategy();
-            case "MicroManager metadata (MMStack)":
-                return new MicroManagerMetadataStrategy();
+            case "MicroManager metadata (MMStack or TIFF series)":
+                return new MicroManagerMetadataStrategy(config.isManualPixelSizeOverride());
             default:
                 throw new IllegalArgumentException("Unknown stitching strategy: " + config.stitchingType);
         }
