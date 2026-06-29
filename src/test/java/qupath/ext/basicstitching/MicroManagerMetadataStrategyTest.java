@@ -201,11 +201,16 @@ class MicroManagerMetadataStrategyTest {
         // size is 32/64 = 0.5 um/px regardless of any metadata PixelSizeUm.
         int tile = 128;
         int baseW = 192; // tile + 64 px step
+        // Deterministic high-entropy texture (a per-pixel hash, not java.util.Random)
+        // so the cross-correlation has a single sharp peak and the test is stable.
         int[][] base = new int[tile][baseW];
-        java.util.Random rng = new java.util.Random(42);
         for (int y = 0; y < tile; y++) {
             for (int x = 0; x < baseW; x++) {
-                base[y][x] = rng.nextInt(256);
+                long h = (x * 0x9E3779B1L) ^ (y * 0x85EBCA77L);
+                h ^= (h >>> 13);
+                h *= 0xC2B2AE3DL;
+                h ^= (h >>> 16);
+                base[y][x] = (int) (h & 0xFF);
             }
         }
         Path posA = Files.createDirectories(tmp.resolve("Pos-A"));

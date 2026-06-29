@@ -162,7 +162,23 @@ For Akoya/PerkinElmer Vectra imaging systems:
 - No additional configuration files required
 
 #### 4. MicroManager metadata (MMStack or TIFF series)
-For MicroManager 2 multi-position acquisitions with sidecar metadata. Both on-disk layouts MicroManager produces are supported:
+For MicroManager 2 multi-position acquisitions with sidecar metadata. Both on-disk layouts MicroManager produces are supported.
+
+**When to use this strategy:** choose it whenever you acquired a multi-position
+(XY-tiled) dataset in MicroManager 2 and let MicroManager write the standard
+sidecar metadata. Tile positions come from the recorded **stage coordinates**, so
+you do not need a `TileConfiguration.txt` or coordinates encoded in filenames.
+Point the dialog at the acquisition's root folder and the strategy auto-detects
+which of the two layouts you have:
+
+| You have... | MicroManager "Save" setting that produced it | Files on disk |
+|---|---|---|
+| **Flat MMStack** | "Image stack file" (multi-page `MULTIPAGE_TIFF`) | one `<prefix>_MMStack_<pos>.ome.tif` + `<prefix>_MMStack_<pos>_metadata.txt` per position, all in one folder |
+| **Single-plane TIFF series** | "Separate image files" (`SINGLEPLANE_TIFF_SERIES`) | one subfolder per position (`Pos-...`), each with a single-image `img_...tif` + a `metadata.txt` |
+
+Both come out of the same MicroManager MDA acquisition; the only difference is the
+"Save" radio button chosen at acquisition time. You do not pick the layout in the
+dialog -- the strategy detects it. Detail on each:
 
 **Flat MMStack** (one OME-TIFF + sidecar per position, all in one folder):
 - Reads tile positions from `*_metadata.txt` JSON sidecar files

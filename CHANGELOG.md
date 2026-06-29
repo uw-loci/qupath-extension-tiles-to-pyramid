@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-29
+
 ### Added
 - **Single-plane TIFF series support for MicroManager**: The MicroManager metadata strategy now handles both on-disk layouts MicroManager produces: flat MMStack (one OME-TIFF per position with multi-series OME-XML) and single-plane TIFF series (one subfolder per position, each containing a single-image TIFF and `metadata.txt`). Per-tile stage coordinates are read from `FrameKey-*` blocks (flat MMStack) or `Metadata-<relpath>` blocks (single-plane series) in the sidecar JSON.
 - **Manual pixel size override for MicroManager stitching**: When the metadata pixel size is untrustworthy (e.g. laser-scanning microscopes whose zoom is not reflected in MicroManager's calibration), tick "Manually edit pixel size" in the dialog to force your value over the metadata. A new "Try calculating pixel size..." button uses normalized cross-correlation of neighbouring tile overlap to measure the true pixel size directly from the data, independent of metadata.
