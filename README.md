@@ -7,6 +7,7 @@ A basic image stitching extension for QuPath that combines multiple image tiles 
 
 ## Features
 
+- **Content-Based Tile Registration**: Optionally position tiles by correlating the image content in their overlap, instead of trusting nominal stage coordinates. Corrects backlash, encoder error, and thermal drift. One solve is measured on a reference subdirectory and reused by every angle/channel, so co-captured images stay registered to each other. Off by default. See [Tile registration](#tile-registration)
 - **5D Stitching Support**: Assemble tiles into multi-dimensional pyramids: XY mosaic with multiple z-slices and timepoints (full XYCZT support)
 - **Multiple Stitching Strategies**: Support for filename-based coordinates, TileConfiguration.txt files, Vectra metadata, and MicroManager metadata (MMStack or single-plane TIFF series)
 - **Dual Output Formats**: Choose between traditional OME-TIFF or cloud-native OME-ZARR
@@ -20,6 +21,57 @@ A basic image stitching extension for QuPath that combines multiple image tiles 
 - **Parallel Writing**: ZARR format utilizes multi-threaded tile writing for faster output
 - **Large Acquisition Support**: Handles 1600+ tiles without OOM via spatial indexing and bounded reader pool
 - **Multichannel Merge**: Combine N same-shape single-channel pyramids (from per-channel stitching) into one multichannel OME-TIFF via `ChannelMerger` / `ChannelMergeImageServer`
+
+## Tile registration
+
+Stage coordinates are *nominal*. Real stages have backlash, finite encoder resolution, and thermal
+drift across a long acquisition, so tiles placed purely from reported coordinates can leave visible
+seams or soft double images inside the overlap band. Registration measures where neighbouring tiles
+actually line up and corrects the positions before compositing.
+
+Registration is **off by default**. Enable it by setting a mode on the config:
+
+```java
+StitchingConfig config = new StitchingConfig(...);
+
+// Measure this folder and write the result for siblings to reuse.
+config.setRegistrationMode(RegistrationMode.solve(Path.of(folder, "TileRegistration.txt")));
+
+// Or reuse a previous solve.
+config.setRegistrationMode(RegistrationMode.apply(Path.of(folder, "TileRegistration.txt")));
+```
+
+### Why solve once and reuse
+
+Polarization angles and fluorescence channels are captured at the **same stage position** for a
+given tile. If each were registered independently, each would get its own corrections and the
+angles would end up misregistered against *each other* -- the channels of one field would no longer
+overlay, which is worse than leaving everything on a shared nominal grid.
+
+So exactly one subdirectory is solved (the slow part) and every sibling reuses it (effectively
+free). In an acquisition that means: stitch the reference angle first in `Solve` mode, then the
+remaining angles, `.biref`/`.sum` outputs, or channels in `Apply` mode. If no reference is named,
+the subdirectory with the most texture is chosen automatically.
+
+The solution file is also durable -- a re-stitch can reuse a solve rather than repeat it, and it
+can be read when a mosaic looks wrong. It records the pixel size, downsample, flip flags and tile
+size it was solved for, and refuses to be applied to a run that does not match.
+
+### Requirements and limits
+
+- **Tiles must overlap.** At 0% overlap adjacent tiles share no content, so there is nothing to
+  correlate: registration reports the grid as degenerate, warns, and changes nothing. ~10% is a
+  reasonable starting point. (A 0%-overlap grid is also the most common cause of visible seams in
+  the first place.)
+- **Corrections are bounded by the overlap.** A correction larger than the overlap band would mean
+  the tiles do not overlap at all, so it cannot be real; such measurements are rejected and the
+  tile keeps its nominal position.
+- **Translation only.** Rotation and scale are not corrected.
+- **A correct nominal position beats a confident wrong correction.** Featureless bands, blown-out
+  fields, lone dust specks, and repeating texture are all detected and refused rather than guessed
+  at. The worst case is "no improvement", never "tiles thrown across the mosaic".
+- `TileConfiguration.txt` is never modified; corrections are applied in memory, so re-running is
+  safe.
 
 ## Requirements
 

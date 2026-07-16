@@ -1,180 +1,119 @@
 # QuPath Tiles-to-Pyramid Extension: Workflow Overview
 
-This document describes the complete workflow for stitching tiled images into a pyramidal OME-TIFF using QuPath, particularly using the `TileConfigurationTxt` strategy.
+How a folder of tiles becomes a pyramidal OME-TIFF or OME-ZARR. The `TileConfigurationTxt`
+strategy is used as the running example; the others differ only in step 3.
 
-## Workflow Steps
+```
+MenuStartup -> StitchingGUI -> StitchingWorkflow.runDetailed(config)
+   |
+   +-- StitchingStrategyFactory.getStrategy(config)
+   +-- strategy.prepareStitching(...)      -> List<TileMapping>   (nominal positions)
+   +-- TileRegistrationStep.applyTo(...)   -> List<TileMapping>   (corrected; no-op by default)
+   +-- group by subdirName
+   +-- per subdir: DirectTileStitcher.stitch(...)
+         +-- TileSpatialIndex     (positions only, no pixels)
+         +-- ChunkCompositor      (reads tile sub-regions on demand)
+         +-- OME-TIFF: CompositorImageServer -> PyramidImageWriter -> DirectTiffOutputWriter
+             OME-ZARR: ZarrOutputWriter chunk loop -> PyramidLevelGenerator
+```
 
-### 1. **MenuStartup** (Entry Point)
+## 1. MenuStartup (entry point)
 
-File: `MenuStartup.java`
+`MenuStartup.java` registers the menu item that opens the dialog.
 
-Registers a new menu option in QuPath:
+## 2. StitchingGUI (user dialog)
+
+`functions/StitchingGUI.java` collects the folder, output format, compression, pixel size and
+downsample, and builds a `StitchingConfig`. For MicroManager datasets it also offers a
+"Try calculating pixel size..." button, which measures pixel size from tile overlap by normalized
+cross-correlation rather than trusting the metadata.
+
+## 3. StitchingStrategy (tile positions)
+
+`stitching/StitchingStrategy.java` has one method:
 
 ```java
-fileNameStitching.setOnAction(e -> {
-    logger.info("GUI menu click detected");
-    StitchingGUI.createGUI();
-});
+List<TileMapping> prepareStitching(String folderPath, double pixelSizeInMicrons,
+                                   double baseDownsample, String matchingString);
 ```
 
-### 2. **StitchingGUI** (User Dialog)
+Implementations:
 
-File: `StitchingGUI.java`
+| Strategy | Positions come from |
+|---|---|
+| `TileConfigurationTxtStrategy` | `TileConfiguration.txt` (stage microns); z/t from `z{zz}`/`t{tt}` directory names |
+| `FileNameStitchingStrategy` | coordinates embedded in the filename |
+| `VectraMetadataStrategy` | Vectra TIFF metadata |
+| `MicroManagerMetadataStrategy` | MicroManager sidecar JSON (`XPositionUm`/`YPositionUm`) |
 
-Displays a dialog to collect parameters (e.g., tile folder, compression, pixel size):
+Each returns `TileMapping(file, region, subdirName, seriesIndex)`, where `region` is an
+`ImageRegion` in **output-pixel space** (stage microns divided by pixel size, with any
+`flipStitchingX`/`flipStitchingY` already applied).
 
-```java
-String finalImageName = StitchingWorkflow.run(
-    stitchingType,
-    folderPath,
-    outputPath,
-    compressionType,
-    pixelSize,
-    downsample,
-    matchingString,
-    1.0,
-    null
-);
-```
+## 4. TileRegistrationStep (optional position correction)
 
-### 3. **StitchingWorkflow** (Orchestrator)
+`workflow/TileRegistrationStep.java`. A **no-op unless the caller sets a `RegistrationMode`** on
+the config.
 
-File: `StitchingWorkflow.java`
+Stage coordinates are nominal: real stages have backlash, finite encoder resolution, and thermal
+drift across a long acquisition. Registration measures where neighbouring tiles actually line up,
+by correlating the content in their overlap, and solves for globally consistent corrections.
 
-Executes the workflow logic. From 0.3.2 onward there are two entry points:
+Three modes:
 
-```java
-// Legacy entry point: returns the last successful output path, or null.
-String outputPath = StitchingWorkflow.run(config);
+| Mode | Behaviour |
+|---|---|
+| `Disabled` (default) | place tiles at nominal stage positions |
+| `Solve(out, settings, reference)` | measure the reference subdirectory, solve, write `TileRegistration.txt`, apply |
+| `Apply(in)` | reuse a previous solve |
 
-// Preferred entry point (0.3.2+): returns every output path and the
-// per-subdirectory failure list. Lets callers report per-angle results
-// instead of guessing from the single last-path return.
-StitchingWorkflow.StitchingResult result = StitchingWorkflow.runDetailed(config);
-for (String out : result.outputs()) { ... }
-for (String failed : result.failedSubdirs()) { ... }
-```
+**Why two active modes.** Polarization angles and fluorescence channels are captured at the *same*
+stage position for a given tile. Solving each independently would give each its own corrections and
+misregister the angles against *each other* -- worse than leaving them all on a shared nominal grid.
+So exactly one subdirectory is solved and every sibling reuses that result. The solution file is
+also durable: a re-stitch can reuse a solve instead of repeating it, and it can be inspected when a
+mosaic looks wrong.
 
-`run()` delegates to `runDetailed().lastOutput()` so existing callers compile unchanged. The orchestration inside is the same: strategy -> tile mappings -> per-subdirectory `ImageAssembler.assemble` + `PyramidImageWriter.write`.
+Corrections are applied **in memory**. `TileConfiguration.txt` is never rewritten, so it stays the
+nominal record and re-running is idempotent by construction.
 
-Set `config.setOutputFilename("samplename")` to prefix each per-subdirectory output with a sample name; the default is the subdirectory name only.
+See `registration/` for the engine: `NeighborGraphBuilder` (4-connected grid; derives the overlap
+from the nominal step rather than being told it), `CoarseToFineNccRegistrar` (bounded correlation
+search behind the `PairwiseRegistrar` interface), `GlobalPositionSolver` (weighted least-squares
+over all edges, plus a pull toward nominal), `TileRegistrationSolution` (the file format, whose
+header refuses to be applied to a run it was not solved for).
 
-### 4. **TileConfigurationTxtStrategy** (Mapping Tiles)
+## 5. DirectTileStitcher (assembly)
 
-File: `TileConfigurationTxtStrategy.java`
+`assembly/direct/DirectTileStitcher.java`. Every tile count routes through here.
 
-- Parses `TileConfiguration.txt`.
-- Matches TIFF files to tile configuration entries.
-- Creates `TileMapping` objects.
+The design constraint is **bounded memory: roughly 40 MB regardless of tile count**, against the
+2-4+ GB the retired `SparseImageServer` path needed. Three mechanisms hold that:
 
-### 5. **ImageAssembler** (Building Stitched Image)
+- **`TileSpatialIndex`** holds only `TileMapping` references -- a file handle and a rectangle. No
+  pixels. Tiles are bucketed into chunk-sized cells and translated so the image starts at (0, 0).
+- **`TileReaderPool`** keeps at most 64 `ImageReader`s open, LRU-evicting beyond that, and reads
+  **sub-regions** via `ImageReadParam.setSourceRegion` so only the pixels a chunk needs are
+  decoded. `getDimensions` reads the header without decoding pixels at all.
+- **Streaming writes.** There is never a full-image buffer. Zarr composites one 1024x1024 chunk,
+  writes it, and discards it. OME-TIFF wraps the compositor in `CompositorImageServer`, which
+  composites on demand as the writer pulls tiles.
 
-File: `ImageAssembler.java`
+`ChunkCompositor.compositeChunk` is where pixels land: query the index, allocate one chunk buffer,
+and for each intersecting tile read its sub-region and transfer it in. Overlaps currently resolve
+last-writer-wins.
 
-Converts tile mappings into a stitched `SparseImageServer`:
+## 6. Output writers
 
-```java
-SparseImageServer server = ImageAssembler.assemble(mappings, pixelSizeMicrons, zSpacingMicrons);
-```
+| Format | Path |
+|---|---|
+| OME-TIFF | `CompositorImageServer` to `PyramidImageWriter.write` to `DirectTiffOutputWriter` (Bio-Formats `TiffWriter`, explicit clamped tile loop) |
+| OME-ZARR | `ZarrOutputWriter.writeChunk` loop to `PyramidLevelGenerator` (2x2 box downsample of the level already written) |
 
-### 6. **PyramidImageWriter** (OME-TIFF / OME-ZARR Output)
+Writes are serial by design: Bio-Formats `TiffWriter` is not thread-safe, and `PyramidImageWriter`
+holds a global semaphore around OME-TIFF writes.
 
-File: `PyramidImageWriter.java`
+## 7. Multichannel merge
 
-Writes the assembled image as a pyramidal OME-TIFF or OME-ZARR:
-
-```java
-String written = PyramidImageWriter.write(
-    server,
-    outputPath,
-    outBase,
-    compressionType,
-    baseDownsample,
-    StitchingConfig.OutputFormat.OME_TIFF,   // or OME_ZARR
-    progressCallback                          // optional Consumer<Double>
-);
-```
-
-Robustness machinery (0.3.1 / 0.3.2; see `claude-reports/2026-05-11_stitching-critical-review.md`):
-
-- **Single global write gate.** A static `Semaphore(1)` serialises OME-TIFF writes -- BioFormats' `TiffWriter` is not thread-safe across writer instances (it shares `initialized` array state and J2K codec state across threads). Acquired with `tryAcquire(30, MINUTES)` so a wedged writer surfaces as a clear error instead of hanging every subsequent stitch.
-- **Write-time retry.** Up to 3 attempts with 5/15/30 s backoff, gated on `isWindowsFileLockException`. The most common AV-scan window is the BioFormats `PyramidOMETiffWriter.close()` step that reopens the temp file to patch IFD offsets and the OME-XML footer. Retry only fires for that specific exception class; real I/O errors fail immediately.
-- **Rename-before-close.** The temp -> final rename runs before `pyramidServer.close()` in both `writeOMETIFF` and `writeOMEZARR`, so a close-time exception cannot delete a successfully-written pyramid. The rename itself is also retried under the same backoff policy (AV scanners can pick up the file in the ms between writer close and rename).
-
-### ChannelMergeImageServer
-
-File: `ChannelMergeImageServer.java`
-
-A lightweight, read-only multi-channel view over a list of N already-written source `ImageServer` instances. It does not re-stitch anything -- it just fans `readRegion` calls out to each source and assembles the returned tiles into a single multi-band `BufferedImage`, so the existing `PyramidImageWriter` can treat the composite as a normal server and write a standard multichannel OME-TIFF pyramid.
-
-Key properties:
-
-- `nChannels()` is the sum of `source.nChannels()` across all sources, with channels concatenated in source order.
-- All sources must share pixel dimensions, pixel type, and pyramid structure -- the constructor validates width, height, and pixel type and throws `IllegalArgumentException` on a mismatch (differing resolution counts are logged as a warning and tolerated).
-- `getBuilder()` returns `null` on purpose. The merged server is an intermediate assembly object, not a persistent source meant to round-trip through a QuPath project.
-- `close()` closes all wrapped sources, aggregating any exceptions.
-
-### 7. **ChannelMerger** (optional post-step)
-
-File: `ChannelMerger.java`
-
-Runs after per-channel stitching, when two or more per-channel pyramids have been produced for the same acquisition (for example the widefield immunofluorescence and BF+IF paths -- see `../QPSC/docs/multichannel-if-overview.md` for the broader pipeline context). It opens each per-channel OME-TIFF, wraps them in a `ChannelMergeImageServer`, and hands that to `PyramidImageWriter` to produce one combined multichannel output.
-
-Signature:
-
-```java
-String outPath = ChannelMerger.merge(
-    inputPaths,        // List<String>: per-channel pyramid files, in output channel order
-    channelNames,      // List<String> or null: display names per output channel
-    outputDirectory,   // String: directory to write the merged output into
-    outputFilename,    // String: filename stem (no extension -- .ome.tif is appended)
-    compression,       // String: e.g. "LZW"
-    outputFormat       // StitchingConfig.OutputFormat: OME_TIFF or OME_ZARR
-);
-```
-
-Behavior notes:
-
-- The caller is responsible for supplying the ordered channel-name list. In the QPSC integration, `StitchingHelper.stitchChannelDirectories` passes the channel ids from the modality library so the output channel order matches the acquisition plan. Passing `null` falls back to each source's own channel name.
-- All inputs must be compatible (same pixel dimensions, same pixel type, same pyramid structure). Incompatibility is detected in the `ChannelMergeImageServer` constructor and surfaces as an `IllegalArgumentException` rather than a silent misalignment.
-- If fewer than two sources successfully open, `merge` logs a warning and returns `null` without writing anything. Missing input files are skipped with a warning, not treated as fatal.
-- On success the source per-channel pyramids are left in place so the user can inspect each channel individually.
-- Round-trip semantics are covered by `ChannelMergerTest` in `src/test/java/qupath/ext/basicstitching/`.
-
-## Workflow Call Sequence
-
-```
-MenuStartup (menu click)
-├─ StitchingGUI (collect input)
-│  └─ processDialogResult
-│     └─ StitchingWorkflow.run()
-│        ├─ StitchingStrategyFactory.getStrategy()
-│        ├─ TileConfigurationTxtStrategy.prepareStitching()
-│        ├─ ImageAssembler.assemble()
-│        └─ PyramidImageWriter.write()
-└─ Final output: OME-TIFF file
-```
-
-## Component Responsibilities
-
-| Component                  | Responsibility                        |
-|----------------------------|---------------------------------------|
-| **MenuStartup**            | Menu entry, GUI initialization        |
-| **StitchingGUI**           | User input dialog                     |
-| **StitchingWorkflow**      | Workflow orchestration                |
-| **StitchingStrategyFactory**| Strategy selection                    |
-| **TileConfigurationTxtStrategy** | Mapping tiles via configuration file|
-| **ImageAssembler**         | Image server assembly                 |
-| **PyramidImageWriter**     | Writing the pyramidal OME-TIFF        |
-| **ChannelMergeImageServer**| Multi-channel view over N same-shape sources |
-| **ChannelMerger**          | Optional post-step: combine per-channel pyramids into one multichannel OME-TIFF |
-
-## Extending the Workflow
-
-- **New strategies:** Implement `StitchingStrategy`.
-- **Custom writers:** Substitute `PyramidImageWriter`.
-- **Integration:** Callable from GUI, CLI, or scripting.
-
----
-
-For detailed examples and documentation, refer to the [GitHub repository](https://github.com/MichaelSNelson/qupath-extension-tiles-to-pyramid).
+`ChannelMerger.merge` combines separately-stitched single-channel outputs into one multichannel
+image via `ChannelMergeImageServer`. Callers that split channels import them individually instead.

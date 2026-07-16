@@ -164,6 +164,11 @@ public class StitchingWorkflow {
             }
             logger.info("Total tile mappings created: {}", allMappings.size());
 
+            // 2b. Optionally correct the nominal stage positions against the tiles' own content.
+            // This is the only place positions change; everything downstream reads them through
+            // TileMapping.region and is unaffected. A no-op unless the caller set a mode.
+            allMappings = TileRegistrationStep.applyTo(allMappings, config);
+
             // 3. Group tiles by subdirectory
             Map<String, List<TileMapping>> groupedMappings =
                     allMappings.stream().collect(Collectors.groupingBy(mapping -> mapping.subdirName));

@@ -21,6 +21,7 @@ import java.util.stream.Stream;
 import javax.imageio.ImageIO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.basicstitching.registration.Ncc;
 import qupath.ext.basicstitching.utilities.UtilityFunctions;
 import qupath.lib.regions.ImageRegion;
 
@@ -669,35 +670,12 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
      * {@code a[y][x]} is matched against {@code b[y-oy][x-ox]} over their
      * overlapping region. Returns a value in roughly [-1, 1]; -2 if the overlap
      * is empty.
+     *
+     * <p>Delegates to {@link Ncc#atShift}, which shares this implementation with tile
+     * registration. Kept as a private method so the estimator below reads unchanged.
      */
     private static double nccAtShift(float[][] a, float[][] b, int ox, int oy, int w, int h) {
-        int x0 = Math.max(0, ox);
-        int y0 = Math.max(0, oy);
-        int x1 = Math.min(w, w + ox);
-        int y1 = Math.min(h, h + oy);
-        int count = 0;
-        double sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
-        for (int y = y0; y < y1; y++) {
-            int by = y - oy;
-            float[] arow = a[y];
-            float[] brow = b[by];
-            for (int x = x0; x < x1; x++) {
-                float av = arow[x];
-                float bv = brow[x - ox];
-                sa += av;
-                sb += bv;
-                saa += av * av;
-                sbb += bv * bv;
-                sab += av * bv;
-                count++;
-            }
-        }
-        if (count < 16) return -2;
-        double na = saa - sa * sa / count;
-        double nb = sbb - sb * sb / count;
-        double denom = Math.sqrt(na * nb);
-        if (denom <= 1e-6) return -2;
-        return (sab - sa * sb / count) / denom;
+        return Ncc.atShift(a, b, ox, oy, w, h);
     }
 
     /** Load a TIFF as a single-band float grayscale array, or {@code null} on failure. */
@@ -733,18 +711,9 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
     }
 
     /** Average-pool a grayscale array by 2x in each dimension. */
+    /** Delegates to {@link Ncc#downsample2}; shared with tile registration. */
     private static float[][] downsample2(float[][] src) {
-        int h = src.length / 2;
-        int w = src[0].length / 2;
-        float[][] out = new float[h][w];
-        for (int y = 0; y < h; y++) {
-            int sy = y * 2;
-            for (int x = 0; x < w; x++) {
-                int sx = x * 2;
-                out[y][x] = 0.25f * (src[sy][sx] + src[sy][sx + 1] + src[sy + 1][sx] + src[sy + 1][sx + 1]);
-            }
-        }
-        return out;
+        return Ncc.downsample2(src);
     }
 
     private static double median(List<Double> values) {

@@ -2,4 +2,32 @@
 <FindBugsFilter>
     <!-- Exclusion filter for qupath-extension-tiles-to-pyramid. -->
     <!-- Keep this list minimal: only well-understood false positives. -->
+    <!-- NOTE: XML forbids a double hyphen inside a comment, so use commas or parentheses here. -->
+
+    <!--
+      Registration test fixtures seed a Random explicitly so failures reproduce, then draw from it
+      inside a loop to synthesize tile texture and jitter. The detector counts lexical call sites
+      rather than actual draws, so one call inside a loop reads to it as "created and used once",
+      even though the generator is reused for every pixel. Seeding is the whole point here: an
+      unseeded generator would make these tests non-reproducible, which is the opposite of what the
+      detector guards against. Scoped to the two classes that build fixtures.
+    -->
+    <Match>
+        <Bug pattern="DMI_RANDOM_USED_ONLY_ONCE"/>
+        <Or>
+            <Class name="qupath.ext.basicstitching.SyntheticGridFixture"/>
+            <Class name="qupath.ext.basicstitching.CoarseToFineNccRegistrarTest"/>
+        </Or>
+    </Match>
+
+    <!--
+      memoryStaysBounded asserts that registration holds the streaming memory envelope the whole
+      stitcher exists to protect. Establishing a baseline for a heap measurement is the one
+      legitimate reason to request a collection, and the call is confined to that single test.
+    -->
+    <Match>
+        <Bug pattern="DM_GC"/>
+        <Class name="qupath.ext.basicstitching.TileRegistrationEngineTest"/>
+        <Method name="memoryStaysBounded"/>
+    </Match>
 </FindBugsFilter>

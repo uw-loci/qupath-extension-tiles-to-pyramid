@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-16
+
+### Added
+- **Content-based tile registration (real stitching)**: tiles can now be positioned by correlating the image content in their overlap instead of trusting nominal stage coordinates alone. Stages have per-move error -- backlash, encoder resolution, thermal drift over a long acquisition -- and nominal placement leaves all of it in the output as seams or soft double images. Registration is **off by default**; set a `RegistrationMode` on `StitchingConfig` to enable it.
+  - **Two modes, because one solve must serve every angle.** Polarization angles and fluorescence channels are captured at the *same* stage position for each tile, so solving each independently would misregister them against each other -- worse than a shared nominal grid. `RegistrationMode.Solve` measures one reference subdirectory and writes `TileRegistration.txt`; `RegistrationMode.Apply` reuses that file for every sibling. The solution file is also a durable artifact: a re-stitch can reuse a solve rather than repeat it.
+  - **Bounded coarse-to-fine NCC search** (`CoarseToFineNccRegistrar`), behind a `PairwiseRegistrar` interface so the correlation backend can be swapped. No new dependencies. Constructing the search window as the physically-possible correction makes an out-of-band answer unrepresentable, rather than something to measure and then reject.
+  - **Global least-squares solve** (`GlobalPositionSolver`) over *all* measured edges, with a pull toward nominal that pins gauge freedom and holds unregisterable tiles at nominal exactly. Iterative outlier removal drops edges that disagree with the global solution. Sparse conjugate gradient; the matrix is never materialized.
+  - **Guards for the ways our data produces confident nonsense**: a robust (median-absolute-deviation) texture gate catches both bright low-contrast backgrounds and lone dust specks; an ambiguity gate catches repeating texture; corrections are clamped to the overlap band; 0%-overlap grids are detected and reported rather than silently doing nothing.
+  - **Overlap is derived from the nominal tile step**, not passed in, so it describes the data on disk rather than whatever the acquisition preference happens to say at re-stitch time. An explicit X/Y override is available.
+  - Corrections are applied **in memory**; `TileConfiguration.txt` is never rewritten, which keeps it the nominal record and makes re-runs idempotent by construction.
+  - Memory is unaffected: only overlap bands are read, never whole tiles, and bands are not cached across edges. Each worker owns its own reader pool.
+
+### Changed
+- `Ncc` now hosts the normalized-cross-correlation primitives shared by tile registration and the MicroManager pixel-size estimator, which delegates to it so the two cannot drift apart.
+- `Workflow.md` rewritten: it described `ImageAssembler` and the `SparseImageServer` path, both removed in 0.5.0.
+
 ## [0.5.0] - 2026-06-29
 
 ### Added

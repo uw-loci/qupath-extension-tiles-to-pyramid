@@ -1,5 +1,7 @@
 package qupath.ext.basicstitching.config;
 
+import qupath.ext.basicstitching.registration.RegistrationMode;
+
 /**
  * Configuration for stitching workflows.
  * Supports both OME-TIFF and OME-ZARR output formats.
@@ -38,6 +40,30 @@ public class StitchingConfig {
      * keeps the metadata authoritative.
      */
     private boolean manualPixelSizeOverride = false;
+
+    /**
+     * How tile positions should be determined: nominal stage coordinates (the default), a fresh
+     * content-based solve, or a solve carried over from a sibling angle/channel.
+     *
+     * <p>Set via {@link #setRegistrationMode(RegistrationMode)}. Defaults to
+     * {@link RegistrationMode.Disabled}, so existing callers keep the historical behaviour without
+     * change.
+     */
+    private RegistrationMode registrationMode = RegistrationMode.disabled();
+
+    /** @return how tile positions should be determined; never null. */
+    public RegistrationMode getRegistrationMode() {
+        return registrationMode;
+    }
+
+    /**
+     * Set how tile positions should be determined.
+     *
+     * @param registrationMode the mode; null is treated as {@link RegistrationMode.Disabled}
+     */
+    public void setRegistrationMode(RegistrationMode registrationMode) {
+        this.registrationMode = registrationMode == null ? RegistrationMode.disabled() : registrationMode;
+    }
 
     /** @return whether {@link #pixelSizeInMicrons} should override metadata pixel size. */
     public boolean isManualPixelSizeOverride() {
