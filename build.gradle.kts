@@ -121,6 +121,24 @@ tasks.withType<com.github.spotbugs.snom.SpotBugsTask>().configureEach {
     reports.create("html") { required.set(true) }
 }
 
+// ---------------------------------------------------------------------------
+// Test logging -- print the actual cause of a failure
+// ---------------------------------------------------------------------------
+// Gradle's default prints only the exception type and the assertion line, which is useless for
+// anything that fails from a cause rather than an assert. A Windows-only UnsatisfiedLinkError in
+// CI was unreadable for exactly this reason: the log said "UnsatisfiedLinkError at line 171" and
+// nothing about which library or why. Most of this project's tests only ever run on Windows in
+// CI, where nobody can attach a debugger, so the log IS the diagnosis.
+tasks.withType<Test> {
+    testLogging {
+        events("failed")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showCauses = true
+        showStackTraces = true
+        showExceptions = true
+    }
+}
+
 tasks.withType<JavaCompile> {
     options.release.set(21) // QuPath 0.7 runs on Java 21; pin bytecode target so any build JDK emits loadable classes
 }
