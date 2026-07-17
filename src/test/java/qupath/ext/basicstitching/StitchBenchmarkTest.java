@@ -118,6 +118,11 @@ public class StitchBenchmarkTest {
     }
 
     private void runBenchmark(StitchingConfig.OutputFormat format, String compression) throws Exception {
+        if (format == StitchingConfig.OutputFormat.OME_ZARR) {
+            // Same native-blosc dependency as the ZARR stitch tests; skip with the real reason where
+            // it cannot load rather than failing the benchmark. See BloscSupport.
+            org.junit.jupiter.api.Assumptions.assumeTrue(BloscSupport.isAvailable(), BloscSupport.unavailableReason());
+        }
         int grid = Integer.getInteger("stitchBenchGrid", 8);
         int tile = Integer.getInteger("stitchBenchTile", 1024);
         int reps = Integer.getInteger("stitchBenchReps", 3);

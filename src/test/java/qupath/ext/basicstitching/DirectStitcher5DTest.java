@@ -160,6 +160,14 @@ public class DirectStitcher5DTest {
 
     /** Build a (nz x nt) mosaic, stitch it, and verify dimensions and per-plane values. */
     private void runCase(int nz, int nt, boolean rgb, StitchingConfig.OutputFormat format) throws Exception {
+        if (format == StitchingConfig.OutputFormat.OME_ZARR) {
+            // ZARR compresses through the native blosc library, which is provided by the QuPath app
+            // in production but absent from a bare Gradle test JVM on some platforms (notably the
+            // Windows CI runner, which resolves the Linux native). Skip with the real reason rather
+            // than fail on an UnsatisfiedLinkError that says nothing about the code under test. This
+            // runs the moment blosc is genuinely loadable. See BloscSupport.
+            org.junit.jupiter.api.Assumptions.assumeTrue(BloscSupport.isAvailable(), BloscSupport.unavailableReason());
+        }
         Path tempDir = Files.createTempDirectory("stitch5d-");
         try {
             List<TileMapping> mappings = buildMosaic(tempDir, nz, nt, rgb, DirectStitcher5DTest::planeValue);
