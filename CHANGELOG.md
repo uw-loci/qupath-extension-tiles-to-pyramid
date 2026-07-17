@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Stitch benchmark harness** (`StitchBenchmarkTest`, developer-only): a reproducible stitch of a fixed synthetic tile grid reporting wall time and peak heap for both output formats. Opt-in via `./gradlew test --tests "*StitchBenchmarkTest*" -PstitchBench`, so it stays out of the normal suite. No production code changed. It exists so stitching performance work is decided on measurements rather than on what looks slow -- the first three things it measured all contradicted the obvious guess:
+  - Compositing is only **33%** of an OME-TIFF stitch and **21%** of an OME-ZARR one; the rest is the write path. That caps any composite-side optimization at ~1.45x / ~1.25x even with perfect parallel scaling.
+  - Source tiles are decoded **~19x each** on the TIFF path, but caching decoded tiles to remove that measured **48% slower** and used ~25% more heap. Acquisition tiles are uncompressed, so partial region reads are already cheap; decode *count* is not decode *cost*.
+  - Every pyramid level re-composites the whole mosaic from full-resolution source tiles, because `PyramidGeneratingImageServer` selects its source level from the wrapped (single-resolution) `CompositorImageServer`. Levels 1-3 cost 4.6 s of a 9.0 s stitch to produce 33% of the pixels. A QuPath tile cache does not help. This is the one real remaining prize, and it is recorded in the harness javadoc for whoever takes it on.
+
 ## [0.6.0] - 2026-07-16
 
 ### Added

@@ -77,6 +77,26 @@ dependencies {
 }
 
 // ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+// StitchBenchmarkTest is opt-in: it is skipped unless -PstitchBench is passed, so
+// the normal suite stays fast. See that class for the available knobs.
+//   ./gradlew test --tests "*StitchBenchmarkTest*" -PstitchBench
+tasks.test {
+    val benchEnabled = project.hasProperty("stitchBench")
+    systemProperty("stitchBench", benchEnabled.toString())
+    for (knob in listOf("stitchBenchGrid", "stitchBenchTile", "stitchBenchReps", "stitchBenchQuPathCacheMb")) {
+        project.findProperty(knob)?.let { systemProperty(knob, it.toString()) }
+    }
+    // Lower this (e.g. -PstitchBenchHeap=256m) to prove the bounded-memory envelope.
+    maxHeapSize = (project.findProperty("stitchBenchHeap") ?: "2g").toString()
+    if (benchEnabled) {
+        testLogging { showStandardStreams = true }
+        outputs.upToDateWhen { false } // always re-run; a cached benchmark is not a measurement
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Spotless -- auto-formatting (gates the build via `check`)
 // ---------------------------------------------------------------------------
 spotless {
