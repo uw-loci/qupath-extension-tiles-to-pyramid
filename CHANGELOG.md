@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Shipped a Linux-only blosc native to every platform.** The release jar bundled
+  `linux-x86-64/libblosc.so` and no `blosc.dll`/`.dylib`, because the blosc artifact's platform is
+  chosen from the **build machine's** OS and releases are built on ubuntu-latest. OME-ZARR only
+  ever worked on Windows and macOS because QuPath's own installation supplies the correct native
+  for the platform it is installed on; our bundled copy was inert, wrong-platform dead weight, and
+  the whole arrangement was one QuPath packaging change away from breaking. Taking jzarr as
+  provided means the native now always matches the host, by construction.
+- **Bundled an older duplicate of an extension QuPath already ships.**
+  `qupath-extension-bioformats` was an `implementation` dependency pinned at 0.6.0-rc4, so the jar
+  carried a stale copy of a QuPath extension that QuPath 0.7.0 provides at 0.7.0 in its own `lib/`
+  -- the same duplicate-class hazard the other `shadow(...)` entries exist to avoid.
+
+### Changed
+- **`qupath-extension-bioformats` and `jzarr` are now provided rather than bundled**, matching
+  every other QuPath-supplied dependency (and what `qupath-extension-qpsc` already does). Bioformats
+  is version-matched to QuPath 0.7.0. **The shadow jar drops from 163 MB to 0.2 MB** (38,670
+  entries to 85). Verified with `jdeps` against a real QuPath install that every class this
+  extension references resolves to a QuPath-shipped jar, and smoke-tested in QuPath itself: the
+  0.2 MB extension loads and completes both an OME-TIFF stitch (with registration) and an OME-ZARR
+  stitch, the latter exercising the blosc native from QuPath's `lib/`.
+
 ### Added
 - **Stitch benchmark harness** (`StitchBenchmarkTest`, developer-only): a reproducible stitch of a fixed synthetic tile grid reporting wall time and peak heap for both output formats. Opt-in via `./gradlew test --tests "*StitchBenchmarkTest*" -PstitchBench`, so it stays out of the normal suite. No production code changed. It exists so stitching performance work is decided on measurements rather than on what looks slow -- the first three things it measured all contradicted the obvious guess:
   - Compositing is only **33%** of an OME-TIFF stitch and **21%** of an OME-ZARR one; the rest is the write path. That caps any composite-side optimization at ~1.45x / ~1.25x even with perfect parallel scaling.

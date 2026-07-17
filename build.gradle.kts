@@ -56,21 +56,40 @@ dependencies {
     // Gson is used by MicroManagerMetadataStrategy to parse MMStack metadata files
     shadow(libs.gson)
 
-    // bioformats plugin needed for OMEPyramidWriter and OMEZarrWriter
-    implementation("io.github.qupath:qupath-extension-bioformats:0.6.0-rc4")
+    // Bio-Formats plugin, for OMEPyramidWriter and OMEZarrWriter.
+    //
+    // PROVIDED, not bundled, and version-matched to the QuPath we run inside: QuPath 0.7.0 ships
+    // qupath-extension-bioformats 0.7.0 in its own lib/. Bundling our own copy (it was
+    // implementation("...:0.6.0-rc4")) meant shipping an OLDER duplicate of an extension QuPath
+    // already provides -- the same duplicate-class hazard the shadow(...) entries above exist to
+    // avoid -- and it dragged in ~100 MB of transitives.
+    shadow("io.github.qupath:qupath-extension-bioformats:0.7.0")
 
     // Add Bio-Formats explicitly for compile time to avoid "class file for loci.formats.FormatException not found"
     shadow("ome:formats-gpl:7.1.0")
 
-    // ZARR format support dependencies (explicit for compile-time resolution)
-    // These are needed for OME-ZARR output format functionality
-    implementation("dev.zarr:jzarr:0.4.2")
+    // OME-ZARR support. PROVIDED for the same reason: QuPath ships jzarr 0.4.2 (the identical
+    // version) plus jblosc and the platform-correct blosc native in its lib/.
+    //
+    // Bundling this was actively WRONG, not merely wasteful. The blosc native is selected by the
+    // BUILD machine's OS, so releases (built on ubuntu-latest) shipped linux-x86-64/libblosc.so --
+    // and no blosc.dll -- to Windows users. It only ever worked because QuPath's own install
+    // supplies the right one for the platform it is installed on. Taking it as provided means the
+    // native always matches the host, by construction.
+    shadow("dev.zarr:jzarr:0.4.2")
 
     // If you aren't using Groovy, this can be removed
     shadow(libs.bundles.groovy)
 
-    // For testing
+    // For testing.
+    //
+    // The shadow(...) configuration is compile-only by design, so anything provided at runtime by
+    // the QuPath application has to be re-declared here or the tests cannot load it -- there is no
+    // QuPath install behind a Gradle test JVM. That is why libs.bundles.qupath is repeated below,
+    // and why bioformats/jzarr must be too now that they are provided rather than bundled.
     testImplementation(libs.bundles.qupath)
+    testImplementation("io.github.qupath:qupath-extension-bioformats:0.7.0")
+    testImplementation("dev.zarr:jzarr:0.4.2")
     testImplementation(libs.junit)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
