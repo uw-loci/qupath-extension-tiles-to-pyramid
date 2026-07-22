@@ -40,13 +40,20 @@ final class BloscSupport {
         boolean available = false;
         String reason = null;
         try {
-            // Force the same static initializer the ZARR compressor path triggers. A JBlosc
-            // instance registers the native via JNA in its class init; if the native is missing or
-            // wrong-platform, this is exactly where the UnsatisfiedLinkError is thrown.
-            new org.blosc.JBlosc().destroy();
+            // Force the SAME JNA native registration the ZARR compressor path triggers. The native
+            // is registered in org.blosc.IBloscDll's static initializer (via Native.register), which
+            // JBlosc only reaches lazily on the first compress/decompress call -- its constructor
+            // does NOT, so `new JBlosc()` loaded nothing and this probe reported a false positive on
+            // a platform whose native is missing (the Windows CI runner, which resolves the Linux
+            // native). Initialize IBloscDll directly (by internal class name, deliberately) so the
+            // probe fails at exactly the point the real ZARR write would.
+            Class.forName("org.blosc.IBloscDll");
             available = true;
         } catch (Throwable t) {
-            reason = t.getClass().getSimpleName() + ": " + t.getMessage();
+            // A failed class-init surfaces as ExceptionInInitializerError (first touch) wrapping the
+            // real UnsatisfiedLinkError; unwrap it so the skip reason names the actual cause.
+            Throwable cause = t instanceof ExceptionInInitializerError && t.getCause() != null ? t.getCause() : t;
+            reason = cause.getClass().getSimpleName() + ": " + cause.getMessage();
         }
         AVAILABLE = available;
         UNAVAILABLE_REASON = reason;
