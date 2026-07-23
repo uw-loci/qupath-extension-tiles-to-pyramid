@@ -288,7 +288,7 @@ Common to both:
 
 #### OME-ZARR (Cloud-Native)
 - **Structure**: Directory containing chunked arrays
-- **Compatibility**: QuPath 0.6.0+, napari, Python imaging libraries
+- **Compatibility**: QuPath 0.7.0+, napari, Python imaging libraries
 - **Use Case**: Cloud storage, large datasets, parallel processing
 - **Extension**: `.ome.zarr` (directory)
 - **Compression**: zstd (best balance), lz4 (fastest), lz4hc, blosclz, zlib

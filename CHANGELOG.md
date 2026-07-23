@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   -- the same duplicate-class hazard the other `shadow(...)` entries exist to avoid.
 
 ### Changed
+- **Minimum QuPath version now 0.7.0** (was 0.6.0). This aligns with the shift to provided
+  dependencies: bioformats, jzarr, and other QuPath-supplied libraries are versioned for 0.7.0.
 - **`qupath-extension-bioformats` and `jzarr` are now provided rather than bundled**, matching
   every other QuPath-supplied dependency (and what `qupath-extension-qpsc` already does). Bioformats
   is version-matched to QuPath 0.7.0. **The shadow jar drops from 163 MB to 0.2 MB** (38,670

@@ -21,7 +21,7 @@ public class MenuStartup implements QuPathExtension {
 
     private static final Logger logger = LoggerFactory.getLogger(MenuStartup.class);
     private static final ResourceBundle res = ResourceBundle.getBundle("qupath.ext.basicstitching.ui.strings");
-    private static final Version EXTENSION_QUPATH_VERSION = Version.parse("v0.6.0");
+    private static final Version EXTENSION_QUPATH_VERSION = Version.parse("v0.7.0");
 
     @Override
     public void installExtension(QuPathGUI qupath) {
