@@ -28,11 +28,16 @@ jobs:
       # (options.release = 21 in build.gradle.kts). Testing on a JVM the product never runs
       # on can both miss real failures and invent ones. Keep this in step with release.yml,
       # or a JDK-specific check (e.g. a SpotBugs finding) could pass CI and fail the release.
-      - name: Set up Java 21
+      - name: Set up Java (21 daemon + 25 toolchain)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '21'
+          # QuPath 0.7.0's settings plugin requires a Java 25 compiler toolchain.
+          # Install 25 so Gradle can find it; 21 is listed last so JAVA_HOME (the
+          # Gradle daemon JVM) stays on 21, matching the extension's bytecode target.
+          java-version: |
+            25
+            21
           cache: 'gradle'
 
       - name: Grant execute permission for gradlew

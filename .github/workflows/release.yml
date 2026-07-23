@@ -16,15 +16,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Java 21 to match ci.yml and the runtime: QuPath 0.7 runs on Java 21 and the build
-      # pins bytecode to it (options.release = 21). This must stay in step with ci.yml --
-      # if the two build the same checks on different JDKs, a JDK-specific finding can pass
-      # CI and then fail the release, which is the worst time to discover it.
-      - name: Set up Java 21
+      # Java 21 daemon (QuPath 0.7 runs on Java 21 and the build pins bytecode to it,
+      # options.release = 21) PLUS a Java 25 toolchain, which QuPath 0.7.0's settings plugin
+      # now requires for the compile task. 25 is installed so Gradle can find the toolchain;
+      # 21 is listed last so JAVA_HOME (the daemon) stays on 21. Keep in step with ci.yml --
+      # if the two build on different JDKs, a JDK-specific finding can pass CI and fail the
+      # release, which is the worst time to discover it.
+      - name: Set up Java (21 daemon + 25 toolchain)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: |
+            25
+            21
           cache: 'gradle'
 
       - name: Grant execute permission for gradlew
