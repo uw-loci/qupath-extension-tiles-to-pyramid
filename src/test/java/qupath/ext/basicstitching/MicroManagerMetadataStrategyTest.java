@@ -113,6 +113,58 @@ class MicroManagerMetadataStrategyTest {
     }
 
     @Test
+    void flipXReversesTileOrderAcrossTheGrid(@TempDir Path tmp) throws IOException {
+        // The real symptom of an inverted-axis scope is not one tile's coordinate: it is the whole
+        // mosaic coming out mirrored, tiles in reversed order. This asserts the relative order flips.
+        // Pos-0 is the left tile at stage X=0, Pos-1 the right tile at stage X=8 um.
+        writeTile(tmp.resolve("acq_MMStack_Pos-0_000.ome.tif"));
+        writeTile(tmp.resolve("acq_MMStack_Pos-1_000.ome.tif"));
+        writeSidecar(
+                tmp.resolve("acq_MMStack_Pos-0_000_metadata.txt"),
+                "acq_MMStack_Pos-0_000.ome.tif",
+                0.0,
+                0.0,
+                List.of(),
+                List.of());
+        writeSidecar(
+                tmp.resolve("acq_MMStack_Pos-1_000_metadata.txt"),
+                "acq_MMStack_Pos-1_000.ome.tif",
+                8.0,
+                0.0,
+                List.of(),
+                List.of());
+
+        MicroManagerMetadataStrategy strategy = new MicroManagerMetadataStrategy();
+
+        // Without flip: Pos-0 is left of Pos-1 (smaller X), as the stage reported.
+        List<TileMapping> nominal = strategy.prepareStitching(tmp.toString(), PIXEL_SIZE_UM, DOWNSAMPLE, ".");
+        int leftNominal =
+                findByName(nominal, "acq_MMStack_Pos-0_000.ome.tif").region.getX();
+        int rightNominal =
+                findByName(nominal, "acq_MMStack_Pos-1_000.ome.tif").region.getX();
+        assertTrue(leftNominal < rightNominal, "unflipped: Pos-0 should sit left of Pos-1");
+
+        // With flipX: negating stage X swaps which tile is leftmost. Pos-1 (was right) is now the
+        // smaller X. The strategy emits raw negated coords here; the downstream spatial index
+        // origin-normalizes, but the ORDER is already reversed, which is what fixes the mirrored mosaic.
+        MicroManagerMetadataStrategy.flipStitchingX = true;
+        try {
+            List<TileMapping> flipped = strategy.prepareStitching(tmp.toString(), PIXEL_SIZE_UM, DOWNSAMPLE, ".");
+            int leftFlipped =
+                    findByName(flipped, "acq_MMStack_Pos-0_000.ome.tif").region.getX();
+            int rightFlipped =
+                    findByName(flipped, "acq_MMStack_Pos-1_000.ome.tif").region.getX();
+            assertTrue(leftFlipped > rightFlipped, "flipped: Pos-0 and Pos-1 order must reverse");
+            assertEquals(
+                    rightNominal - leftNominal,
+                    leftFlipped - rightFlipped,
+                    "the gap between the two tiles must be preserved, only mirrored");
+        } finally {
+            MicroManagerMetadataStrategy.flipStitchingX = false;
+        }
+    }
+
+    @Test
     void resolvesPositionsFromSinglePlaneSeriesLayout(@TempDir Path tmp) throws IOException {
         // SINGLEPLANE_TIFF_SERIES layout: each position is its own subfolder
         // containing a single-image TIFF and a metadata.txt whose per-tile data
