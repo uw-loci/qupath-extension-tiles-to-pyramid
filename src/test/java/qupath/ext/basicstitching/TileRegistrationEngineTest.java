@@ -92,24 +92,38 @@ class TileRegistrationEngineTest {
     }
 
     @Test
-    void blankTiles_fallBackToNominal_whileTheRestStillSolve() throws IOException {
-        // A blank tile at an annotation edge has no signal, so its edges are rejected and the pull
-        // toward nominal is all that holds it -- it must land exactly at nominal, and must not drag
-        // its textured neighbours with it.
+    void blankIsland_inheritsNeighbourField_notNominal() throws IOException {
+        // The failure this fixes: a blank tile whose edges are all rejected used to be pinned to
+        // nominal (0, 0). That is only right when nominal is right. Under a real, smooth correction
+        // field -- here a scale-like drift of 6 px/tile -- nominal strands the tile a dozen pixels
+        // from where its neighbours put the shared content, which is the worst seam in the mosaic
+        // (the on-scope symptom: a doubled edge with a white gap). The tile must instead inherit the
+        // field its registered neighbours define.
         SyntheticGridFixture.Grid grid =
-                SyntheticGridFixture.write(tempDir, 3, 3, TILE_W, TILE_H, 0.15, 3.0, List.of(0, 8), 5);
+                SyntheticGridFixture.write(tempDir, 5, 5, TILE_W, TILE_H, 0.15, 2.0, 6.0, List.of(0), 5);
 
         RegistrationResult result = register(grid);
 
         assertFalse(result.degenerate(), "the textured majority must still solve: " + result.summary());
-        assertArrayEquals(
-                new double[] {0, 0}, result.deltaFor("1.tif"), 1e-6, "a blank tile must stay exactly at nominal");
-        assertArrayEquals(new double[] {0, 0}, result.deltaFor("9.tif"), 1e-6);
 
-        double[] middle = result.deltaFor("5.tif");
+        // The blank corner (index 0 -> 1.tif) inherits the mean of its two registered grid
+        // neighbours: the tile to its right (index 1 -> 2.tif) and below it (index 5 -> 6.tif).
+        double[] blank = result.deltaFor("1.tif");
+        double[] right = result.deltaFor("2.tif");
+        double[] below = result.deltaFor("6.tif");
+        assertEquals(
+                (right[0] + below[0]) / 2, blank[0], 1e-6, "blank island X must be its neighbours' mean, not nominal");
+        assertEquals((right[1] + below[1]) / 2, blank[1], 1e-6, "blank island Y must be its neighbours' mean");
+        assertTrue(
+                Math.hypot(blank[0], blank[1]) > 3.0,
+                "the field is large here, so nominal would strand the tile; got " + java.util.Arrays.toString(blank));
+
+        // And the textured tiles must genuinely recover the drift, or the test proves nothing about a
+        // large field. Tile 5.tif (index 4, a far corner) carries ~12 px of drift on each axis.
+        double[] textured = result.deltaFor("5.tif");
         double[] expected = grid.trueJitterPx().get("5.tif");
-        assertEquals(expected[0], middle[0], 2.0, "textured tiles must still be corrected");
-        assertEquals(expected[1], middle[1], 2.0);
+        assertEquals(expected[0], textured[0], 2.0, "textured tiles must recover the drift field");
+        assertEquals(expected[1], textured[1], 2.0);
     }
 
     @Test

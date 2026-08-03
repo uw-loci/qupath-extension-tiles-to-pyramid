@@ -5,9 +5,25 @@ All notable changes to the Tiles to Pyramid QuPath Extension will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.1] - 2026-08-02
 
 ### Fixed
+- **Content-based registration damaged the tiles it could not measure, and searched too far for a
+  match.** Two robustness fixes after on-scope testing against real H&E mosaics, where most seams
+  closed perfectly but a few showed a doubled edge with a white gap:
+  - A tile whose overlap bands were all too low-texture to register -- a near-blank sample-edge
+    tile -- was pinned to its nominal stage position. But real acquisitions carry a smooth
+    systematic error (a ~0.5% pixel-size/stage-step mismatch accumulates to tens of pixels across a
+    wide grid), so the rest of the grid was corrected by ~20 px while the unmeasurable tile stayed
+    at nominal -- stranding it a doubled ~20 px from its neighbours. Such a tile now inherits the
+    correction field its registered neighbours define (a diffusion fill over the grid); a wholly
+    disconnected region still falls back to nominal.
+  - The pairwise NCC search covered the full overlap (hundreds of pixels), but a *per-edge* offset
+    -- one stage step of backlash and drift -- is small, ~15 px p90 on real data. That over-wide
+    window let a low-texture band lock onto a wrong peak and inflated the ambiguity-rejection rate.
+    The per-edge search is now bounded to the plausible step error (2% of a tile, with a floor for
+    small tiles) and decoupled from the per-tile clamp, which stays wide for the legitimately large
+    *cumulative* correction.
 - **Shipped a Linux-only blosc native to every platform.** The release jar bundled
   `linux-x86-64/libblosc.so` and no `blosc.dll`/`.dylib`, because the blosc artifact's platform is
   chosen from the **build machine's** OS and releases are built on ubuntu-latest. OME-ZARR only

@@ -48,6 +48,22 @@ public final class TileRegistrationEngine {
     /** Correction bound when an axis has no neighbours to derive an overlap from. */
     private static final double FALLBACK_SEARCH_FRACTION = 0.05;
 
+    /**
+     * Per-edge search half-width as a fraction of tile size: the largest single-step stage error the
+     * pairwise search will consider. Two percent clears the ~15 px p90 of real per-step corrections
+     * with margin (2% of a 2064 px acquisition tile is ~41 px) while shrinking the search from the
+     * full overlap, which is what let low-texture bands drift onto a wrong peak. It bounds the
+     * per-edge measurement only; the per-tile clamp keeps the cumulative correction's headroom.
+     */
+    private static final double MAX_STEP_ERROR_FRAC = 0.02;
+
+    /**
+     * Absolute floor on the per-edge search half-width, in pixels. On a small tile the fractional
+     * bound alone would shrink below the plausible step error; this keeps a usable window. It never
+     * binds on real acquisition tiles, where the fractional bound is far larger.
+     */
+    private static final int MIN_STEP_ERROR_PX = 24;
+
     private TileRegistrationEngine() {}
 
     /**
@@ -94,10 +110,22 @@ public final class TileRegistrationEngine {
 
             int tileW = nominal.get(0).widthPx();
             int tileH = nominal.get(0).heightPx();
-            int searchX = searchBound(geometry.overlapXPx(tileW), tileW);
-            int searchY = searchBound(geometry.overlapYPx(tileH), tileH);
+            int overlapXPx = geometry.overlapXPx(tileW);
+            int overlapYPx = geometry.overlapYPx(tileH);
 
-            List<EdgeMeasurement> measured = measureAll(nominal, graph.edges(), registrar, settings, searchX, searchY);
+            // Per-EDGE search bound: how far a tile can sit from its immediate NEIGHBOUR -- one
+            // stage step's worth of backlash and encoder noise. Real data puts this at a p90 of
+            // ~15 px. It is a different quantity from the per-TILE correction, which is the running
+            // sum of those steps across the whole grid and legitimately reaches tens of pixels.
+            // Searching the full overlap (hundreds of pixels) for a per-edge offset is what lets a
+            // low-texture band lock onto a wrong peak, and needlessly inflates the ambiguity
+            // rejection rate -- a wider window holds more competing peaks. Bound it to the plausible
+            // step error instead; the per-tile clamp below keeps the cumulative headroom.
+            int perEdgeX = perEdgeSearch(overlapXPx, tileW);
+            int perEdgeY = perEdgeSearch(overlapYPx, tileH);
+
+            List<EdgeMeasurement> measured =
+                    measureAll(nominal, graph.edges(), registrar, settings, perEdgeX, perEdgeY);
 
             long accepted = measured.stream().filter(EdgeMeasurement::accepted).count();
             if (accepted == 0) {
@@ -105,14 +133,25 @@ public final class TileRegistrationEngine {
                         nominal, "no edge survived the confidence gates; keeping nominal positions");
             }
 
+            // Per-TILE clamp stays at the overlap: the cumulative correction is legitimately large,
+            // and only a displacement beyond a full overlap means a tile has lost its neighbour
+            // entirely rather than merely drifted.
+            int clampX = overlapXPx > 0 ? overlapXPx : (int) Math.round(FALLBACK_SEARCH_FRACTION * tileW);
+            int clampY = overlapYPx > 0 ? overlapYPx : (int) Math.round(FALLBACK_SEARCH_FRACTION * tileH);
             GlobalPositionSolver.SolveOutcome outcome =
-                    GlobalPositionSolver.solve(nominal, measured, settings, searchX, searchY);
+                    GlobalPositionSolver.solve(nominal, measured, settings, clampX, clampY);
 
             Map<String, double[]> deltas = new HashMap<>();
             for (int i = 0; i < nominal.size(); i++) {
                 GlobalPositionSolver.SolvedPosition p = outcome.positions().get(i);
                 deltas.put(nominal.get(i).filename(), new double[] {p.dxPx(), p.dyPx()});
             }
+
+            // A tile whose every edge was rejected was left at nominal by the solve. That is only
+            // right when nominal is approximately right; inside a large, smooth correction field it
+            // strands the tile tens of pixels out of step with its corrected neighbours -- the worst
+            // seam in the mosaic. Diffuse the neighbours' field into those islands instead.
+            int filledIslands = fillUnregisteredIslands(nominal, graph.edges(), outcome.edges(), deltas);
 
             int finalAccepted = (int)
                     outcome.edges().stream().filter(EdgeMeasurement::accepted).count();
@@ -128,6 +167,11 @@ public final class TileRegistrationEngine {
                     summarise(measured, outcome, geometry, deltas));
 
             logger.info("Tile registration: {}", result.summary());
+            if (filledIslands > 0) {
+                logger.info(
+                        "Filled {} unregisterable tile(s) from neighbouring corrections instead of nominal",
+                        filledIslands);
+            }
             logRejections(outcome.edges());
             return result;
 
@@ -247,9 +291,119 @@ public final class TileRegistrationEngine {
         }
     }
 
-    /** An axis with no neighbours has no measured overlap; allow a small correction anyway. */
-    private static int searchBound(int overlapPx, int tileSizePx) {
-        return overlapPx > 0 ? overlapPx : (int) Math.round(FALLBACK_SEARCH_FRACTION * tileSizePx);
+    /**
+     * The per-edge search half-width: the largest single-step stage error we will look for, capped
+     * so the search never exceeds the physical overlap.
+     *
+     * <p>Expressed as a fraction of the tile because stage error scales with travel, not with the
+     * overlap the operator happened to choose. The default {@link #MAX_STEP_ERROR_FRAC} of a tile
+     * comfortably clears the ~15 px p90 seen on real acquisitions while cutting the search area to a
+     * small fraction of the full-overlap window it replaced.
+     */
+    private static int perEdgeSearch(int overlapPx, int tileSizePx) {
+        int step = Math.max(MIN_STEP_ERROR_PX, (int) Math.round(MAX_STEP_ERROR_FRAC * tileSizePx));
+        int base = overlapPx > 0 ? overlapPx : (int) Math.round(FALLBACK_SEARCH_FRACTION * tileSizePx);
+        return Math.max(1, Math.min(base, step));
+    }
+
+    /**
+     * Replace the nominal fallback of unregisterable tiles with the correction their neighbours
+     * imply.
+     *
+     * <p>A tile with no accepted edge reduces, in the global solve, to {@code lambda*p = lambda*n} --
+     * it stays at nominal. That is the right answer only when nominal is close to the truth. When the
+     * grid as a whole needed a large, smooth correction (a real scale error or slow drift), a tile
+     * pinned at nominal sits tens of pixels away from where its corrected neighbours put the shared
+     * content, which reads as a hard double-image seam. An unregisterable tile is nearly always blank
+     * or low-texture, and the smooth field its neighbours define is the best estimate available for
+     * it, so diffuse that field inward.
+     *
+     * <p>Adjacency comes from the neighbour graph's candidate edges -- grid adjacency, independent of
+     * whether any given edge was accepted. A tile with no path to a registered tile has no field to
+     * inherit and is left at nominal.
+     *
+     * @param nominal tiles in solve order
+     * @param candidateEdges the grid adjacency (accepted or not)
+     * @param edges the post-solve edge list, carrying final acceptance
+     * @param deltas the per-filename corrections, mutated in place for filled tiles
+     * @return the number of tiles filled
+     */
+    private static int fillUnregisteredIslands(
+            List<TileNode> nominal,
+            List<EdgePair> candidateEdges,
+            List<EdgeMeasurement> edges,
+            Map<String, double[]> deltas) {
+
+        int n = nominal.size();
+        boolean[] registered = new boolean[n];
+        for (EdgeMeasurement e : edges) {
+            if (e.accepted()) {
+                registered[e.i()] = true;
+                registered[e.j()] = true;
+            }
+        }
+
+        List<List<Integer>> adjacency = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            adjacency.add(new ArrayList<>());
+        }
+        for (EdgePair e : candidateEdges) {
+            adjacency.get(e.i()).add(e.j());
+            adjacency.get(e.j()).add(e.i());
+        }
+
+        double[] dx = new double[n];
+        double[] dy = new double[n];
+        boolean[] known = new boolean[n];
+        for (int i = 0; i < n; i++) {
+            double[] d = deltas.get(nominal.get(i).filename());
+            dx[i] = d[0];
+            dy[i] = d[1];
+            known[i] = registered[i];
+        }
+
+        // Jacobi relaxation: each round averages the already-known neighbours into every remaining
+        // island, spreading the field outward one ring at a time until nothing more can be reached.
+        int filled = 0;
+        boolean progressed = true;
+        while (progressed) {
+            progressed = false;
+            double[] nx = dx.clone();
+            double[] ny = dy.clone();
+            boolean[] next = known.clone();
+            for (int i = 0; i < n; i++) {
+                if (known[i]) {
+                    continue;
+                }
+                double sx = 0;
+                double sy = 0;
+                int c = 0;
+                for (int j : adjacency.get(i)) {
+                    if (known[j]) {
+                        sx += dx[j];
+                        sy += dy[j];
+                        c++;
+                    }
+                }
+                if (c > 0) {
+                    nx[i] = sx / c;
+                    ny[i] = sy / c;
+                    next[i] = true;
+                    filled++;
+                    progressed = true;
+                }
+            }
+            dx = nx;
+            dy = ny;
+            known = next;
+        }
+
+        for (int i = 0; i < n; i++) {
+            if (!registered[i] && known[i]) {
+                deltas.put(nominal.get(i).filename(), new double[] {dx[i], dy[i]});
+            }
+        }
+        return filled;
     }
 
     private static <T> List<List<T>> partition(List<T> items, int parts) {

@@ -55,6 +55,10 @@ final class SyntheticGridFixture {
      * @param tileH tile height in pixels
      * @param overlapFrac fraction of each tile shared with its neighbour; 0 for edge-to-edge
      * @param jitterSigmaPx standard deviation of the injected per-tile displacement
+     * @param driftPerTilePx a smooth, per-column/row displacement growing from the grid centre --
+     *     a scale-like field on top of the random jitter, mimicking the real acquisition's
+     *     systematic pixel-size/stage-step error. Zero-mean by construction, so the solve's pull
+     *     toward nominal recovers it rather than absorbing it into a global offset.
      * @param blank tiles (by zero-based index) to render featureless instead of textured
      * @param seed random seed; fixed by callers so failures reproduce
      * @return the grid's nominal positions and ground truth
@@ -68,6 +72,7 @@ final class SyntheticGridFixture {
             int tileH,
             double overlapFrac,
             double jitterSigmaPx,
+            double driftPerTilePx,
             List<Integer> blank,
             long seed)
             throws IOException {
@@ -75,7 +80,8 @@ final class SyntheticGridFixture {
         Random rng = new Random(seed);
         int stepX = (int) Math.round(tileW * (1 - overlapFrac));
         int stepY = (int) Math.round(tileH * (1 - overlapFrac));
-        int margin = (int) Math.ceil(4 * Math.max(1, jitterSigmaPx)) + 4;
+        double maxDrift = Math.abs(driftPerTilePx) * Math.max((cols - 1) / 2.0, (rows - 1) / 2.0);
+        int margin = (int) Math.ceil(4 * Math.max(1, jitterSigmaPx) + maxDrift) + 4;
 
         int srcW = margin * 2 + (cols - 1) * stepX + tileW;
         int srcH = margin * 2 + (rows - 1) * stepY + tileH;
@@ -105,8 +111,10 @@ final class SyntheticGridFixture {
                 String name = (idx + 1) + ".tif";
                 int nomX = c * stepX;
                 int nomY = r * stepY;
-                int trueX = (int) Math.round(margin + nomX + jx[idx]);
-                int trueY = (int) Math.round(margin + nomY + jy[idx]);
+                double driftX = driftPerTilePx * (c - (cols - 1) / 2.0);
+                double driftY = driftPerTilePx * (r - (rows - 1) / 2.0);
+                int trueX = (int) Math.round(margin + nomX + jx[idx] + driftX);
+                int trueY = (int) Math.round(margin + nomY + jy[idx] + driftY);
 
                 Content content = blank.contains(idx) ? Content.BLANK : Content.TEXTURE;
                 File file = dir.resolve(name).toFile();
@@ -124,11 +132,26 @@ final class SyntheticGridFixture {
         return new Grid(nominal, truth, tileW, tileH);
     }
 
-    /** Convenience: a fully textured grid with no blank tiles. */
+    /** Convenience: jitter only, no coherent drift. */
+    static Grid write(
+            Path dir,
+            int cols,
+            int rows,
+            int tileW,
+            int tileH,
+            double overlapFrac,
+            double jitterSigmaPx,
+            List<Integer> blank,
+            long seed)
+            throws IOException {
+        return write(dir, cols, rows, tileW, tileH, overlapFrac, jitterSigmaPx, 0.0, blank, seed);
+    }
+
+    /** Convenience: a fully textured grid with no blank tiles and no drift. */
     static Grid write(
             Path dir, int cols, int rows, int tileW, int tileH, double overlapFrac, double jitterSigmaPx, long seed)
             throws IOException {
-        return write(dir, cols, rows, tileW, tileH, overlapFrac, jitterSigmaPx, List.of(), seed);
+        return write(dir, cols, rows, tileW, tileH, overlapFrac, jitterSigmaPx, 0.0, List.of(), seed);
     }
 
     private static void writeTile(File file, float[][] source, int x0, int y0, int w, int h, Content content)
