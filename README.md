@@ -8,19 +8,74 @@ A basic image stitching extension for QuPath that combines multiple image tiles 
 ## Features
 
 - **Content-Based Tile Registration**: Optionally position tiles by correlating the image content in their overlap, instead of trusting nominal stage coordinates. Corrects backlash, encoder error, and thermal drift. One solve is measured on a reference subdirectory and reused by every angle/channel, so co-captured images stay registered to each other. Off by default. See [Tile registration](#tile-registration)
-- **5D Stitching Support**: Assemble tiles into multi-dimensional pyramids: XY mosaic with multiple z-slices and timepoints (full XYCZT support)
+- **Z-stack and time-series stitching**: Assemble tiles into multi-plane pyramids (XY mosaic with multiple z-slices and timepoints) when planes are stored as separate files in `z{nn}/`/`t{nn}/` directories and read by the TileConfiguration.txt strategy. See [Dimensions and channels](#what-the-extension-can-handle-dimensions-and-channels) for exactly what each input supports
 - **Multiple Stitching Strategies**: Support for filename-based coordinates, TileConfiguration.txt files, Vectra metadata, and MicroManager metadata (MMStack or single-plane TIFF series)
 - **Dual Output Formats**: Choose between traditional OME-TIFF or cloud-native OME-ZARR
 - **Pyramidal Output**: Generates multi-resolution pyramids for efficient viewing at all scales
-- **Flexible Compression**: Supports various compression formats (TIFF: JPEG, LZW, ZIP; ZARR: zstd, lz4, blosc)
+- **Flexible Compression**: The compression dropdown offers QuPath's OME writer compression types (e.g. `LZW`, `JPEG`, `J2K`, `J2K_LOSSY`, `ZLIB`, `UNCOMPRESSED`); for OME-ZARR these map internally to Blosc codecs
 - **Cloud-Native ZARR**: Directory-based format optimized for cloud storage and parallel access
 - **Batch Processing**: Process multiple slides simultaneously with matching criteria
 - **Multi-subdirectory Support**: Automatically creates separate outputs for each matched subdirectory
 - **Robust Error Handling**: Comprehensive logging and validation for troubleshooting
 - **Memory Efficient**: Direct tile stitcher uses ~40 MB steady state regardless of tile count (vs 2-4+ GB with legacy SparseImageServer approach)
-- **Parallel Writing**: ZARR format utilizes multi-threaded tile writing for faster output
 - **Large Acquisition Support**: Handles 1600+ tiles without OOM via spatial indexing and bounded reader pool
-- **Multichannel Merge**: Combine N same-shape single-channel pyramids (from per-channel stitching) into one multichannel OME-TIFF via `ChannelMerger` / `ChannelMergeImageServer`
+- **Multichannel Merge**: Combine N same-shape single-channel pyramids (from per-channel stitching) into one multichannel image via a separate `ChannelMerger` step (see [Dimensions and channels](#what-the-extension-can-handle-dimensions-and-channels))
+
+## What the extension can handle: dimensions and channels
+
+Stitching operates on a **grid of 2D tile files**. Whether extra dimensions (Z, time, channels)
+survive into the output depends on how the input encodes them and which strategy reads it. A few
+combinations are only partially supported, so read this before planning an acquisition.
+
+### Z-stacks (3D) and time series
+
+Z-slices and timepoints are preserved **only when each plane is a separate tile file**, placed in
+`z{nn}/` (and optionally `t{nn}/`) subdirectories and stitched with the **TileConfiguration.txt**
+strategy. That path builds a genuine multi-plane pyramid: each `(z, t)` plane is composited from
+only the tiles at that plane, the Z-spacing is recorded, and both output formats declare the Z/T
+sizes. There is no maximum-intensity projection or flattening -- planes are written through as-is.
+
+| Input layout | Z | T |
+|---|---|---|
+| TileConfiguration.txt + `z{nn}/` directories | preserved | -- |
+| TileConfiguration.txt + `t{nn}/z{nn}/` directories | preserved | preserved |
+| TileConfiguration.txt, flat (no z/t directories) | 2D (z=0) | 2D (t=0) |
+| MicroManager, Filename[x,y], Vectra | 2D only | 2D only |
+| Z/T **inside** a multi-page file (e.g. an MMStack z-stack per position) | **collapsed** | **collapsed** |
+
+Two limits worth stating plainly:
+
+- **The MicroManager, Filename[x,y], and Vectra strategies are 2D only** -- they read the XY
+  position of each tile and place it at z=0, t=0.
+- **Planes inside a multi-page or multi-series file are not expanded.** The tile reader reads only
+  the *first* image in each file, so an MMStack that stores a z-stack (or a time series, or several
+  stage positions) inside one file is stitched as a single plane. To preserve those dimensions,
+  export the acquisition to the separate-file `z{nn}/` / `t{nn}/` layout and use the
+  TileConfiguration.txt strategy.
+
+Directory names must be exactly `z00`, `z01`, `t00`, ... (a number after `z`/`t`, case-insensitive);
+the two levels are matched independently, so `z{nn}/t{nn}/` nesting works as well as `t{nn}/z{nn}/`.
+
+### Channels and color
+
+A tile's channel layout is detected from the **first tile's** pixel format and carried through on
+every `(z, t)` plane:
+
+| Input tile | Support | Result |
+|---|---|---|
+| **RGB brightfield** -- one 3-band 8-bit file per tile (e.g. H&E) | Full | stitched as RGB (any tile with >=3 bands at 8-bit is treated as RGB) |
+| **Single channel** -- one 1-band file per tile (8- or 16-bit) | Full | stitched as grayscale |
+| **Multichannel in one file** -- one file per tile with >3 bands, or >=3 bands at 16-bit | Not preserved in a single stitch | the compositor builds only a grayscale or RGB plane, so the extra channels are dropped. Split the channels into separate stitches instead (below) |
+| **Highly multiplexed** (e.g. 8-40 channel fluorescence) | Via per-channel stitching + merge | see below |
+
+**The multichannel / multiplex pattern.** Fluorescence and multiplex data are stitched **one channel
+at a time**: each channel is its own input subdirectory, producing one single-channel pyramid per
+channel. Those per-channel pyramids are then combined into a single multichannel OME-TIFF or OME-ZARR
+by a separate **channel-merge** step (`ChannelMerger`), which requires them to share the same width,
+height, and pixel type. That merge is *not* part of the in-dialog stitch -- it is a public API driven
+by the calling system (QPSC) or a script, with no menu item of its own. Co-registration across the
+channels is why registration solves one reference subdirectory and reuses it for the rest (see
+[Tile registration](#tile-registration)).
 
 ## Tile registration
 
@@ -63,10 +118,19 @@ size it was solved for, and refuses to be applied to a run that does not match.
   correlate: registration reports the grid as degenerate, warns, and changes nothing. ~10% is a
   reasonable starting point. (A 0%-overlap grid is also the most common cause of visible seams in
   the first place.)
-- **Corrections are bounded by the overlap.** A correction larger than the overlap band would mean
-  the tiles do not overlap at all, so it cannot be real; such measurements are rejected and the
-  tile keeps its nominal position.
-- **Translation only.** Rotation and scale are not corrected.
+- **Per-neighbour shifts are bounded to a plausible stage step**, so a low-texture band cannot lock
+  onto a far-away wrong peak. The *cumulative* correction across a large grid can still be tens of
+  pixels -- that is the running sum of many small per-step errors, and is legitimate -- but it is
+  clamped to the overlap band, beyond which tiles would no longer overlap at all.
+- **Unmeasurable tiles inherit their neighbours, not nominal.** A near-blank tile whose overlap has
+  no texture to correlate is filled from the smooth correction field its registered neighbours
+  define, rather than being pinned to its raw stage position. Pinning such a tile to nominal inside
+  a grid that everything else shifted by tens of pixels is what used to produce a doubled edge with
+  a bright gap; a fully disconnected region still falls back to nominal.
+- **Translation only.** Rotation and scale are not corrected. A systematic scale error (e.g. a
+  slightly wrong pixel size) is absorbed as a smooth field of per-tile translations -- it stitches
+  correctly, but the corrections grow toward the edges of the grid; fixing the pixel-size
+  calibration at the source shrinks them.
 - **A correct nominal position beats a confident wrong correction.** Featureless bands, blown-out
   fields, lone dust specks, and repeating texture are all detected and refused rather than guessed
   at. The worst case is "no improvement", never "tiles thrown across the mosaic".
@@ -76,7 +140,7 @@ size it was solved for, and refuses to be applied to a run that does not match.
 ## Requirements
 
 - **QuPath**: Version 0.7.0 or greater
-- **Java**: Java 25 or higher
+- **Java**: Java 21 (the runtime QuPath 0.7 ships with; the extension's bytecode targets Java 21). Java 25 is only needed to *build* from source, not to run
 - **Memory**: Recommended 8GB+ RAM for large image datasets
 
 ## Installation
@@ -109,7 +173,7 @@ Developers of qpsc may want to also run the following to enable working with qps
 
 ### Accessing the Extension
 1. Open QuPath
-2. Navigate to **Extensions** -> **Tiles to Pyramid** -> **Stitch Images**
+2. Navigate to **Extensions** -> **Tiles to Pyramid** -> **Tiles-to-pyramid**
 3. The stitching dialog will open
 
 ### Stitching Strategies
@@ -269,9 +333,9 @@ Common to both:
 |-----------|-------------|---------|
 | **Input Folder** | Root directory containing image subdirectories | Required |
 | **Output Folder** | Directory for stitched output files | Required |
-| **Pixel Size (um)** | Physical size of each pixel in microns. Auto-detected from MMStack `*_metadata.txt` sidecars when available; field is locked by default. Tick "Manually edit pixel size" to override. | 0.5 (or detected from metadata) |
+| **Pixel Size (um)** | Physical size of each pixel in microns. Auto-detected from MMStack `*_metadata.txt` sidecars when available; field is locked by default. Tick "Manually edit pixel size" to override. | Detected from metadata; otherwise the last-used value (initially 7.2) |
 | **Base Downsample** | Downsampling factor for output | 1.0 |
-| **Compression** | Compression algorithm (TIFF: LZW, JPEG; ZARR: zstd, lz4) | LZW |
+| **Compression** | QuPath OME writer compression type (`LZW`, `JPEG`, `J2K`, `J2K_LOSSY`, `ZLIB`, `UNCOMPRESSED`, `DEFAULT`); applies to both output formats (mapped to Blosc codecs for OME-ZARR) | J2K |
 | **Output Format** | OME-TIFF (single file) or OME-ZARR (directory) | OME-TIFF |
 | **Matching String** | Filter subdirectories by name pattern. Use "." to process all subdirectories separately | "" (all) |
 | **Z-Spacing (um)** | Z-axis spacing for 3D datasets | 1.0 |
@@ -284,7 +348,7 @@ Common to both:
 - **Compatibility**: Widely supported by QuPath, ImageJ, and most imaging software
 - **Use Case**: General purpose, local storage, maximum compatibility
 - **Extension**: `.ome.tif`
-- **Compression**: LZW, JPEG, JPEG-2000, Uncompressed
+- **Compression**: chosen from QuPath's OME writer types -- `LZW`, `JPEG`, `J2K`, `J2K_LOSSY`, `ZLIB`, `UNCOMPRESSED`, `DEFAULT`
 - **Best For**: Desktop workflows, maximum software compatibility
 
 #### OME-ZARR (Cloud-Native)
@@ -292,23 +356,23 @@ Common to both:
 - **Compatibility**: QuPath 0.7.0+, napari, Python imaging libraries
 - **Use Case**: Cloud storage, large datasets, parallel processing
 - **Extension**: `.ome.zarr` (directory)
-- **Compression**: zstd (best balance), lz4 (fastest), lz4hc, blosclz, zlib
+- **Compression**: the same OME writer type you pick is mapped to a Blosc codec internally (e.g. `LZW`/`ZLIB` -> zlib; `J2K`/`JPEG` -> zstd, since JPEG has no Blosc equivalent; otherwise zstd). You do not choose the Blosc codec directly
 - **Best For**: Cloud storage, collaborative access, very large images (> 10GB)
 
 **Key Advantages of ZARR:**
-1. **Faster Writing**: Multi-threaded tile writing (typically 2-3x faster than TIFF)
-2. **Better Compression**: Blosc/zstd compression achieves 20-30% smaller files than LZW
+1. **Direct chunk writing**: writes each chunk as it is composited, without going through Bio-Formats' single-threaded TIFF writer (note: chunk compositing and writing are currently serial, not multi-threaded)
+2. **Compression**: Blosc codecs (zstd by default) are often smaller than TIFF LZW for scientific data
 3. **Cloud-Optimized**: Native support for S3, Azure Blob, Google Cloud Storage
-4. **Partial Access**: Read specific regions without downloading entire file
-5. **Parallel Processing**: Multiple processes can read different regions simultaneously
-6. **Progress Tracking**: Per-tile progress callbacks for better user feedback
+4. **Partial Access**: Read specific regions without downloading the entire dataset
+5. **Parallel Reads**: Multiple processes can read different regions simultaneously
+6. **Progress Tracking**: Per-chunk progress callbacks for better user feedback
 
-**Compression Recommendations:**
-- **zstd** (default): Best balance of speed and compression ratio
-- **lz4**: Fastest compression/decompression, slightly larger files
-- **lz4hc**: Better compression than lz4, slower writing
-- **zlib**: Compatible with standard zip compression
-- **blosclz**: Optimized for binary data
+**About ZARR compression:** you do not select a Blosc codec directly. The OME compression type you
+choose in the dialog is mapped to one when writing OME-ZARR: `LZW`/`ZLIB` -> zlib;
+`UNCOMPRESSED` -> none; `JPEG`/`J2K`/`J2K_LOSSY` are not available for ZARR and are substituted with
+zstd (logged as a warning); anything else -> zstd, a good speed/ratio default. Note this means an
+OME-ZARR is always lossless even if you pick `J2K_LOSSY`; that lossy option only takes effect for
+OME-TIFF output.
 
 **When to Use ZARR:**
 - Stitched images > 5GB in size
@@ -565,31 +629,29 @@ Configuration class for stitching operations.
 - `getOutputFilename()`: Retrieve the configured output filename base
 - `setOutputFilename(String)`: Set the output filename base (preferred over direct field access)
 
-#### `StitchingImplementations`
-Main coordination class for stitching operations.
-
-**Key Methods:**
-- `stitchCore()`: Primary stitching method
-- `setStitchingStrategy()`: Configure stitching algorithm
-
 #### Strategy Classes
 - `FileNameStitchingStrategy`: Parse coordinates from filenames
-- `TileConfigurationTxtStrategy`: Read ImageJ tile configurations  
+- `TileConfigurationTxtStrategy`: Read ImageJ/Fiji tile configurations (and the `z{nn}/`/`t{nn}/` layouts)
 - `VectraMetadataStrategy`: Extract Vectra TIFF metadata
+- `MicroManagerMetadataStrategy`: Read MicroManager sidecar metadata (MMStack or single-plane TIFF series)
 
 ### Extension Points
 The extension supports custom stitching strategies by implementing the `StitchingStrategy` interface:
 
 ```java
 public interface StitchingStrategy {
-    List<Map<String, Object>> prepareStitching(
-        String folderPath, 
+    List<TileMapping> prepareStitching(
+        String folderPath,
         double pixelSizeInMicrons,
-        double baseDownsample, 
+        double baseDownsample,
         String matchingString
     );
 }
 ```
+
+Each strategy returns `TileMapping(file, region, subdirName, seriesIndex)`, where `region` is an
+`ImageRegion` in output-pixel space (stage microns divided by pixel size, with any
+`flipStitchingX`/`flipStitchingY` already applied).
 
 </details>
 

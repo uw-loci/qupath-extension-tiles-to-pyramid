@@ -5,6 +5,25 @@ All notable changes to the Tiles to Pyramid QuPath Extension will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Documentation
+- **README accuracy pass against the code.** Added a "What the extension can handle: dimensions and
+  channels" section stating plainly what survives stitching: Z-stacks and time series are preserved
+  only as separate files in `z{nn}/`/`t{nn}/` directories via the TileConfiguration.txt strategy
+  (the other three strategies are 2D-only, and planes *inside* a multi-page/MMStack file are read as
+  a single plane, first image only); RGB and single-channel tiles are fully supported, multichannel
+  tiles in one file collapse in a single stitch, and multiplex data is handled as per-channel
+  stitches recombined by the separate `ChannelMerger` step. Corrected several stale claims: runtime
+  Java is 21 (not 25 -- 25 is build-only); the menu item is "Tiles-to-pyramid" (not "Stitch
+  Images"); default pixel size is the last-used value (initially 7.2, not 0.5) and default
+  compression is J2K (not LZW); the compression dropdown lists QuPath's OME writer types for both
+  formats (ZARR Blosc codecs are an internal mapping, not selectable); ZARR writing is serial, not
+  multi-threaded; `StitchingStrategy.prepareStitching` returns `List<TileMapping>`; removed the
+  nonexistent `StitchingImplementations` class from the API section and added
+  `MicroManagerMetadataStrategy` to the strategy list; refreshed the registration limits to match
+  the 0.6.1 neighbour-field fill and bounded per-edge search.
+
 ## [0.6.1] - 2026-08-02
 
 ### Added
