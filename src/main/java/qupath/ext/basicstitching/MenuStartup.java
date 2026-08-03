@@ -8,6 +8,7 @@ import javafx.scene.control.MenuItem;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.basicstitching.functions.StitchingGUI;
+import qupath.ext.basicstitching.utilities.RegistrationPreferences;
 import qupath.lib.common.Version;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.extensions.QuPathExtension;
@@ -26,6 +27,7 @@ public class MenuStartup implements QuPathExtension {
     @Override
     public void installExtension(QuPathGUI qupath) {
         addMenuItem(qupath);
+        RegistrationPreferences.installPreferences(qupath);
     }
 
     /**

@@ -35,6 +35,16 @@ public class QPPreferences {
     private static final BooleanProperty resolveOverlapsSaved =
             PathPrefs.createPersistentPreference("resolveOverlaps", false);
 
+    // Per-run overlap choice for registration, remembered across sessions like the other dialog
+    // fields. These are dialog conveniences, distinct from the persistent tuning in the
+    // "Tiles-to-pyramid" Preferences category (see RegistrationPreferences).
+    private static final BooleanProperty regOverlapAutoSaved =
+            PathPrefs.createPersistentPreference("basicstitching.dialog.regOverlapAuto", true);
+    private static final StringProperty regOverlapXSaved =
+            PathPrefs.createPersistentPreference("basicstitching.dialog.regOverlapX", "10");
+    private static final StringProperty regOverlapYSaved =
+            PathPrefs.createPersistentPreference("basicstitching.dialog.regOverlapY", "10");
+
     // Folder Location
     public static String getFolderLocationSaved() {
         return folderLocationSaved.getValue();
@@ -96,5 +106,30 @@ public class QPPreferences {
 
     public static void setResolveOverlapsSaved(final boolean resolveOverlaps) {
         resolveOverlapsSaved.setValue(resolveOverlaps);
+    }
+
+    // Per-run overlap choice for registration
+    public static boolean getRegOverlapAutoSaved() {
+        return regOverlapAutoSaved.getValue();
+    }
+
+    public static void setRegOverlapAutoSaved(final boolean auto) {
+        regOverlapAutoSaved.setValue(auto);
+    }
+
+    public static String getRegOverlapXSaved() {
+        return regOverlapXSaved.getValue();
+    }
+
+    public static void setRegOverlapXSaved(final String x) {
+        regOverlapXSaved.setValue(x);
+    }
+
+    public static String getRegOverlapYSaved() {
+        return regOverlapYSaved.getValue();
+    }
+
+    public static void setRegOverlapYSaved(final String y) {
+        regOverlapYSaved.setValue(y);
     }
 }

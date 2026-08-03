@@ -265,7 +265,20 @@ public class GlobalPositionSolverTest {
                         RejectReason.NONE));
 
         RegistrationSettings settings = new RegistrationSettings(
-                0.30, 0.02, 0.92, 0.90, 0.01, 0 /* no outlier pass */, 8, 3, 1, Double.NaN, Double.NaN);
+                0.30,
+                0.02,
+                0.92,
+                0.90,
+                0.01,
+                0 /* no outlier pass */,
+                8,
+                3,
+                1,
+                Double.NaN,
+                Double.NaN,
+                RegistrationSettings.DEFAULT_MAX_STEP_ERROR_FRAC,
+                RegistrationSettings.DEFAULT_MIN_STEP_ERROR_PX,
+                true);
         double maxDx = 20;
         double maxDy = 12;
 

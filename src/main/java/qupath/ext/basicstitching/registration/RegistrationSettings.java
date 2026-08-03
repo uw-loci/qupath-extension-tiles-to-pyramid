@@ -4,7 +4,8 @@ package qupath.ext.basicstitching.registration;
  * Tuning for content-based tile registration.
  *
  * <p>{@link #defaults()} is the supported configuration; the individual knobs exist so the gates
- * can be exercised from tests and so an unusual dataset can be rescued without a code change.
+ * can be exercised from tests, so an unusual dataset can be rescued without a code change, and so a
+ * host application can surface them as user preferences.
  *
  * @param minNcc peak NCC below which a match is not believed. Default 0.30 -- the same threshold
  *     the pixel-size estimator already validates against real PPM tiles.
@@ -30,6 +31,16 @@ package qupath.ext.basicstitching.registration;
  *     preference can change between acquiring and re-stitching, and deriving detects a 0%-overlap
  *     grid for free.
  * @param overlapPercentY explicit Y overlap percent, or {@link Double#NaN} to derive it.
+ * @param maxStepErrorFrac per-edge search half-width as a fraction of the tile, i.e. the largest
+ *     single-step stage error looked for between two neighbours. Small: real per-step error is a
+ *     handful of pixels, and a wide window lets a low-texture band lock onto a distant wrong peak.
+ *     The cumulative per-tile correction can still be much larger; only the per-edge measurement is
+ *     bounded by this.
+ * @param minStepErrorPx absolute floor, in pixels, on the per-edge search half-width, so the
+ *     fractional bound stays usable on small tiles. Never binds on large acquisition tiles.
+ * @param fillUnregistered when true, a tile whose edges were all rejected inherits the correction
+ *     its registered neighbours imply (a diffusion fill over the grid) instead of snapping to its
+ *     nominal position. Off reverts to the plain nominal fallback.
  */
 public record RegistrationSettings(
         double minNcc,
@@ -42,10 +53,19 @@ public record RegistrationSettings(
         int topKPeaks,
         int threads,
         double overlapPercentX,
-        double overlapPercentY) {
+        double overlapPercentY,
+        double maxStepErrorFrac,
+        int minStepErrorPx,
+        boolean fillUnregistered) {
 
     /** Bands narrower than this on either axis carry too little signal to correlate. */
     public static final int MIN_BAND_PX = 16;
+
+    /** Default per-edge search half-width as a fraction of tile size. */
+    public static final double DEFAULT_MAX_STEP_ERROR_FRAC = 0.02;
+
+    /** Default absolute floor, in pixels, on the per-edge search half-width. */
+    public static final int DEFAULT_MIN_STEP_ERROR_PX = 24;
 
     public RegistrationSettings {
         if (coarsestDownsample < 1 || Integer.bitCount(coarsestDownsample) != 1) {
@@ -61,6 +81,17 @@ public record RegistrationSettings(
             throw new IllegalArgumentException(
                     "lambda must be > 0 so the solve stays positive definite, got " + lambda);
         }
+        if (maxStepErrorFrac <= 0) {
+            throw new IllegalArgumentException("maxStepErrorFrac must be > 0, got " + maxStepErrorFrac);
+        }
+        if (minStepErrorPx < 1) {
+            throw new IllegalArgumentException("minStepErrorPx must be >= 1, got " + minStepErrorPx);
+        }
+    }
+
+    /** @return the number of worker threads to use by default (half the available cores, at least 1). */
+    public static int defaultThreads() {
+        return Math.max(1, Runtime.getRuntime().availableProcessors() / 2);
     }
 
     /** @return the supported default configuration. */
@@ -74,9 +105,12 @@ public record RegistrationSettings(
                 2,
                 8,
                 3,
-                Math.max(1, Runtime.getRuntime().availableProcessors() / 2),
+                defaultThreads(),
                 Double.NaN,
-                Double.NaN);
+                Double.NaN,
+                DEFAULT_MAX_STEP_ERROR_FRAC,
+                DEFAULT_MIN_STEP_ERROR_PX,
+                true);
     }
 
     /** @return whether the X overlap is explicitly specified rather than derived from the grid. */
@@ -102,7 +136,10 @@ public record RegistrationSettings(
                 topKPeaks,
                 threads,
                 percentX,
-                percentY);
+                percentY,
+                maxStepErrorFrac,
+                minStepErrorPx,
+                fillUnregistered);
     }
 
     /** @return a copy using the given number of worker threads. */
@@ -118,6 +155,9 @@ public record RegistrationSettings(
                 topKPeaks,
                 workerThreads,
                 overlapPercentX,
-                overlapPercentY);
+                overlapPercentY,
+                maxStepErrorFrac,
+                minStepErrorPx,
+                fillUnregistered);
     }
 }

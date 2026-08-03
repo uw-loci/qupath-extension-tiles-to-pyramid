@@ -121,6 +121,21 @@ public record TileRegistrationSolution(SolutionHeader header, Map<String, double
      * @throws IOException if the file cannot be written
      */
     public void write(Path file) throws IOException {
+        write(file, null);
+    }
+
+    /**
+     * Write this solution, additionally recording the tuning that produced it as a comment.
+     *
+     * <p>The settings line is informational only -- {@link #read} ignores unrecognised comment lines
+     * -- but it makes a run self-documenting: anyone inspecting the file later can see exactly which
+     * confidence threshold, shift bound, and solver knobs were in effect, without re-deriving them.
+     *
+     * @param file destination
+     * @param settings the tuning used, or null to omit the settings line
+     * @throws IOException if the file cannot be written
+     */
+    public void write(Path file, RegistrationSettings settings) throws IOException {
         List<String> lines = new ArrayList<>();
         lines.add(MAGIC);
         lines.add(fmt("# reference: %s", header.reference()));
@@ -132,6 +147,23 @@ public record TileRegistrationSolution(SolutionHeader header, Map<String, double
         lines.add(fmt(
                 "# edgesAccepted: %d   edgesTotal: %d   tilesClamped: %d",
                 header.edgesAccepted(), header.edgesTotal(), header.tilesClamped()));
+        if (settings != null) {
+            lines.add(fmt(
+                    "# settings: minNcc=%.2f  maxShift=%.1f%% (min %dpx)  lambda=%.3f  outlierPasses=%d  "
+                            + "minCoeffOfVar=%.3f  ambiguityRatio=%.2f  coarsestDownsample=%d  topKPeaks=%d  "
+                            + "fillUnregistered=%s  threads=%d",
+                    settings.minNcc(),
+                    settings.maxStepErrorFrac() * 100,
+                    settings.minStepErrorPx(),
+                    settings.lambda(),
+                    settings.maxOutlierIters(),
+                    settings.minCoeffOfVar(),
+                    settings.ambiguityRatio(),
+                    settings.coarsestDownsample(),
+                    settings.topKPeaks(),
+                    settings.fillUnregistered(),
+                    settings.threads()));
+        }
         lines.add("# name; deltaXPx; deltaYPx");
 
         // Sorted so the file is diffable between runs.

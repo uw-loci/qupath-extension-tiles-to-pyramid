@@ -30,6 +30,7 @@ import qupath.ext.basicstitching.registration.RegistrationSettings;
 import qupath.ext.basicstitching.registration.TileRegistrationSolution;
 import qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy;
 import qupath.ext.basicstitching.utilities.QPPreferences;
+import qupath.ext.basicstitching.utilities.RegistrationPreferences;
 import qupath.ext.basicstitching.workflow.StitchingWorkflow;
 import qupath.lib.gui.scripting.QPEx;
 
@@ -58,6 +59,17 @@ public class StitchingGUI {
     static ComboBox<String> stitchingGridBox = new ComboBox<>();
     static Button folderButton = new Button("Select Folder");
     static CheckBox resolveOverlapsCheckbox = new CheckBox("Solve tile overlaps (content-based registration)");
+    // Per-run registration controls (the tuning knobs live in Preferences -> Tiles-to-pyramid).
+    static final String AUTO_REFERENCE = "Auto (most texture)";
+    static CheckBox overlapAutoCheckbox = new CheckBox("Overlap %: derive from the tile grid");
+    static TextField overlapXField = new TextField("10");
+    static TextField overlapYField = new TextField("10");
+    static Label overlapXLabel = new Label("Overlap X %:");
+    static Label overlapYLabel = new Label("Overlap Y %:");
+    static Label referenceLabel = new Label("Reference subdirectory:");
+    static ComboBox<String> referenceBox = new ComboBox<>();
+    static Label registrationHintLabel = new Label("Advanced tuning: Preferences -> Tiles-to-pyramid");
+    static GridPane registrationOptionsPane = new GridPane();
     static CheckBox useFudgeFactorCheckbox = new CheckBox("Apply fudge factor to adjust for gaps between tiles");
     static TextField xFudgeField = new TextField("1.0");
     static TextField yFudgeField = new TextField("1.0");
@@ -149,10 +161,32 @@ public class StitchingGUI {
             boolean resolveOverlaps = resolveOverlapsCheckbox.isSelected();
             QPPreferences.setResolveOverlapsSaved(resolveOverlaps);
             if (resolveOverlaps) {
+                // Tuning (confidence, max shift, lambda, gates, ...) comes from the persistent
+                // "Tiles-to-pyramid" preferences; the dialog supplies only the two per-run choices.
+                RegistrationSettings settings = RegistrationPreferences.toSettings();
+
+                boolean overlapAuto = overlapAutoCheckbox.isSelected();
+                QPPreferences.setRegOverlapAutoSaved(overlapAuto);
+                if (!overlapAuto) {
+                    double ox = parseDoubleField(overlapXField.getText(), 10.0);
+                    double oy = parseDoubleField(overlapYField.getText(), 10.0);
+                    QPPreferences.setRegOverlapXSaved(overlapXField.getText());
+                    QPPreferences.setRegOverlapYSaved(overlapYField.getText());
+                    settings = settings.withExplicitOverlap(ox, oy);
+                }
+
+                String reference = referenceBox.getValue();
+                if (reference == null || AUTO_REFERENCE.equals(reference)) {
+                    reference = null;
+                }
+
                 Path solutionOut = Paths.get(folderPath).resolve(TileRegistrationSolution.DEFAULT_FILENAME);
-                config.setRegistrationMode(
-                        new RegistrationMode.Solve(solutionOut, RegistrationSettings.defaults(), null));
-                logger.info("Content-based overlap resolution enabled; solution will be written to {}", solutionOut);
+                config.setRegistrationMode(new RegistrationMode.Solve(solutionOut, settings, reference));
+                logger.info(
+                        "Content-based overlap resolution enabled (overlap {}, reference {}); solution -> {}",
+                        overlapAuto ? "auto" : (overlapXField.getText() + "%/" + overlapYField.getText() + "%"),
+                        reference == null ? "auto" : reference,
+                        solutionOut);
             }
 
             // Use the new workflow
@@ -261,6 +295,98 @@ public class StitchingGUI {
         } else {
             logger.error("Row index not found for resolveOverlapsCheckbox");
         }
+
+        buildRegistrationOptions(pane);
+    }
+
+    /**
+     * Build the per-run registration options that appear when overlap resolution is enabled: whether
+     * to derive the overlap or set it by hand, and which subdirectory to solve on. Everything else
+     * (confidence, max shift, solver knobs) is persistent tuning and lives in the Preferences pane
+     * under "Tiles-to-pyramid", so it is not duplicated here; a hint points there.
+     */
+    private static void buildRegistrationOptions(GridPane pane) {
+        registrationOptionsPane.setHgap(8);
+        registrationOptionsPane.setVgap(6);
+        registrationOptionsPane.setStyle("-fx-padding: 4 0 4 18;"); // indent under the checkbox
+
+        overlapAutoCheckbox.setSelected(QPPreferences.getRegOverlapAutoSaved());
+        overlapAutoCheckbox.setTooltip(
+                new Tooltip("Derive the overlap from the spacing of the nominal tile positions (recommended).\n"
+                        + "Untick to type the overlap percentages your acquisition used."));
+        overlapXField.setText(QPPreferences.getRegOverlapXSaved());
+        overlapYField.setText(QPPreferences.getRegOverlapYSaved());
+        overlapXField.setPrefColumnCount(4);
+        overlapYField.setPrefColumnCount(4);
+
+        referenceLabel.setTooltip(
+                new Tooltip("Which subdirectory to solve the registration on. The solution is reused by every other\n"
+                        + "subdirectory (angles/channels are co-captured, so they must share one solve).\n"
+                        + "Auto picks the subdirectory with the most texture."));
+        referenceBox.setTooltip(referenceLabel.getTooltip());
+        refreshReferenceChoices();
+        folderField.textProperty().addListener((obs, o, n) -> refreshReferenceChoices());
+
+        registrationHintLabel.setStyle("-fx-font-size: 0.85em; -fx-text-fill: #666;");
+        registrationHintLabel.setTooltip(
+                new Tooltip("Confidence, max shift, nominal pull, gates and other tuning are persistent settings.\n"
+                        + "Set them in QuPath Preferences under the 'Tiles-to-pyramid' category; they are\n"
+                        + "shared with QPSC."));
+
+        // Enable the manual overlap fields only when not deriving.
+        Runnable syncOverlapFields = () -> {
+            boolean manual = !overlapAutoCheckbox.isSelected();
+            overlapXField.setDisable(!manual);
+            overlapYField.setDisable(!manual);
+            overlapXLabel.setDisable(!manual);
+            overlapYLabel.setDisable(!manual);
+        };
+        overlapAutoCheckbox.setOnAction(e -> syncOverlapFields.run());
+        syncOverlapFields.run();
+
+        registrationOptionsPane.add(overlapAutoCheckbox, 0, 0, 4, 1);
+        registrationOptionsPane.add(overlapXLabel, 0, 1);
+        registrationOptionsPane.add(overlapXField, 1, 1);
+        registrationOptionsPane.add(overlapYLabel, 2, 1);
+        registrationOptionsPane.add(overlapYField, 3, 1);
+        registrationOptionsPane.add(referenceLabel, 0, 2);
+        registrationOptionsPane.add(referenceBox, 1, 2, 3, 1);
+        registrationOptionsPane.add(registrationHintLabel, 0, 3, 4, 1);
+
+        // The whole panel is visible only when overlap resolution is enabled.
+        registrationOptionsPane.visibleProperty().bind(resolveOverlapsCheckbox.selectedProperty());
+        registrationOptionsPane.managedProperty().bind(resolveOverlapsCheckbox.selectedProperty());
+
+        Integer row = guiElementPositions.get(registrationOptionsPane);
+        if (row != null) {
+            pane.add(registrationOptionsPane, 0, row, 3, 1);
+        } else {
+            logger.error("Row index not found for registrationOptionsPane");
+        }
+    }
+
+    /**
+     * Populate the reference-subdirectory choices from the immediate subdirectories of the selected
+     * folder, keeping {@link #AUTO_REFERENCE} first and preserving the current selection when it
+     * still exists.
+     */
+    private static void refreshReferenceChoices() {
+        String previous = referenceBox.getValue();
+        java.util.List<String> choices = new java.util.ArrayList<>();
+        choices.add(AUTO_REFERENCE);
+        String path = folderField.getText();
+        if (path != null && !path.trim().isEmpty()) {
+            File folder = new File(path.trim());
+            File[] children = folder.listFiles(File::isDirectory);
+            if (children != null) {
+                java.util.Arrays.sort(children);
+                for (File child : children) {
+                    choices.add(child.getName());
+                }
+            }
+        }
+        referenceBox.getItems().setAll(choices);
+        referenceBox.setValue(choices.contains(previous) ? previous : AUTO_REFERENCE);
     }
 
     /**
@@ -296,6 +422,7 @@ public class StitchingGUI {
         guiElementPositions.put(downsampleLabel, currentPosition++);
         guiElementPositions.put(matchStringLabel, currentPosition++);
         guiElementPositions.put(resolveOverlapsCheckbox, currentPosition++);
+        guiElementPositions.put(registrationOptionsPane, currentPosition++);
         guiElementPositions.put(githubLink, currentPosition++);
         guiElementPositions.put(useFudgeFactorCheckbox, currentPosition++);
         guiElementPositions.put(xFudgeLabel, currentPosition++);

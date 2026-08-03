@@ -102,12 +102,17 @@ public final class TileRegistrationStep {
             return mappings;
         }
 
-        writeSolution(result, config, reference, refNodes, solve.solutionOut());
+        writeSolution(result, config, reference, refNodes, solve.solutionOut(), solve.settings());
         return applyDeltas(mappings, result.deltaPxByFilename());
     }
 
     private static void writeSolution(
-            RegistrationResult result, StitchingConfig config, String reference, List<TileNode> refNodes, Path out) {
+            RegistrationResult result,
+            StitchingConfig config,
+            String reference,
+            List<TileNode> refNodes,
+            Path out,
+            qupath.ext.basicstitching.registration.RegistrationSettings settings) {
         if (out == null) {
             return;
         }
@@ -122,7 +127,7 @@ public final class TileRegistrationStep {
                             TileConfigurationTxtStrategy.flipStitchingY,
                             first.widthPx(),
                             first.heightPx())
-                    .write(out);
+                    .write(out, settings);
         } catch (IOException e) {
             // The solve is already in hand and about to be applied to this stitch; only the sharing
             // with sibling angles is lost. Worth a loud warning, not a failed stitch.

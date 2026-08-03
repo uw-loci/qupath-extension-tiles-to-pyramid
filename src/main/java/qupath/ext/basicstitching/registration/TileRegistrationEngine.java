@@ -48,22 +48,6 @@ public final class TileRegistrationEngine {
     /** Correction bound when an axis has no neighbours to derive an overlap from. */
     private static final double FALLBACK_SEARCH_FRACTION = 0.05;
 
-    /**
-     * Per-edge search half-width as a fraction of tile size: the largest single-step stage error the
-     * pairwise search will consider. Two percent clears the ~15 px p90 of real per-step corrections
-     * with margin (2% of a 2064 px acquisition tile is ~41 px) while shrinking the search from the
-     * full overlap, which is what let low-texture bands drift onto a wrong peak. It bounds the
-     * per-edge measurement only; the per-tile clamp keeps the cumulative correction's headroom.
-     */
-    private static final double MAX_STEP_ERROR_FRAC = 0.02;
-
-    /**
-     * Absolute floor on the per-edge search half-width, in pixels. On a small tile the fractional
-     * bound alone would shrink below the plausible step error; this keeps a usable window. It never
-     * binds on real acquisition tiles, where the fractional bound is far larger.
-     */
-    private static final int MIN_STEP_ERROR_PX = 24;
-
     private TileRegistrationEngine() {}
 
     /**
@@ -121,8 +105,8 @@ public final class TileRegistrationEngine {
             // low-texture band lock onto a wrong peak, and needlessly inflates the ambiguity
             // rejection rate -- a wider window holds more competing peaks. Bound it to the plausible
             // step error instead; the per-tile clamp below keeps the cumulative headroom.
-            int perEdgeX = perEdgeSearch(overlapXPx, tileW);
-            int perEdgeY = perEdgeSearch(overlapYPx, tileH);
+            int perEdgeX = perEdgeSearch(overlapXPx, tileW, settings);
+            int perEdgeY = perEdgeSearch(overlapYPx, tileH, settings);
 
             List<EdgeMeasurement> measured =
                     measureAll(nominal, graph.edges(), registrar, settings, perEdgeX, perEdgeY);
@@ -150,8 +134,11 @@ public final class TileRegistrationEngine {
             // A tile whose every edge was rejected was left at nominal by the solve. That is only
             // right when nominal is approximately right; inside a large, smooth correction field it
             // strands the tile tens of pixels out of step with its corrected neighbours -- the worst
-            // seam in the mosaic. Diffuse the neighbours' field into those islands instead.
-            int filledIslands = fillUnregisteredIslands(nominal, graph.edges(), outcome.edges(), deltas);
+            // seam in the mosaic. Diffuse the neighbours' field into those islands instead, unless
+            // the caller has turned that off.
+            int filledIslands = settings.fillUnregistered()
+                    ? fillUnregisteredIslands(nominal, graph.edges(), outcome.edges(), deltas)
+                    : 0;
 
             int finalAccepted = (int)
                     outcome.edges().stream().filter(EdgeMeasurement::accepted).count();
@@ -296,12 +283,13 @@ public final class TileRegistrationEngine {
      * so the search never exceeds the physical overlap.
      *
      * <p>Expressed as a fraction of the tile because stage error scales with travel, not with the
-     * overlap the operator happened to choose. The default {@link #MAX_STEP_ERROR_FRAC} of a tile
-     * comfortably clears the ~15 px p90 seen on real acquisitions while cutting the search area to a
-     * small fraction of the full-overlap window it replaced.
+     * overlap the operator happened to choose. {@link RegistrationSettings#maxStepErrorFrac()} of a
+     * tile (default 2%) comfortably clears the ~15 px p90 seen on real acquisitions while cutting the
+     * search area to a small fraction of the full-overlap window it replaced;
+     * {@link RegistrationSettings#minStepErrorPx()} floors it so small tiles keep a usable window.
      */
-    private static int perEdgeSearch(int overlapPx, int tileSizePx) {
-        int step = Math.max(MIN_STEP_ERROR_PX, (int) Math.round(MAX_STEP_ERROR_FRAC * tileSizePx));
+    private static int perEdgeSearch(int overlapPx, int tileSizePx, RegistrationSettings settings) {
+        int step = Math.max(settings.minStepErrorPx(), (int) Math.round(settings.maxStepErrorFrac() * tileSizePx));
         int base = overlapPx > 0 ? overlapPx : (int) Math.round(FALLBACK_SEARCH_FRACTION * tileSizePx);
         return Math.max(1, Math.min(base, step));
     }

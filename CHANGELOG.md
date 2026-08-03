@@ -5,7 +5,26 @@ All notable changes to the Tiles to Pyramid QuPath Extension will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.2] - 2026-08-03
+
+### Added
+- **Registration is now tunable, not just on/off.** The single "solve tile overlaps" checkbox hid a
+  large set of hard-coded values; they are now surfaced.
+  - **New "Tiles-to-pyramid" category in QuPath Preferences** holds the persistent tuning knobs:
+    minimum match confidence, max shift per step (% and px floor), fill-unregisterable-tiles toggle,
+    nominal pull (lambda), outlier passes, low-texture gate, ambiguity ratio, coarsest search
+    downsample, candidate peaks, and worker threads. Each shows its default and a description. This
+    is the single source of truth, shared with QPSC (which reads the same settings), so a value set
+    here applies to both a standalone stitch and a QPSC-driven acquisition.
+  - **The stitch dialog** gains the two genuinely per-run choices, shown when registration is on:
+    overlap percent (derive from the grid, or set X/Y by hand) and which subdirectory to solve on
+    (auto = most texture, or pick one). A hint points to the Preferences category for everything
+    else.
+  - **`RegistrationSettings`** gained `maxStepErrorFrac`, `minStepErrorPx`, and `fillUnregistered`
+    (previously fixed constants in the engine), so the whole tuning surface is one configurable
+    object.
+  - **The `TileRegistration.txt` header now records the settings used** (confidence, shift bound,
+    lambda, gates, fill, threads), so a solve is self-documenting.
 
 ### Documentation
 - **README accuracy pass against the code.** Added a "What the extension can handle: dimensions and

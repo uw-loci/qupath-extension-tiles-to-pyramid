@@ -96,6 +96,38 @@ config.setRegistrationMode(RegistrationMode.solve(Path.of(folder, "TileRegistrat
 config.setRegistrationMode(RegistrationMode.apply(Path.of(folder, "TileRegistration.txt")));
 ```
 
+### Controls: what you set, and where
+
+Registration is split between two genuinely per-run choices in the stitch dialog and a set of
+persistent tuning knobs in QuPath's Preferences.
+
+**In the stitch dialog** (shown when "Solve tile overlaps" is ticked):
+
+- **Overlap %** -- derive it from the tile grid (default) or set X/Y by hand for an acquisition
+  whose overlap you know.
+- **Reference subdirectory** -- which subdirectory to solve on (auto = the one with the most
+  texture), reused by all the others.
+
+**In QuPath Preferences -> "Tiles-to-pyramid" category** (persistent, shared with QPSC):
+
+| Preference | Default | Meaning |
+|---|---|---|
+| Minimum match confidence | 0.30 | NCC below which a tile-pair match is not trusted |
+| Max shift per step (% of tile) | 2.0 | largest per-neighbour correction searched for |
+| Min shift search (px) | 24 | floor on the above so small tiles keep a usable window |
+| Fill unregisterable tiles from neighbours | on | inherit neighbours' correction instead of nominal |
+| Nominal pull (lambda) | 0.01 | how much the solve trusts stage vs image content |
+| Outlier rejection passes | 2 | reweighting passes dropping inconsistent edges |
+| Low-texture gate | 0.02 | robust coefficient of variation below which a band is featureless |
+| Ambiguity ratio | 0.92 | reject when a rival peak scores this fraction of the best |
+| Coarsest search downsample | 8 | starting scale of the coarse-to-fine search (power of two) |
+| Candidate peaks kept | 3 | peaks carried between pyramid levels |
+| Worker threads | 0 (auto) | 0 = half the cores |
+
+Because the tuning lives in global QuPath preferences, QPSC reads the same values -- set them once
+and they apply to both a standalone stitch and a QPSC acquisition. The settings actually used are
+also written into the `TileRegistration.txt` header, so a solve is self-documenting.
+
 ### Why solve once and reuse
 
 Polarization angles and fluorescence channels are captured at the **same stage position** for a
