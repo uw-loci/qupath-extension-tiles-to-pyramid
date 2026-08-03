@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.6.1] - 2026-08-02
 
+### Added
+- **"Solve tile overlaps (content-based registration)" toggle in the stitching dialog.** A checkbox
+  turns content-based registration on or off for a run, mirroring the equivalent QPSC preference so
+  the feature is reachable when stitching a folder directly through the extension. Off by default
+  (nominal stage placement, the faster path); the choice is remembered. When on, the run writes a
+  `TileRegistration.txt` solution beside the tiles.
+
 ### Fixed
 - **Content-based registration damaged the tiles it could not measure, and searched too far for a
   match.** Two robustness fixes after on-scope testing against real H&E mosaics, where most seams

@@ -3,6 +3,7 @@
 // =======================================================================================
 package qupath.ext.basicstitching.utilities;
 
+import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.StringProperty;
 import qupath.lib.gui.prefs.PathPrefs;
 
@@ -28,6 +29,11 @@ public class QPPreferences {
 
     private static final StringProperty stitchingMethodSaved =
             PathPrefs.createPersistentPreference("stitchingMethod", "Coordinates in TileConfiguration.txt file");
+
+    // Content-based overlap resolution (tile registration). Off by default: nominal stage placement
+    // is the historical behaviour and the faster path.
+    private static final BooleanProperty resolveOverlapsSaved =
+            PathPrefs.createPersistentPreference("resolveOverlaps", false);
 
     // Folder Location
     public static String getFolderLocationSaved() {
@@ -81,5 +87,14 @@ public class QPPreferences {
 
     public static void setStitchingMethodSaved(final String stitchingMethod) {
         stitchingMethodSaved.setValue(stitchingMethod);
+    }
+
+    // Content-based overlap resolution (tile registration)
+    public static boolean getResolveOverlapsSaved() {
+        return resolveOverlapsSaved.getValue();
+    }
+
+    public static void setResolveOverlapsSaved(final boolean resolveOverlaps) {
+        resolveOverlapsSaved.setValue(resolveOverlaps);
     }
 }

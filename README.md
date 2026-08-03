@@ -275,6 +275,7 @@ Common to both:
 | **Output Format** | OME-TIFF (single file) or OME-ZARR (directory) | OME-TIFF |
 | **Matching String** | Filter subdirectories by name pattern. Use "." to process all subdirectories separately | "" (all) |
 | **Z-Spacing (um)** | Z-axis spacing for 3D datasets | 1.0 |
+| **Solve tile overlaps (content-based registration)** | Checkbox to enable overlap measurement and correction. When enabled, measures the real overlap between neighbouring tiles and corrects their positions before stitching, closing seams caused by stage backlash and drift. Writes a `TileRegistration.txt` solution file beside the tiles. Choice is remembered between sessions. See [Tile registration](#tile-registration) for details. | Off (faster, nominal positions) |
 
 ### Output Format Options
 

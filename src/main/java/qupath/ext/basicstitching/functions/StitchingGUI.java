@@ -8,6 +8,8 @@ import static qupath.ext.basicstitching.utilities.UtilityFunctions.getCompressio
 import java.awt.Desktop;
 import java.io.File;
 import java.net.URI;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +25,9 @@ import javafx.stage.Modality;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.basicstitching.config.StitchingConfig;
+import qupath.ext.basicstitching.registration.RegistrationMode;
+import qupath.ext.basicstitching.registration.RegistrationSettings;
+import qupath.ext.basicstitching.registration.TileRegistrationSolution;
 import qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy;
 import qupath.ext.basicstitching.utilities.QPPreferences;
 import qupath.ext.basicstitching.workflow.StitchingWorkflow;
@@ -52,6 +57,7 @@ public class StitchingGUI {
     static TextField matchStringField = new TextField(QPPreferences.getSearchStringSaved());
     static ComboBox<String> stitchingGridBox = new ComboBox<>();
     static Button folderButton = new Button("Select Folder");
+    static CheckBox resolveOverlapsCheckbox = new CheckBox("Solve tile overlaps (content-based registration)");
     static CheckBox useFudgeFactorCheckbox = new CheckBox("Apply fudge factor to adjust for gaps between tiles");
     static TextField xFudgeField = new TextField("1.0");
     static TextField yFudgeField = new TextField("1.0");
@@ -137,6 +143,18 @@ public class StitchingGUI {
             // PixelSizeUm rather than be silently discarded by the strategy.
             config.setManualPixelSizeOverride(pixelSizeOverrideCheckbox.isSelected());
 
+            // Content-based overlap resolution. When enabled, solve the tile registration on this
+            // run and write a TileRegistration.txt beside the tiles; when disabled, leave every tile
+            // at its nominal stage position exactly as before. The choice is remembered.
+            boolean resolveOverlaps = resolveOverlapsCheckbox.isSelected();
+            QPPreferences.setResolveOverlapsSaved(resolveOverlaps);
+            if (resolveOverlaps) {
+                Path solutionOut = Paths.get(folderPath).resolve(TileRegistrationSolution.DEFAULT_FILENAME);
+                config.setRegistrationMode(
+                        new RegistrationMode.Solve(solutionOut, RegistrationSettings.defaults(), null));
+                logger.info("Content-based overlap resolution enabled; solution will be written to {}", solutionOut);
+            }
+
             // Use the new workflow
             String finalImageName = StitchingWorkflow.run(config);
 
@@ -194,6 +212,7 @@ public class StitchingGUI {
         addOutputFormatComponents(pane);
         addPixelSizeComponents(pane);
         addDownsampleComponents(pane);
+        addRegistrationComponent(pane);
         addGitHubLinkComponent(pane);
 
         // Initial autofill from the restored folder preference. The textProperty
@@ -217,6 +236,30 @@ public class StitchingGUI {
             pane.add(control, 1, rowIndex);
         } else {
             logger.error("Row index not found for component: {}", label);
+        }
+    }
+
+    /**
+     * Adds the content-based overlap-resolution (tile registration) toggle to the GridPane.
+     *
+     * <p>When ticked, the stitch measures the true overlap between neighbouring tiles and corrects
+     * their positions before compositing, closing seams left by stage backlash and drift, and writes
+     * a {@code TileRegistration.txt} solution beside the tiles. When unticked, tiles are placed at
+     * their nominal stage positions -- the historical behaviour and the faster path.
+     */
+    private static void addRegistrationComponent(GridPane pane) {
+        resolveOverlapsCheckbox.setSelected(QPPreferences.getResolveOverlapsSaved());
+        resolveOverlapsCheckbox.setTooltip(
+                new Tooltip("Measure the real overlap between neighbouring tiles and correct their positions before\n"
+                        + "stitching, closing seams caused by stage backlash and drift.\n"
+                        + "Off: tiles are placed at their nominal stage positions (faster).\n"
+                        + "Writes a TileRegistration.txt solution file beside the tiles."));
+
+        Integer row = guiElementPositions.get(resolveOverlapsCheckbox);
+        if (row != null) {
+            pane.add(resolveOverlapsCheckbox, 0, row, 2, 1);
+        } else {
+            logger.error("Row index not found for resolveOverlapsCheckbox");
         }
     }
 
@@ -252,6 +295,7 @@ public class StitchingGUI {
         guiElementPositions.put(pixelSizeOverrideCheckbox, currentPosition++);
         guiElementPositions.put(downsampleLabel, currentPosition++);
         guiElementPositions.put(matchStringLabel, currentPosition++);
+        guiElementPositions.put(resolveOverlapsCheckbox, currentPosition++);
         guiElementPositions.put(githubLink, currentPosition++);
         guiElementPositions.put(useFudgeFactorCheckbox, currentPosition++);
         guiElementPositions.put(xFudgeLabel, currentPosition++);
