@@ -5,6 +5,29 @@ All notable changes to the Tiles to Pyramid QuPath Extension will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - 2026-08-04
+
+### Fixed
+- **A weak-but-correct match was worth 1/56th of a strong one, so its seam was positioned by its
+  neighbours instead of by its own overlap.** Edge weight was `(ncc - minNcc)^2`, which collapses to
+  zero exactly at the acceptance threshold: at the default `minNcc = 0.30`, an edge at `ncc = 0.34`
+  scored 0.0016 against 0.09 for a typical 0.60 edge and 0.28 for a strong 0.83 one. Measured on a
+  real acquisition, one such edge correctly measured a `(-2, -10)` px correction while the solve
+  applied `(+25, +16)` -- 37 px away, in the opposite direction -- leaving obvious duplication at a
+  seam whose own measurement had been right all along. (Confirmed against the whole-slide image:
+  the tile needed to move up and left, exactly as that edge had measured.) Meanwhile the median
+  edge residual was 1.53 px, so the rest of the mosaic was fine; only the low-confidence seams were
+  being overruled.
+  - Weight is now `ncc^2` -- the squared correlation, i.e. the fraction of variance the match
+    explains -- with no threshold subtraction. The weak edge above goes from about a fiftieth of a
+    typical edge's influence to about a sixth, enough to hold its own seam.
+  - This is safe because the weight is no longer the defence against bad matches: 0.6.3's robust
+    reweighting already suppresses any edge that disagrees with the global consensus, whatever its
+    correlation. Penalising low confidence here as well was double counting, and it fell hardest on
+    exactly the low-contrast seams that most need a measurement.
+  - Same failure class as the 0.6.3 hard-drop: that removed a good edge's constraint entirely, this
+    removed 98% of it.
+
 ## [0.6.3] - 2026-08-04
 
 ### Fixed
