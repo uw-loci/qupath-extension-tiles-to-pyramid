@@ -154,6 +154,7 @@ public final class TileRegistrationEngine {
                     summarise(measured, outcome, geometry, deltas));
 
             logger.info("Tile registration: {}", result.summary());
+            logSearchUsage(measured, tileW, tileH, perEdgeX, perEdgeY);
             logEdgeDiagnostics(nominal, outcome.edges());
             if (filledIslands > 0) {
                 logger.info(
@@ -431,6 +432,57 @@ public final class TileRegistrationEngine {
                 deltas.isEmpty() ? 0 : sumDelta / deltas.size(),
                 maxDelta,
                 outcome.tilesClamped());
+    }
+
+    /**
+     * Report the largest per-edge shift the run actually needed, in pixels and as a percent of the
+     * tile, against what the search allowed.
+     *
+     * <p>Without this the "max shift per step" setting is guesswork: one stage may never exceed 1%
+     * while another needs 5%, and the same percentage means a different physical distance on every
+     * objective -- 2% of a 40x tile is not 2% of a 10x tile. Reporting what a run consumed lets the
+     * next run's limit be set from evidence. A max that approaches the allowance is the signal that
+     * the window is clipping real corrections, so that case says so outright.
+     */
+    private static void logSearchUsage(
+            List<EdgeMeasurement> measured, int tileW, int tileH, int searchXPx, int searchYPx) {
+        double maxX = 0;
+        double maxY = 0;
+        int counted = 0;
+        for (EdgeMeasurement e : measured) {
+            if (!e.accepted()) {
+                continue;
+            }
+            maxX = Math.max(maxX, Math.abs(e.dxPx() - e.nominalDxPx()));
+            maxY = Math.max(maxY, Math.abs(e.dyPx() - e.nominalDyPx()));
+            counted++;
+        }
+        if (counted == 0) {
+            return;
+        }
+        logger.info(
+                "Per-edge shifts used: max X {} px ({}% of tile), max Y {} px ({}%); "
+                        + "search allowed {} px ({}%) x {} px ({}%)",
+                Math.round(maxX),
+                pct(maxX, tileW),
+                Math.round(maxY),
+                pct(maxY, tileH),
+                searchXPx,
+                pct(searchXPx, tileW),
+                searchYPx,
+                pct(searchYPx, tileH));
+        // Only a shift close to the allowance is evidence the window mattered; well under it means
+        // the limit is comfortable and could even be tightened.
+        if (maxX > 0.8 * searchXPx || maxY > 0.8 * searchYPx) {
+            logger.warn(
+                    "Per-edge shifts reached {}% of the search allowance -- real corrections may be "
+                            + "clipped. Raise 'Max shift per step' in the Tiles-to-pyramid preferences and re-run.",
+                    Math.round(100 * Math.max(maxX / Math.max(1, searchXPx), maxY / Math.max(1, searchYPx))));
+        }
+    }
+
+    private static String pct(double value, int tileSizePx) {
+        return tileSizePx <= 0 ? "?" : String.format(Locale.ROOT, "%.2f", 100.0 * value / tileSizePx);
     }
 
     /**

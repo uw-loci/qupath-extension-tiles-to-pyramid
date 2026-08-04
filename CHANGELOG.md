@@ -5,6 +5,14 @@ All notable changes to the Tiles to Pyramid QuPath Extension will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5] - 2026-08-04
+
+### Added
+- **Per-edge shift usage diagnostics in log output.** Every registration run now logs the maximum per-edge shift actually needed and compares it against what the "Max shift per step" preference allowed. Helps users calibrate the setting from evidence rather than guessing.
+  - Reports in pixels and as a percentage of tile size, accounting for the fact that the same percentage means different physical distances on different objectives.
+  - Warns when the actual shift approaches (≥80% of) the search allowance, signaling that real corrections may be clipped and the preference should be raised.
+  - Makes the "Max shift per step" tuning workflow actionable: run once to measure, read the log, adjust the preference, and re-run.
+
 ## [0.6.4] - 2026-08-04
 
 ### Fixed

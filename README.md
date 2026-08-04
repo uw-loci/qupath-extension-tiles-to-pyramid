@@ -144,6 +144,27 @@ The solution file is also durable -- a re-stitch can reuse a solve rather than r
 can be read when a mosaic looks wrong. It records the pixel size, downsample, flip flags and tile
 size it was solved for, and refuses to be applied to a run that does not match.
 
+### Log output and tuning feedback
+
+During a registration run, the extension logs diagnostic information to help you calibrate the "Max shift per step" preference:
+
+```
+Per-edge shifts used: max X 12 px (1.17% of tile), max Y 8 px (0.78%); search allowed 20 px (1.95%) x 20 px (1.95%)
+```
+
+This tells you:
+- The **largest correction** any edge actually needed (12 px in X, 8 px in Y)
+- What **percentage of the tile** that represents (1.17% and 0.78%)
+- The **search window** your "Max shift per step" preference allowed (20 px, 1.95%)
+
+If the maximum shift approaches or exceeds 80% of the allowance, you'll see a warning:
+
+```
+Per-edge shifts reached 90% of the search allowance -- real corrections may be clipped. Raise 'Max shift per step' in the Tiles-to-pyramid preferences and re-run.
+```
+
+**How to use this feedback:** A shift well under the allowance (e.g., 12 px used out of 20 px allowed, or 60% of the window) means your setting is comfortable and could even be tightened. A shift approaching or exceeding 80% of the allowance means the search window may be clipping real corrections, and you should raise "Max shift per step" and re-run. Since the same percentage means different physical distances on different objectives (2% of a 40x tile ≠ 2% of a 10x tile), this per-run feedback lets you tune from evidence rather than guessing.
+
 ### Requirements and limits
 
 - **Tiles must overlap.** At 0% overlap adjacent tiles share no content, so there is nothing to
