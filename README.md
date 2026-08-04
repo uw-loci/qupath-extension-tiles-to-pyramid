@@ -172,9 +172,13 @@ Per-edge shifts reached 90% of the search allowance -- real corrections may be c
   reasonable starting point. (A 0%-overlap grid is also the most common cause of visible seams in
   the first place.)
 - **Per-neighbour shifts are bounded to a plausible stage step**, so a low-texture band cannot lock
-  onto a far-away wrong peak. The *cumulative* correction across a large grid can still be tens of
-  pixels -- that is the running sum of many small per-step errors, and is legitimate -- but it is
-  clamped to the overlap band, beyond which tiles would no longer overlap at all.
+  onto a far-away wrong peak. Each per-edge correction is checked before solving to ensure it does
+  not exceed the overlap band (indicating a false match rather than a real measurement). The
+  *cumulative* correction across a large grid can be tens or hundreds of pixels -- that is the
+  running sum of many small per-step errors, and is legitimate -- and is preserved intact. A
+  systematic scale error of a fraction of a percent reaches hundreds of pixels across a long
+  acquisition, which is why the per-edge bound (limiting individual overlap measurements) is
+  distinct from the per-tile correction (which accumulates freely).
 - **Unmeasurable tiles inherit their neighbours, not nominal.** A near-blank tile whose overlap has
   no texture to correlate is filled from the smooth correction field its registered neighbours
   define, rather than being pinned to its raw stage position. Pinning such a tile to nominal inside

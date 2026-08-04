@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Warns when the actual shift approaches (≥80% of) the search allowance, signaling that real corrections may be clipped and the preference should be raised.
   - Makes the "Max shift per step" tuning workflow actionable: run once to measure, read the log, adjust the preference, and re-run.
 
+### Fixed
+- **Long acquisitions had their cumulative corrections silently truncated.** The solver was clamping per-tile corrections to the overlap-band width, which is a bound on a *per-edge* measurement (one stage step), not a *cumulative* correction (many steps summed along a long line). A systematic scale error of a fraction of a percent reaches hundreds of pixels across a few hundred tiles, and clamping this truncated exactly the long acquisitions that needed it most. Now only per-edge measurements are bounded (before solving, to reject false matches), while cumulative per-tile corrections are preserved intact. The global solver uses per-component gauge pinning instead of per-tile pinning, so each connected piece stays where the stage said it was while internal geometry comes purely from measurements.
+  - Per-edge corrections are validated before solving; edges whose correction exceeds the overlap band are rejected as out-of-band.
+  - Cumulative per-tile corrections are no longer clamped and scale linearly with mosaic size, as they should.
+  - Robust reweighting (down-weighting outlier edges rather than cutting them) ensures bad measurements do not dominate.
+
 ## [0.6.4] - 2026-08-04
 
 ### Fixed

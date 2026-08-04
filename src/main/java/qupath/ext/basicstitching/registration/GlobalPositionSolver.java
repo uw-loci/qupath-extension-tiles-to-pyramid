@@ -122,6 +122,29 @@ public final class GlobalPositionSolver {
         double[] qx = new double[n];
         double[] qy = new double[n];
 
+        // Per-EDGE sanity bound, applied before the solve. A correction larger than the overlap band
+        // would mean the two tiles do not overlap at all, so it cannot be a real measurement of their
+        // shared content -- unlike a CUMULATIVE per-tile correction, which legitimately grows past
+        // any single overlap as per-step errors sum along the mosaic. This is the bound the old
+        // per-tile clamp should always have been: it constrains the quantity that is physically
+        // limited and leaves the one that is not alone. The engine's search window normally makes
+        // such an edge unrepresentable; this is defence in depth for callers that supply
+        // measurements directly.
+        double edgeLimitX = Math.abs(maxDxPx);
+        double edgeLimitY = Math.abs(maxDyPx);
+        if (edgeLimitX > 0 && edgeLimitY > 0) {
+            for (int e = 0; e < working.size(); e++) {
+                EdgeMeasurement m = working.get(e);
+                if (!m.accepted()) {
+                    continue;
+                }
+                if (Math.abs(m.dxPx() - m.nominalDxPx()) > edgeLimitX
+                        || Math.abs(m.dyPx() - m.nominalDyPx()) > edgeLimitY) {
+                    working.set(e, m.rejectedAs(RejectReason.OUT_OF_BAND));
+                }
+            }
+        }
+
         // Robust reweighting keeps EVERY accepted edge in the solve and only reduces the influence of
         // the inconsistent ones -- it never cuts them. Hard-cutting an edge un-ties that seam: the two
         // tiles then float apart through other paths and the seam gaps open to the whole accumulated
@@ -145,28 +168,38 @@ public final class GlobalPositionSolver {
                     Arrays.fill(qy, 0);
                     break;
                 }
-                qx = solveAxis(n, graph, graph.deltaX, lambda);
-                qy = solveAxis(n, graph, graph.deltaY, lambda);
+                // Components of the accepted-edge graph. Each is pinned by its own mean rather than
+                // tile-by-tile, so relative geometry inside a component comes purely from the
+                // measurements while the piece as a whole stays where the stage said it was.
+                int[] component = new int[n];
+                int componentCount = components(n, graph, component);
+                qx = solveAxis(n, graph, graph.deltaX, lambda, component, componentCount);
+                qy = solveAxis(n, graph, graph.deltaY, lambda, component, componentCount);
                 if (pass == settings.maxOutlierIters() || !reweightOutliers(graph, qx, qy, robust)) {
                     break;
                 }
             }
         }
 
-        double limitX = Math.abs(maxDxPx);
-        double limitY = Math.abs(maxDyPx);
+        // The cumulative per-tile correction is NOT clamped. It is the running sum of many small
+        // per-step errors, so it legitimately grows with the mosaic: a systematic scale error of a
+        // fraction of a percent reaches hundreds of pixels across a few hundred tiles in a line.
+        // Clamping it to one overlap width -- which is a bound on a PER-EDGE correction, not a
+        // cumulative one -- silently truncated exactly the long acquisitions that need it most.
+        // Bad measurements are the robust reweighting's job, not this clamp's.
+        double reportLimit = Math.max(Math.abs(maxDxPx), Math.abs(maxDyPx));
         List<SolvedPosition> positions = new ArrayList<>(n);
-        int clamped = 0;
+        int beyondOverlap = 0;
         for (int i = 0; i < n; i++) {
             TileNode tile = nominal.get(i);
-            double dx = clamp(qx[i], limitX);
-            double dy = clamp(qy[i], limitY);
-            if (dx != qx[i] || dy != qy[i]) {
-                clamped++;
+            double dx = qx[i];
+            double dy = qy[i];
+            if (reportLimit > 0 && Math.hypot(dx, dy) > reportLimit) {
+                beyondOverlap++;
             }
             positions.add(new SolvedPosition(tile.xPx() + dx, tile.yPx() + dy, dx, dy));
         }
-        return new SolveOutcome(positions, working, clamped);
+        return new SolveOutcome(positions, working, beyondOverlap);
     }
 
     /**
@@ -206,7 +239,8 @@ public final class GlobalPositionSolver {
      * an edge asks {@code q_j - q_i} to equal {@code delta_ij}, so it pushes {@code i} the opposite
      * way it pushes {@code j}.
      */
-    private static double[] solveAxis(int n, Graph graph, double[] delta, double lambda) {
+    private static double[] solveAxis(
+            int n, Graph graph, double[] delta, double lambda, int[] component, int componentCount) {
         int[] from = graph.from;
         int[] to = graph.to;
         double[] weight = graph.weight;
@@ -219,9 +253,22 @@ public final class GlobalPositionSolver {
             b[to[e]] += wd;
         }
 
+        double[] componentSum = new double[componentCount];
         ConjugateGradient.Operator operator = (x, out) -> {
+            // Gauge term. The edge Laplacian cannot see where a connected piece sits as a whole (only
+            // differences), so something must pin that freedom. Pinning it per TILE -- the old
+            // lambda*I -- also pulls every real displacement back toward nominal, shrinking the whole
+            // correction field: measured at 8.5% on a real grid, which is invisible on a 6 px
+            // correction and tens of pixels on the cumulative correction of a long line. Pinning the
+            // component MEAN instead constrains only the one degree of freedom that is genuinely
+            // undetermined, and leaves every other mode to the measurements. It stays symmetric
+            // positive definite, so the solve is still unique and CG still converges.
+            Arrays.fill(componentSum, 0);
             for (int k = 0; k < n; k++) {
-                out[k] = lambda * x[k];
+                componentSum[component[k]] += x[k];
+            }
+            for (int k = 0; k < n; k++) {
+                out[k] = lambda * componentSum[component[k]];
             }
             for (int e = 0; e < m; e++) {
                 int i = from[e];
@@ -232,6 +279,56 @@ public final class GlobalPositionSolver {
             }
         };
         return ConjugateGradient.solve(n, operator, b, CG_TOL, CG_MAX_ITER);
+    }
+
+    /**
+     * Label each tile with its connected component over the accepted edges.
+     *
+     * <p>Components matter because each is only determined up to its own translation: a mosaic that
+     * has split into two pieces has two independent gauge freedoms, and pinning only the global mean
+     * would leave the difference between them unconstrained. A tile with no accepted edge is its own
+     * component and is therefore pinned at nominal exactly, which is the right answer for it.
+     *
+     * @param n tile count
+     * @param graph the accepted-edge graph
+     * @param component output: component id per tile
+     * @return the number of components
+     */
+    private static int components(int n, Graph graph, int[] component) {
+        int[] parent = new int[n];
+        for (int i = 0; i < n; i++) {
+            parent[i] = i;
+        }
+        for (int e = 0; e < graph.count; e++) {
+            union(parent, graph.from[e], graph.to[e]);
+        }
+        int[] label = new int[n];
+        Arrays.fill(label, -1);
+        int count = 0;
+        for (int i = 0; i < n; i++) {
+            int root = find(parent, i);
+            if (label[root] < 0) {
+                label[root] = count++;
+            }
+            component[i] = label[root];
+        }
+        return count;
+    }
+
+    private static int find(int[] parent, int i) {
+        while (parent[i] != i) {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        return i;
+    }
+
+    private static void union(int[] parent, int a, int b) {
+        int ra = find(parent, a);
+        int rb = find(parent, b);
+        if (ra != rb) {
+            parent[rb] = ra;
+        }
     }
 
     /**

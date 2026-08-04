@@ -264,34 +264,61 @@ public class GlobalPositionSolverTest {
                         0.99,
                         RejectReason.NONE));
 
-        RegistrationSettings settings = new RegistrationSettings(
-                0.30,
-                0.02,
-                0.92,
-                0.90,
-                0.01,
-                0 /* no outlier pass */,
-                8,
-                3,
-                1,
-                Double.NaN,
-                Double.NaN,
-                RegistrationSettings.DEFAULT_MAX_STEP_ERROR_FRAC,
-                RegistrationSettings.DEFAULT_MIN_STEP_ERROR_PX,
-                true);
-        double maxDx = 20;
-        double maxDy = 12;
+        double reportLimit = 20;
 
-        GlobalPositionSolver.SolveOutcome outcome = GlobalPositionSolver.solve(nominal, edges, settings, maxDx, maxDy);
+        // Robust reweighting, not a clamp, is what contains a bad edge now. The per-tile clamp was
+        // removed because it bounds a CUMULATIVE correction with a PER-EDGE limit: across a few
+        // hundred tiles in a line a real sub-percent scale error sums to hundreds of pixels, and
+        // clamping truncated exactly those long acquisitions. So the guarantee under test is no
+        // longer "nothing exceeds the overlap" but "one wrong edge cannot drag its tiles".
+        GlobalPositionSolver.SolveOutcome outcome =
+                GlobalPositionSolver.solve(nominal, edges, RegistrationSettings.defaults(), reportLimit, reportLimit);
 
+        for (int i : new int[] {bad.i(), bad.j()}) {
+            GlobalPositionSolver.SolvedPosition p = outcome.positions().get(i);
+            assertTrue(
+                    Math.abs(p.dxPx()) <= 5.0,
+                    "tile " + i + " was dragged " + p.dxPx() + "px by the 500px edge despite reweighting");
+        }
         for (int i = 0; i < nominal.size(); i++) {
             GlobalPositionSolver.SolvedPosition p = outcome.positions().get(i);
-            assertTrue(Math.abs(p.dxPx()) <= maxDx, "tile " + i + " dx " + p.dxPx() + " exceeded " + maxDx);
-            assertTrue(Math.abs(p.dyPx()) <= maxDy, "tile " + i + " dy " + p.dyPx() + " exceeded " + maxDy);
             assertEquals(nominal.get(i).xPx() + p.dxPx(), p.xPx(), 1e-9);
             assertEquals(nominal.get(i).yPx() + p.dyPx(), p.yPx(), 1e-9);
         }
-        assertTrue(outcome.tilesClamped() > 0, "the 500px edge should have driven something into the clamp");
+    }
+
+    /**
+     * A long chain with a consistent per-step drift: the cumulative correction must survive intact
+     * rather than being truncated at one overlap width. This is the case a several-hundred-tile line
+     * hits, where a fraction-of-a-percent scale error sums far past any single overlap.
+     */
+    @Test
+    public void cumulativeCorrectionIsNotTruncated() {
+        int cols = 40;
+        int rows = 1;
+        double driftPerStep = 6.0;
+        List<TileNode> nominal = grid(cols, rows);
+        List<EdgeMeasurement> edges = new ArrayList<>();
+        for (int[] pair : neighbours(cols, rows)) {
+            TileNode a = nominal.get(pair[0]);
+            TileNode b = nominal.get(pair[1]);
+            double nomDx = b.xPx() - a.xPx();
+            double nomDy = b.yPx() - a.yPx();
+            edges.add(new EdgeMeasurement(
+                    pair[0], pair[1], nomDx + driftPerStep, nomDy, nomDx, nomDy, GOOD_NCC, RejectReason.NONE));
+        }
+
+        GlobalPositionSolver.SolveOutcome outcome = GlobalPositionSolver.solve(
+                nominal, edges, RegistrationSettings.defaults(), OVERLAP * TILE, OVERLAP * TILE);
+
+        // End to end the chain must span the full accumulated drift, far beyond one overlap band.
+        double span = outcome.positions().get(cols - 1).dxPx()
+                - outcome.positions().get(0).dxPx();
+        double expected = driftPerStep * (cols - 1);
+        assertEquals(expected, span, 1.0, "cumulative correction was truncated instead of preserved");
+        assertTrue(
+                expected > OVERLAP * TILE,
+                "fixture must exceed one overlap to be meaningful: " + expected + " vs " + (OVERLAP * TILE));
     }
 
     // ---------------------------------------------------------------- outlier rejection
@@ -370,7 +397,10 @@ public class GlobalPositionSolverTest {
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
 
         assertEquals(10000, outcome.positions().size());
-        assertTrue(elapsedMs < 100, "solve of 10000 tiles / 19800 edges took " + elapsedMs + "ms, budget 100ms");
+        // Budget raised from 100ms when per-component gauge pinning was added: the operator now sums
+        // per component each CG iteration. Still an order-of-magnitude tripwire on materializing the
+        // matrix (a dense 10000x10000 solve is seconds, not milliseconds), which is what this guards.
+        assertTrue(elapsedMs < 250, "solve of 10000 tiles / 19800 edges took " + elapsedMs + "ms, budget 250ms");
     }
 
     private static void runGridSolve(int cols, int rows) {
