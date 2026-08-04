@@ -5,6 +5,26 @@ All notable changes to the Tiles to Pyramid QuPath Extension will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] - 2026-08-04
+
+### Fixed
+- **The global solve was manufacturing its own seams by cutting edges.** On-scope diagnosis (a
+  360-tile PPM acquisition, instrumented per-edge) found the visible tears were *not* wrong matches,
+  low texture, scale, or a too-small search window -- every per-edge shift measured a clean ~6 px.
+  They were the solver's own doing: its outlier pass *hard-dropped* 66 edges whose residual exceeded
+  a robust threshold, and cutting an edge un-ties that seam, so the two tiles then drift apart
+  through other paths and the seam gaps open to the whole accumulated drift. Measured directly:
+  kept (`NONE`) seams sat at a 5 px median gap, while cut (`OUTLIER_IRLS`) seams -- same 6 px
+  measured shift -- had torn open to a **19/50/55 px** median/p90/max, concentrated in a straight
+  line at one grid row (a fly-back that settled badly, whose entire row of edges the pass then
+  amputated). This is why larger regions were worse (more accumulation to gap open) and small ones
+  were clean.
+  - The outlier pass now **down-weights** inconsistent edges (a redescending `(delta/r)^2` robust
+    weight) instead of removing them, so every seam stays tied to its measurement and the
+    unavoidable loop-closure error spreads thinly across the mosaic instead of concentrating into a
+    few visible tears. A genuinely-wrong edge still collapses to near-zero influence, but is never
+    cut. Removed the now-unused `OUTLIER_IRLS` reject reason.
+
 ## [0.6.2] - 2026-08-03
 
 ### Added

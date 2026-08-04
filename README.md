@@ -117,7 +117,7 @@ persistent tuning knobs in QuPath's Preferences.
 | Min shift search (px) | 24 | floor on the above so small tiles keep a usable window |
 | Fill unregisterable tiles from neighbours | on | inherit neighbours' correction instead of nominal |
 | Nominal pull (lambda) | 0.01 | how much the solve trusts stage vs image content |
-| Outlier rejection passes | 2 | reweighting passes dropping inconsistent edges |
+| Outlier rejection passes | 2 | reweighting passes down-weighting inconsistent edges |
 | Low-texture gate | 0.02 | robust coefficient of variation below which a band is featureless |
 | Ambiguity ratio | 0.92 | reject when a rival peak scores this fraction of the best |
 | Coarsest search downsample | 8 | starting scale of the coarse-to-fine search (power of two) |

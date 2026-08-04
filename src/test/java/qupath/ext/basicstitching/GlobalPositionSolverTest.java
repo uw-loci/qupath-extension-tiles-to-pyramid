@@ -296,9 +296,13 @@ public class GlobalPositionSolverTest {
 
     // ---------------------------------------------------------------- outlier rejection
 
-    /** One badly wrong edge among noisy-but-good ones: it should be identified and dropped. */
+    /**
+     * One badly wrong edge among noisy-but-good ones: the robust pass must down-weight it enough that
+     * it cannot drag its two tiles. It is <b>not</b> cut -- cutting an edge un-ties its seam and lets
+     * it drift open -- but its influence must collapse.
+     */
     @Test
-    public void outlierEdgeRemoved_byIrls() {
+    public void outlierEdgeDownWeighted_doesNotDragItsTiles() {
         int cols = 5;
         int rows = 5;
         double sigma = 1.0;
@@ -329,11 +333,9 @@ public class GlobalPositionSolverTest {
         GlobalPositionSolver.SolveOutcome outcome =
                 GlobalPositionSolver.solve(nominal, edges, RegistrationSettings.defaults(), NO_CLAMP, NO_CLAMP);
 
-        assertEquals(
-                RejectReason.OUTLIER_IRLS,
-                outcome.edges().get(badIndex).reject(),
-                "the 50px edge should have been flagged");
-
+        // The edge is kept (its seam stays tied), so it is not marked rejected -- what matters is that
+        // its down-weighted influence cannot pull the two tiles off truth by the 50px it demands.
+        assertTrue(outcome.edges().get(badIndex).accepted(), "the edge is kept, not cut");
         for (int i : new int[] {good.i(), good.j()}) {
             GlobalPositionSolver.SolvedPosition p = outcome.positions().get(i);
             assertTrue(Math.abs(p.dxPx()) <= 2 * sigma, "tile " + i + " was dragged " + p.dxPx() + "px by the outlier");

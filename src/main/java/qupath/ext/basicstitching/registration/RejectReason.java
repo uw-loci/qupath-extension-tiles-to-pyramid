@@ -43,11 +43,5 @@ public enum RejectReason {
     READ_FAILED,
 
     /** The nominal overlap band is too small to correlate (or the tiles do not overlap at all). */
-    NO_OVERLAP,
-
-    /**
-     * The edge survived the pairwise gates but disagreed with the global solution by more than the
-     * robust residual threshold, and was removed by the solver's iterative outlier pass.
-     */
-    OUTLIER_IRLS
+    NO_OVERLAP
 }

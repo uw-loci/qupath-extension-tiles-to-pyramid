@@ -86,8 +86,8 @@ public final class GlobalPositionSolver {
      * The product of a global solve.
      *
      * @param positions solved positions, in the same order as the nominal tile list
-     * @param edges every edge handed in, with those removed by the outlier pass now marked {@link
-     *     RejectReason#OUTLIER_IRLS}; the audit trail
+     * @param edges every edge handed in, unchanged; the outlier pass now down-weights inconsistent
+     *     edges rather than rejecting them, so the reject reasons here are only the pairwise gates'
      * @param tilesClamped how many tiles had their correction cut back to the overlap limit
      */
     public record SolveOutcome(List<SolvedPosition> positions, List<EdgeMeasurement> edges, int tilesClamped) {
@@ -122,13 +122,24 @@ public final class GlobalPositionSolver {
         double[] qx = new double[n];
         double[] qy = new double[n];
 
-        // Fixed for the whole solve, including across outlier passes: the nominal pull is a property
-        // of the dataset, not of whichever edges happen to survive an iteration.
+        // Robust reweighting keeps EVERY accepted edge in the solve and only reduces the influence of
+        // the inconsistent ones -- it never cuts them. Hard-cutting an edge un-ties that seam: the two
+        // tiles then float apart through other paths and the seam gaps open to the whole accumulated
+        // drift. Measured on a real acquisition, a row of 6 px seams that the outlier pass cut had torn
+        // open to 50+ px, in a straight line across the mosaic, while every kept seam stayed at ~5 px.
+        // Down-weighting leaves the seam tied to its measurement, so the unavoidable loop-closure error
+        // spreads thinly across the mosaic instead of concentrating into a few visible tears. Weights
+        // are indexed parallel to the working edge list.
+        double[] robust = new double[working.size()];
+        Arrays.fill(robust, 1.0);
+
+        // Fixed for the whole solve: the nominal pull is a property of the dataset, not of whichever
+        // weights an iteration happens to land on.
         double lambda = nominalPull(working, settings);
 
         if (lambda > 0 && n > 0) {
             for (int pass = 0; pass <= settings.maxOutlierIters(); pass++) {
-                Graph graph = Graph.of(nominal, working, settings);
+                Graph graph = Graph.of(nominal, working, settings, robust);
                 if (graph.count == 0) {
                     Arrays.fill(qx, 0);
                     Arrays.fill(qy, 0);
@@ -136,7 +147,7 @@ public final class GlobalPositionSolver {
                 }
                 qx = solveAxis(n, graph, graph.deltaX, lambda);
                 qy = solveAxis(n, graph, graph.deltaY, lambda);
-                if (pass == settings.maxOutlierIters() || !dropOutliers(working, graph, qx, qy)) {
+                if (pass == settings.maxOutlierIters() || !reweightOutliers(graph, qx, qy, robust)) {
                     break;
                 }
             }
@@ -224,17 +235,25 @@ public final class GlobalPositionSolver {
     }
 
     /**
-     * One iteratively-reweighted-least-squares pass: mark every edge whose residual is a robust
-     * outlier so the next solve runs without it.
+     * One iteratively-reweighted-least-squares pass: down-weight every edge whose residual is a
+     * robust outlier so the next solve trusts it less -- but never to zero.
      *
-     * <p>The threshold is {@code median(r) + 3 * 1.4826 * MAD(r)}, i.e. three robust sigmas above
-     * the typical residual, floored at {@link #MIN_OUTLIER_RESIDUAL_PX}. A median absolute deviation
-     * is used rather than a standard deviation for the obvious reason: the outliers we are hunting
-     * would themselves inflate a standard deviation enough to hide behind it.
+     * <p>The scale is {@code median(r) + 3 * 1.4826 * MAD(r)}, floored at {@link
+     * #MIN_OUTLIER_RESIDUAL_PX} -- three robust sigmas above the typical residual (MAD, not standard
+     * deviation, so the outliers cannot inflate the scale enough to hide in it). Within that scale an
+     * edge keeps full weight; beyond it a redescending factor {@code (delta / |r|)^2} tapers its
+     * influence. The square rather than a plain {@code delta/|r|} matters: a genuinely-wrong edge (a
+     * residual many times the scale) must collapse to near-nothing, while a linear taper would leave
+     * it enough weight to still drag its tiles. It never reaches exactly zero, though, which is the
+     * whole point: a cut edge stops constraining its seam, which then drifts open, whereas a
+     * down-weighted one still holds the seam while losing the tug-of-war when it genuinely disagrees
+     * with everything around it. Edges that merely settle a little above the scale keep meaningful
+     * weight, so the pass does not cascade the way a hard threshold did.
      *
-     * @return whether anything was dropped, i.e. whether a re-solve is worth doing
+     * @param robust per-edge weight multipliers, indexed by the working edge list; updated in place
+     * @return whether any weight changed materially, i.e. whether another pass is worth doing
      */
-    private static boolean dropOutliers(List<EdgeMeasurement> working, Graph graph, double[] qx, double[] qy) {
+    private static boolean reweightOutliers(Graph graph, double[] qx, double[] qy, double[] robust) {
         int m = graph.count;
         if (m < MIN_EDGES_FOR_OUTLIER_PASS) {
             return false;
@@ -251,26 +270,19 @@ public final class GlobalPositionSolver {
             deviation[e] = Math.abs(residual[e] - median);
         }
         double mad = median(deviation);
-        double threshold = Math.max(median + OUTLIER_SIGMAS * MAD_TO_SIGMA * mad, MIN_OUTLIER_RESIDUAL_PX);
+        double delta = Math.max(median + OUTLIER_SIGMAS * MAD_TO_SIGMA * mad, MIN_OUTLIER_RESIDUAL_PX);
 
-        int drops = 0;
+        boolean changed = false;
         for (int e = 0; e < m; e++) {
-            if (residual[e] > threshold) {
-                drops++;
+            double ratio = delta / residual[e];
+            double w = residual[e] <= delta ? 1.0 : ratio * ratio;
+            int src = graph.source[e];
+            if (Math.abs(robust[src] - w) > 1e-3) {
+                changed = true;
             }
+            robust[src] = w;
         }
-        if (drops == 0 || drops == m) {
-            // Dropping every edge would throw away the entire measurement and silently fall back to
-            // nominal, which is a worse answer than keeping edges we are unsure about.
-            return false;
-        }
-        for (int e = 0; e < m; e++) {
-            if (residual[e] > threshold) {
-                int src = graph.source[e];
-                working.set(src, working.get(src).rejectedAs(RejectReason.OUTLIER_IRLS));
-            }
-        }
-        return true;
+        return changed;
     }
 
     private static double clamp(double value, double limit) {
@@ -303,7 +315,7 @@ public final class GlobalPositionSolver {
         final double[] deltaX;
         /** Measured Y offset minus the offset the nominal positions imply. */
         final double[] deltaY;
-        /** Index back into the working edge list, so the outlier pass can mark the right record. */
+        /** Index back into the working edge list, so the outlier pass can reweight the right edge. */
         final int[] source;
         /** Number of accepted edges, i.e. the used prefix length of every array above. */
         final int count;
@@ -326,7 +338,8 @@ public final class GlobalPositionSolver {
          * equivalent to the position-space one it stands in for, rather than equivalent only as long
          * as the edge's cached copy stays in step.
          */
-        static Graph of(List<TileNode> nominal, List<EdgeMeasurement> edges, RegistrationSettings settings) {
+        static Graph of(
+                List<TileNode> nominal, List<EdgeMeasurement> edges, RegistrationSettings settings, double[] robust) {
             int max = edges.size();
             int[] from = new int[max];
             int[] to = new int[max];
@@ -344,7 +357,7 @@ public final class GlobalPositionSolver {
                 TileNode b = nominal.get(edge.j());
                 from[count] = edge.i();
                 to[count] = edge.j();
-                weight[count] = edge.weight(settings.minNcc());
+                weight[count] = edge.weight(settings.minNcc()) * robust[e];
                 deltaX[count] = edge.dxPx() - (b.xPx() - a.xPx());
                 deltaY[count] = edge.dyPx() - (b.yPx() - a.yPx());
                 source[count] = e;
