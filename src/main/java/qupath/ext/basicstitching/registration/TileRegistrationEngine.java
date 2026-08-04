@@ -154,6 +154,7 @@ public final class TileRegistrationEngine {
                     summarise(measured, outcome, geometry, deltas));
 
             logger.info("Tile registration: {}", result.summary());
+            logEdgeDiagnostics(nominal, outcome.edges());
             if (filledIslands > 0) {
                 logger.info(
                         "Filled {} unregisterable tile(s) from neighbouring corrections instead of nominal",
@@ -430,6 +431,44 @@ public final class TileRegistrationEngine {
                 deltas.isEmpty() ? 0 : sumDelta / deltas.size(),
                 maxDelta,
                 outcome.tilesClamped());
+    }
+
+    /**
+     * Per-edge gate inputs, at DEBUG only.
+     *
+     * <p>These are what every threshold is compared against, so they are what a default should be
+     * chosen from. They are far too verbose for a normal run -- one line per edge, hundreds of edges
+     * -- so they stay behind DEBUG on this logger; the diagnostic probe script writes the same values
+     * to a CSV when a run is being investigated in earnest.
+     */
+    private static void logEdgeDiagnostics(List<TileNode> nominal, List<EdgeMeasurement> edges) {
+        if (!logger.isDebugEnabled()) {
+            return;
+        }
+        logger.debug("Edge diagnostics: tileA tileB reject ncc textureA textureB peakRatio shift search band");
+        for (EdgeMeasurement e : edges) {
+            EdgeDiagnostics d = e.diagnostics();
+            logger.debug(
+                    "  {} {} {} ncc={} texture={}/{} peakRatio={} shift=({},{}) search=({},{}) band={}x{}{}",
+                    nominal.get(e.i()).filename(),
+                    nominal.get(e.j()).filename(),
+                    e.reject(),
+                    fmt(e.ncc()),
+                    fmt(d.textureA()),
+                    fmt(d.textureB()),
+                    fmt(d.secondPeakRatio()),
+                    fmt(d.shiftXPx()),
+                    fmt(d.shiftYPx()),
+                    d.searchXPx(),
+                    d.searchYPx(),
+                    d.bandWidthPx(),
+                    d.bandHeightPx(),
+                    d.shiftAtSearchBound() ? "  [AT SEARCH BOUND -- window may be too small]" : "");
+        }
+    }
+
+    private static String fmt(double v) {
+        return Double.isNaN(v) ? "-" : String.format(Locale.ROOT, "%.3f", v);
     }
 
     /** Counts per rejection reason, so a bad run says why rather than just "few edges". */

@@ -24,7 +24,24 @@ public record EdgeMeasurement(
         double nominalDxPx,
         double nominalDyPx,
         double ncc,
-        RejectReason reject) {
+        RejectReason reject,
+        EdgeDiagnostics diagnostics) {
+
+    /**
+     * An edge without instrumentation, for callers that never reached the correlation stage and for
+     * tests. Diagnostics default to {@link EdgeDiagnostics#EMPTY}; nothing in the solve reads them.
+     */
+    public EdgeMeasurement(
+            int i,
+            int j,
+            double dxPx,
+            double dyPx,
+            double nominalDxPx,
+            double nominalDyPx,
+            double ncc,
+            RejectReason reject) {
+        this(i, j, dxPx, dyPx, nominalDxPx, nominalDyPx, ncc, reject, EdgeDiagnostics.EMPTY);
+    }
 
     /** @return whether this edge contributes to the global solve. */
     public boolean accepted() {
@@ -75,6 +92,6 @@ public record EdgeMeasurement(
 
     /** @return a copy of this measurement marked with the given rejection reason. */
     public EdgeMeasurement rejectedAs(RejectReason reason) {
-        return new EdgeMeasurement(i, j, dxPx, dyPx, nominalDxPx, nominalDyPx, ncc, reason);
+        return new EdgeMeasurement(i, j, dxPx, dyPx, nominalDxPx, nominalDyPx, ncc, reason, diagnostics);
     }
 }

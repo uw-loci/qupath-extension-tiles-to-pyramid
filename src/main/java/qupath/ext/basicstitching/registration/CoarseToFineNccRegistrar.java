@@ -74,17 +74,23 @@ public final class CoarseToFineNccRegistrar implements PairwiseRegistrar {
         int w = Math.min(bandA.width(), bandB.width());
         int h = Math.min(bandA.height(), bandB.height());
 
+        // Band statistics are recorded for EVERY outcome, including the rejections, so the gate
+        // thresholds can be read off real distributions rather than assumed. A rejected edge's
+        // numbers are the interesting ones: they say how far from passing it actually was.
+        Diag diag = new Diag(bandA, bandB);
+
         if (w < RegistrationSettings.MIN_BAND_PX || h < RegistrationSettings.MIN_BAND_PX) {
-            return reject(edge, nominalDxPx, nominalDyPx, 0, RejectReason.NO_OVERLAP);
+            return reject(edge, nominalDxPx, nominalDyPx, 0, RejectReason.NO_OVERLAP, diag.build(w, h, 0, 0, 1));
         }
+        diag.band(w, h);
 
         // Featureless-band gates first: cheapest, and before any correlation work. A band with no
         // structure cannot produce a trustworthy peak no matter how confident the surface looks.
         if (bandA.textureScore() < settings.minCoeffOfVar() || bandB.textureScore() < settings.minCoeffOfVar()) {
-            return reject(edge, nominalDxPx, nominalDyPx, 0, RejectReason.LOW_VARIANCE);
+            return reject(edge, nominalDxPx, nominalDyPx, 0, RejectReason.LOW_VARIANCE, diag.build(w, h, 0, 0, 1));
         }
         if (bandA.nearSaturated(SATURATION_FRACTION) || bandB.nearSaturated(SATURATION_FRACTION)) {
-            return reject(edge, nominalDxPx, nominalDyPx, 0, RejectReason.LOW_VARIANCE);
+            return reject(edge, nominalDxPx, nominalDyPx, 0, RejectReason.LOW_VARIANCE, diag.build(w, h, 0, 0, 1));
         }
 
         // Search bounds: the physical correction limit, capped so at least half the band still
@@ -107,7 +113,24 @@ public final class CoarseToFineNccRegistrar implements PairwiseRegistrar {
 
         List<Peak> peaks = topPeaks(ca, cb, cw, ch, csx, csy, settings.topKPeaks());
         if (peaks.isEmpty()) {
-            return reject(edge, nominalDxPx, nominalDyPx, 0, RejectReason.LOW_NCC);
+            return reject(
+                    edge,
+                    nominalDxPx,
+                    nominalDyPx,
+                    0,
+                    RejectReason.LOW_NCC,
+                    diag.build(w, h, searchX, searchY, coarsest));
+        }
+        if (peaks.size() >= 2) {
+            diag.peaks(
+                    peaks.get(0).ncc(),
+                    peaks.get(1).ncc(),
+                    Math.hypot(
+                                    peaks.get(0).ox() - peaks.get(1).ox(),
+                                    peaks.get(0).oy() - peaks.get(1).oy())
+                            * coarsest);
+        } else {
+            diag.peaks(peaks.get(0).ncc(), Double.NaN, Double.NaN);
         }
 
         // Ambiguity: two well-separated candidates scoring comparably means repeating texture, and
@@ -118,7 +141,13 @@ public final class CoarseToFineNccRegistrar implements PairwiseRegistrar {
             Peak second = peaks.get(1);
             double separationPx = Math.hypot(best.ox() - second.ox(), best.oy() - second.oy()) * coarsest;
             if (second.ncc() > settings.ambiguityRatio() * best.ncc() && separationPx > SAME_PEAK_DISTANCE_PX) {
-                return reject(edge, nominalDxPx, nominalDyPx, best.ncc(), RejectReason.AMBIGUOUS);
+                return reject(
+                        edge,
+                        nominalDxPx,
+                        nominalDyPx,
+                        best.ncc(),
+                        RejectReason.AMBIGUOUS,
+                        diag.build(w, h, searchX, searchY, coarsest));
             }
         }
 
@@ -148,14 +177,17 @@ public final class CoarseToFineNccRegistrar implements PairwiseRegistrar {
         int ox = best.ox() * finest;
         int oy = best.oy() * finest;
 
+        diag.shift(ox, oy);
+        EdgeDiagnostics diagnostics = diag.build(w, h, searchX, searchY, coarsest);
+
         // A peak pinned to the edge of the search window means the true peak lies outside the
         // physically-possible correction, so this match is spurious. Reject -- never silently clamp,
         // which would fabricate a plausible-looking answer.
         if (Math.abs(ox) > settings.bandMarginFrac() * searchX || Math.abs(oy) > settings.bandMarginFrac() * searchY) {
-            return reject(edge, nominalDxPx, nominalDyPx, best.ncc(), RejectReason.OUT_OF_BAND);
+            return reject(edge, nominalDxPx, nominalDyPx, best.ncc(), RejectReason.OUT_OF_BAND, diagnostics);
         }
         if (best.ncc() < settings.minNcc()) {
-            return reject(edge, nominalDxPx, nominalDyPx, best.ncc(), RejectReason.LOW_NCC);
+            return reject(edge, nominalDxPx, nominalDyPx, best.ncc(), RejectReason.LOW_NCC, diagnostics);
         }
 
         return new EdgeMeasurement(
@@ -166,7 +198,64 @@ public final class CoarseToFineNccRegistrar implements PairwiseRegistrar {
                 nominalDxPx,
                 nominalDyPx,
                 best.ncc(),
-                RejectReason.NONE);
+                RejectReason.NONE,
+                diagnostics);
+    }
+
+    /**
+     * Accumulates the gate inputs as the measurement proceeds. Every field is something a threshold
+     * is compared against, so a rejected edge can be read as "how close was it", and a default can be
+     * chosen from a distribution instead of assumed.
+     */
+    private static final class Diag {
+        private final OverlapBand a;
+        private final OverlapBand b;
+        private double bestNcc = Double.NaN;
+        private double secondNcc = Double.NaN;
+        private double separationPx = Double.NaN;
+        private double shiftX = Double.NaN;
+        private double shiftY = Double.NaN;
+
+        Diag(OverlapBand a, OverlapBand b) {
+            this.a = a;
+            this.b = b;
+        }
+
+        void band(int w, int h) {
+            // Band size is passed to build(); nothing to record here beyond keeping the call explicit.
+        }
+
+        void peaks(double best, double second, double separation) {
+            this.bestNcc = best;
+            this.secondNcc = second;
+            this.separationPx = separation;
+        }
+
+        void shift(double x, double y) {
+            this.shiftX = x;
+            this.shiftY = y;
+        }
+
+        EdgeDiagnostics build(int w, int h, int searchX, int searchY, int coarsest) {
+            double ratio = Double.isNaN(secondNcc) || bestNcc == 0 ? Double.NaN : secondNcc / bestNcc;
+            return new EdgeDiagnostics(
+                    a.textureScore(),
+                    b.textureScore(),
+                    a.median(),
+                    b.median(),
+                    a.maxPossibleValue(),
+                    bestNcc,
+                    secondNcc,
+                    ratio,
+                    separationPx,
+                    shiftX,
+                    shiftY,
+                    searchX,
+                    searchY,
+                    w,
+                    h,
+                    coarsest);
+        }
     }
 
     /**
@@ -293,7 +382,13 @@ public final class CoarseToFineNccRegistrar implements PairwiseRegistrar {
     }
 
     private static EdgeMeasurement reject(
-            NeighborGraphBuilder.EdgePair edge, double nominalDx, double nominalDy, double ncc, RejectReason why) {
-        return new EdgeMeasurement(edge.i(), edge.j(), nominalDx, nominalDy, nominalDx, nominalDy, ncc, why);
+            NeighborGraphBuilder.EdgePair edge,
+            double nominalDx,
+            double nominalDy,
+            double ncc,
+            RejectReason why,
+            EdgeDiagnostics diagnostics) {
+        return new EdgeMeasurement(
+                edge.i(), edge.j(), nominalDx, nominalDy, nominalDx, nominalDy, ncc, why, diagnostics);
     }
 }
