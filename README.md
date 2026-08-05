@@ -113,11 +113,11 @@ persistent tuning knobs in QuPath's Preferences.
 | Preference | Default | Meaning |
 |---|---|---|
 | Minimum match confidence | 0.30 | NCC below which a tile-pair match is not trusted |
-| Max shift per step (% of tile) | 2.0 | largest per-neighbour correction searched for |
-| Min shift search (px) | 24 | floor on the above so small tiles keep a usable window |
+| Max shift per step, as % of tile | 2.0 | largest per-neighbour correction searched for |
+| Max shift per step, floor (px) | 24 | floor on the above so small tiles keep a usable window |
 | Fill unregisterable tiles from neighbours | on | inherit neighbours' correction instead of nominal |
-| Nominal pull (lambda) | 0.01 | how much the solve trusts stage vs image content |
-| Outlier rejection passes | 2 | reweighting passes down-weighting inconsistent edges |
+| Nominal pull (lambda) | 0.01 | gauge pin that holds each mosaic piece near nominal stage position; does not shrink real corrections |
+| Outlier rejection passes | 2 | iterative passes that down-weight edges disagreeing with global solution (never cut) |
 | Low-texture gate | 0.02 | robust coefficient of variation below which a band is featureless |
 | Ambiguity ratio | 0.92 | reject when a rival peak scores this fraction of the best |
 | Coarsest search downsample | 8 | starting scale of the coarse-to-fine search (power of two) |

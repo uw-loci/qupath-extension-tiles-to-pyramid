@@ -5,6 +5,14 @@ All notable changes to the Tiles to Pyramid QuPath Extension will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Clarified registration preference labels and descriptions.** Text only; solver behaviour is unchanged from 0.6.5.
+  - "Min shift search (px)" renamed to "Max shift per step, floor (px)". The two settings define one search window -- half-width = max(floor px, percent x tile size) -- and the old pair of names read as two independent knobs.
+  - "Nominal pull (lambda)" now describes a gauge pin that fixes where a connected piece sits as a whole, rather than a pull that shrinks real measured corrections. Lambda stopped doing the latter in 0.6.5.
+  - "Outlier rejection passes" now says edges are down-weighted, never cut. Cutting an edge un-ties its seam, which then drifts open by the whole accumulated error -- that was the 0.6.3 bug, so the text must not describe it.
+
 ## [0.6.5] - 2026-08-04
 
 ### Added
