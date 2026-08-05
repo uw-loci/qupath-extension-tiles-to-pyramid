@@ -47,6 +47,10 @@ def SUBDIR = "-7.0"
 // measurement (NCC found the wrong peak) from a bad solve (measurement right, placement wrong).
 def TILE_A = "165.tif"
 def TILE_B = "261.tif"
+// Tiles to dump in full: every edge touching them, plus their solved correction. Use this when you
+// can point at a BAD TILE rather than a bad edge -- a tile whose edges were all rejected got its
+// position diffused from neighbours rather than measured, which is invisible in the per-edge view.
+def TILES = ["44.tif", "45.tif", "160.tif", "161.tif", "260.tif", "261.tif", "165.tif", "166.tif"]
 // ---------------------------------------------------------------------------
 
 def folder = (args && args.size() > 0) ? args[0] : FOLDER
@@ -133,6 +137,92 @@ tex.each { k, v ->
 }
 println "(minCoV gate is at " + settings.minCoeffOfVar() + "; compare against the minima above --"
 println " if no outcome reaches it, the low-texture gate never fires and is not in play.)"
+
+// ---- per-tile dossier -----------------------------------------------------
+// Index every edge by the tiles it touches, so a tile can be looked up directly.
+def edgesByTile = [:].withDefault { [] }
+result.edges().each { e ->
+    edgesByTile[nodes[e.i()].filename()] << e
+    edgesByTile[nodes[e.j()].filename()] << e
+}
+// Column and row indices measured from NOMINAL positions, never inferred from tile numbers.
+// Tile numbering is acquisition order and says nothing reliable about layout.
+// Cluster rather than match exact doubles: nominal positions come from a micron-to-pixel
+// conversion, so two tiles in the same column need not carry bit-identical coordinates, and
+// exact keying would shatter the grid into one column per tile.
+def indexBy = { values, tol ->
+    def sorted = (values as Set).sort()
+    def map = [:]
+    int idx = -1
+    Double prev = null
+    sorted.each { v ->
+        if (prev == null || (v - prev) > tol) idx++
+        map[v] = idx
+        prev = v
+    }
+    return map
+}
+double tolX = nodes[0].widthPx() / 2.0
+double tolY = nodes[0].heightPx() / 2.0
+def colOf = indexBy(nodes.collect { it.xPx() }, tolX)
+def rowOf = indexBy(nodes.collect { it.yPx() }, tolY)
+def nodeByName = [:]
+nodes.each { nodeByName[it.filename()] = it }
+
+TILES.each { name ->
+    def nd = nodeByName[name]
+    if (nd == null) {
+        println "--- TILE " + name + ": not present in this subdirectory"
+        return
+    }
+    double[] d = result.deltaFor(name)
+    def es = edgesByTile[name]
+    int acc = es.count { it.accepted() }
+    println "--- TILE " + name + "  col=" + colOf[nd.xPx()] + " row=" + rowOf[nd.yPx()]
+    println "    nominal  = " + f(nd.xPx()) + " , " + f(nd.yPx())
+    println "    solved   = " + f(d[0]) + " , " + f(d[1]) + "   (correction applied)"
+    println "    edges    = " + acc + " accepted of " + es.size()
+    if (acc == 0) {
+        println "    NO MEASURED EDGE -- this tile's position was diffused from its neighbours."
+    }
+    es.each { e ->
+        def other = (nodes[e.i()].filename() == name) ? nodes[e.j()] : nodes[e.i()]
+        def dir = (Math.abs(other.xPx() - nd.xPx()) > Math.abs(other.yPx() - nd.yPx()))
+                ? ((other.xPx() > nd.xPx()) ? "RIGHT" : "LEFT")
+                : ((other.yPx() > nd.yPx()) ? "BELOW" : "ABOVE")
+        def dg = e.diagnostics()
+        def line = "      " + dir.padRight(6) + " " + other.filename().padRight(10)
+        line = line + " " + e.reject().toString().padRight(12)
+        line = line + " ncc=" + f(e.ncc())
+        line = line + " measured=" + f(e.dxPx() - e.nominalDxPx())
+        line = line + "," + f(e.dyPx() - e.nominalDyPx())
+        line = line + " tex=" + f(dg.textureA()) + "/" + f(dg.textureB())
+        if (dg.shiftAtSearchBound()) line = line + " AT-BOUND"
+        println line
+    }
+}
+
+// ---- column profile -------------------------------------------------------
+// Median solved dx per column. A smooth ramp is a scale error being corrected, which is fine.
+// A STEP between two adjacent columns is a seam the whole mosaic is being torn along -- that is
+// what a column boundary failing at several different rows looks like from the solve's side.
+println "--- median solved dx by column (col: n, medianDx, medianDy) ---"
+def byCol = [:].withDefault { [] }
+nodes.each { nd ->
+    double[] d = result.deltaFor(nd.filename())
+    byCol[colOf[nd.xPx()]] << d
+}
+def prevDx = null
+byCol.keySet().sort().each { c ->
+    def list = byCol[c]
+    def dxs = list.collect { it[0] }.sort()
+    def dys = list.collect { it[1] }.sort()
+    double mdx = dxs[(int) (dxs.size() / 2)]
+    double mdy = dys[(int) (dys.size() / 2)]
+    def jump = (prevDx == null) ? "" : ("   step=" + f(mdx - prevDx))
+    println "  col " + c + ": n=" + list.size() + "  " + f(mdx) + " , " + f(mdy) + jump
+    prevDx = mdx
+}
 null
 
 static String f(double v) {
