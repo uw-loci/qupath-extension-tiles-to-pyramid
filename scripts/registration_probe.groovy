@@ -34,7 +34,9 @@ import qupath.ext.basicstitching.registration.*
 import qupath.ext.basicstitching.utilities.RegistrationPreferences
 
 // ---- configure ------------------------------------------------------------
-def FOLDER = "D:\\2025QPSC\\data\\MH_Slides\\MH_PPM\\ppm_20x_9\\66505_58782"
+// Forward slashes on purpose: Windows accepts them, and they avoid the backslash-escape trap that
+// silently mangles a pasted path in the script editor.
+def FOLDER = "D:/2025QPSC/data/MH_Slides/MH_PPM/ppm_20x_9/66505_58782"
 double PIXEL_SIZE = 0.1725
 // Which subdirectory to register. Name ONE angle -- "." scans every subdirectory, which on a
 // 4-angle acquisition reads 4x the tiles (8700 instead of 2175) and spends most of the run in the
