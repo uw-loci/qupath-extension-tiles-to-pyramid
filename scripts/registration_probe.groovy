@@ -34,18 +34,27 @@ import qupath.ext.basicstitching.registration.*
 import qupath.ext.basicstitching.utilities.RegistrationPreferences
 
 // ---- configure ------------------------------------------------------------
-def FOLDER = "D:\\2025QPSC\\data\\MH_Slides\\MH_PPM\\ppm_20x_9\\53426_46338"
+def FOLDER = "D:\\2025QPSC\\data\\MH_Slides\\MH_PPM\\ppm_20x_9\\66505_58782"
 double PIXEL_SIZE = 0.1725
+// Which subdirectory to register. Name ONE angle -- "." scans every subdirectory, which on a
+// 4-angle acquisition reads 4x the tiles (8700 instead of 2175) and spends most of the run in the
+// dimension scan for three angles it then throws away. Run the script once per angle instead:
+// the per-edge measurements are NOT the same across angles even though the stage positions are,
+// and comparing them is the point.
+def SUBDIR = "-7.0"
 // Optional: name two tiles to inspect one seam in detail. Leave blank to skip.
-def TILE_A = "270.tif"
-def TILE_B = "305.tif"
+// Pick a seam you can SEE failing in the stitched image -- that is the only way to tell a bad
+// measurement (NCC found the wrong peak) from a bad solve (measurement right, placement wrong).
+def TILE_A = "165.tif"
+def TILE_B = "261.tif"
 // ---------------------------------------------------------------------------
 
 def folder = (args && args.size() > 0) ? args[0] : FOLDER
 double pixelSize = (args && args.size() > 1) ? (args[1] as double) : PIXEL_SIZE
+def subdir = (args && args.size() > 2) ? args[2] : SUBDIR
 
 def strategy = new TileConfigurationTxtStrategy()
-def mappings = strategy.prepareStitching(folder, pixelSize, 1.0, ".")
+def mappings = strategy.prepareStitching(folder, pixelSize, 1.0, subdir)
 if (mappings.isEmpty()) {
     println "ERROR: no tile mappings. Check FOLDER and that TileConfiguration.txt is present."
     return
@@ -122,6 +131,9 @@ tex.each { k, v ->
     def s = v.sort()
     println k + "  n=" + s.size() + "  " + f(s[0]) + " / " + f(s[(int) (s.size() / 2)]) + " / " + f(s[s.size() - 1])
 }
+println "(minCoV gate is at " + settings.minCoeffOfVar() + "; compare against the minima above --"
+println " if no outcome reaches it, the low-texture gate never fires and is not in play.)"
+null
 
 static String f(double v) {
     return Double.isNaN(v) ? "-" : String.format(java.util.Locale.ROOT, "%.3f", v)
