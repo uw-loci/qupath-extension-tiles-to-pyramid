@@ -424,7 +424,13 @@ public final class TileRegistrationEngine {
                 (int) outcome.edges().stream().filter(EdgeMeasurement::accepted).count();
         return String.format(
                 Locale.ROOT,
-                "%d/%d edges accepted, overlap %.1f%% x %.1f%%, corrections mean %.2f px / max %.2f px, %d clamped",
+                // "beyond one overlap", NOT "clamped": since 0.6.5 nothing is truncated. This counts
+                // tiles whose CUMULATIVE correction exceeded a single overlap width, which is normal
+                // and expected on a large mosaic -- it is the sum of many per-step errors, so it grows
+                // with distance from the gauge. Reporting it as "clamped" read as "these were cut
+                // short", i.e. exactly the bug 0.6.5 removed.
+                "%d/%d edges accepted, overlap %.1f%% x %.1f%%, corrections mean %.2f px / max %.2f px,"
+                        + " %d beyond one overlap",
                 accepted,
                 measured.size(),
                 geometry.overlapFracX() * 100,
