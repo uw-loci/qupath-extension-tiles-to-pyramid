@@ -204,27 +204,74 @@ TILES.each { name ->
     }
 }
 
-// ---- column profile -------------------------------------------------------
-// Median solved dx per column. A smooth ramp is a scale error being corrected, which is fine.
-// A STEP between two adjacent columns is a seam the whole mosaic is being torn along -- that is
-// what a column boundary failing at several different rows looks like from the solve's side.
-println "--- median solved dx by column (col: n, medianDx, medianDy) ---"
-def byCol = [:].withDefault { [] }
-nodes.each { nd ->
-    double[] d = result.deltaFor(nd.filename())
-    byCol[colOf[nd.xPx()]] << d
+// ---- column / row profile -------------------------------------------------
+// Median solved correction per column and per row. A smooth ramp is a SCALE error being corrected,
+// which registration handles fine. A STEP between two adjacent columns is a seam the mosaic is
+// being torn along -- what a column boundary failing at several different rows looks like from the
+// solve's side. The two look nothing alike, so printing them settles which one is happening.
+def profile = { label, keyOf, axis ->
+    def bins = [:].withDefault { [] }
+    nodes.each { nd ->
+        double[] d = result.deltaFor(nd.filename())
+        bins[keyOf(nd)] << [nd, d]
+    }
+    println "--- median solved d" + (axis == 0 ? "x" : "y") + " by " + label + " ---"
+    def pts = []
+    def prev = null
+    bins.keySet().sort().each { k ->
+        def list = bins[k]
+        def vals = list.collect { it[1][axis] }.sort()
+        double med = vals[(int) (vals.size() / 2)]
+        // Representative nominal coordinate for this bin, for the regression below.
+        def coords = list.collect { axis == 0 ? it[0].xPx() : it[0].yPx() }.sort()
+        double coord = coords[(int) (coords.size() / 2)]
+        pts << [coord, med]
+        def jump = (prev == null) ? "" : ("   step=" + f(med - prev))
+        println "  " + label + " " + k + ": n=" + list.size() + "  " + f(med) + jump
+        prev = med
+    }
+    return pts
 }
-def prevDx = null
-byCol.keySet().sort().each { c ->
-    def list = byCol[c]
-    def dxs = list.collect { it[0] }.sort()
-    def dys = list.collect { it[1] }.sort()
-    double mdx = dxs[(int) (dxs.size() / 2)]
-    double mdy = dys[(int) (dys.size() / 2)]
-    def jump = (prevDx == null) ? "" : ("   step=" + f(mdx - prevDx))
-    println "  col " + c + ": n=" + list.size() + "  " + f(mdx) + " , " + f(mdy) + jump
-    prevDx = mdx
+
+def colPts = profile("col", { nd -> colOf[nd.xPx()] }, 0)
+def rowPts = profile("row", { nd -> rowOf[nd.yPx()] }, 1)
+
+// Least-squares slope of correction against nominal position. The slope is dimensionless: it IS
+// the fractional scale error, because a correction that grows linearly with position is exactly
+// what a wrong pixel size looks like after registration has absorbed it.
+def slope = { pts ->
+    int n = pts.size()
+    if (n < 3) return null
+    double sx = 0, sy = 0, sxx = 0, sxy = 0
+    pts.each { p ->
+        sx += p[0]
+        sy += p[1]
+        sxx += p[0] * p[0]
+        sxy += p[0] * p[1]
+    }
+    double denom = n * sxx - sx * sx
+    if (Math.abs(denom) < 1e-9) return null
+    return (n * sxy - sx * sy) / denom
 }
+
+println "--- implied scale error ---"
+["X": [colPts, "width"], "Y": [rowPts, "height"]].each { axisName, v ->
+    def m = slope(v[0])
+    if (m == null) {
+        println "  " + axisName + ": not enough bins to fit"
+        return
+    }
+    // corrected = nominal * (1 + m), so the true pixel size is larger/smaller by the same factor.
+    double implied = pixelSize / (1.0 + m)
+    println "  " + axisName + ": slope " + String.format(java.util.Locale.ROOT, "%+.5f", m)
+            + " = " + String.format(java.util.Locale.ROOT, "%+.3f%%", m * 100.0)
+    println "     pixel size in use " + pixelSize + " um -> implied "
+            + String.format(java.util.Locale.ROOT, "%.5f", implied) + " um"
+}
+println "  A slope well under 0.05% is noise. A consistent slope on BOTH axes is a pixel-size"
+println "  calibration error that registration is silently absorbing: it still stitches, but every"
+println "  tile then depends on a long chain of measurements to accumulate hundreds of pixels of"
+println "  correction, and any broken link in that chain shows up as a visible seam."
 null
 
 static String f(double v) {
