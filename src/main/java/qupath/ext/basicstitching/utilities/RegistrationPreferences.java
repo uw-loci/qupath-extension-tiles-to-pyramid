@@ -82,7 +82,7 @@ public final class RegistrationPreferences {
                         + " trusted and the edge is dropped. Higher = fewer but safer corrections. Default 0.30.")
                 .build());
         items.add(new PropertyItemBuilder<>(maxShiftPercent, Double.class)
-                .name("Registration: max shift per step (% of tile)")
+                .name("Registration: max shift per step, as % of tile")
                 .category(CATEGORY)
                 .description("Largest correction, as a percent of tile size, looked for between two neighbouring"
                         + " tiles (one stage step). Bounds the per-EDGE search so a low-texture band cannot lock"
@@ -90,10 +90,13 @@ public final class RegistrationPreferences {
                         + " Default 2.0.")
                 .build());
         items.add(new PropertyItemBuilder<>(minShiftPx, Integer.class)
-                .name("Registration: min shift search (px)")
+                .name("Registration: max shift per step, floor (px)")
                 .category(CATEGORY)
-                .description("Absolute floor, in pixels, on the per-step search above, so small tiles keep a"
-                        + " usable search window. Never binds on large acquisition tiles. Default 24.")
+                .description("Floor, in pixels, for the setting above -- the two together define ONE search window:\n"
+                        + "  half-width = max(this floor, percent x tile size), capped at the physical overlap.\n"
+                        + "It exists so the percentage cannot collapse to something unusably small on a small\n"
+                        + "tile (2% of a 256 px tile is 5 px). It never binds on acquisition-sized tiles, where\n"
+                        + "the percentage is always larger. Default 24.")
                 .build());
         items.add(new PropertyItemBuilder<>(fillUnregistered, Boolean.class)
                 .name("Registration: fill unregisterable tiles from neighbours")
@@ -105,15 +108,17 @@ public final class RegistrationPreferences {
         items.add(new PropertyItemBuilder<>(lambda, Double.class)
                 .name("Registration: nominal pull (lambda)")
                 .category(CATEGORY)
-                .description("Strength of the pull toward nominal stage positions in the global solve, relative to"
-                        + " the median edge weight. Larger trusts the stage more; smaller trusts the image content"
-                        + " more. Must be > 0. Default 0.01.")
+                .description("Strength of the gauge pin that holds each connected piece of the mosaic near its"
+                        + " nominal stage position, relative to the median edge weight. It constrains only where a"
+                        + " piece SITS as a whole, not the geometry inside it, so it no longer shrinks real"
+                        + " corrections. Must be > 0. Default 0.01.")
                 .build());
         items.add(new PropertyItemBuilder<>(outlierPasses, Integer.class)
                 .name("Registration: outlier rejection passes")
                 .category(CATEGORY)
-                .description("Iterative reweighting passes that drop edges disagreeing with the global solution."
-                        + " 0 disables outlier rejection. Default 2.")
+                .description("Iterative passes that DOWN-WEIGHT edges disagreeing with the global solution. Edges are"
+                        + " never cut -- cutting one un-ties its seam, which then drifts open by the whole"
+                        + " accumulated error. 0 disables reweighting. Default 2.")
                 .build());
         items.add(new PropertyItemBuilder<>(minCoeffOfVar, Double.class)
                 .name("Registration: low-texture gate")
