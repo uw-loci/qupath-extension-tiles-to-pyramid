@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Manual recovery. GitHub can drop a push event -- commit 0f47da0 landed on main during the
+  # 2026-08-06 Actions outage recovery and produced no run at all, with no way to ask for one.
+  # Without this the only remedy is an empty commit, which puts noise in the history to work
+  # around someone else's infrastructure.
+  workflow_dispatch:
 
 jobs:
   build:
