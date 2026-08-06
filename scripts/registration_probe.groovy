@@ -43,6 +43,10 @@ double PIXEL_SIZE = 0.1725
 // dimension scan for three angles it then throws away. Run the script once per angle instead:
 // the per-edge measurements are NOT the same across angles even though the stage positions are,
 // and comparing them is the point.
+//
+// Single-angle acquisitions (brightfield, fluorescence) have NO angle subdirectory -- the tiles and
+// TileConfiguration.txt sit directly in the region folder. Leave SUBDIR as-is for those; the script
+// retries against the root when the named subdirectory finds nothing.
 def SUBDIR = "-7.0"
 // Optional: name two tiles to inspect one seam in detail. Leave blank to skip.
 // Pick a seam you can SEE failing in the stitched image -- that is the only way to tell a bad
@@ -61,6 +65,13 @@ def subdir = (args && args.size() > 2) ? args[2] : SUBDIR
 
 def strategy = new TileConfigurationTxtStrategy()
 def mappings = strategy.prepareStitching(folder, pixelSize, 1.0, subdir)
+if (mappings.isEmpty()) {
+    // Single-angle acquisitions keep the tiles in the region folder itself. The strategy falls back
+    // to the root when the match string names no subdirectory, so retry with a string that cannot
+    // match one.
+    println "No tiles under subdir '" + subdir + "'; retrying against the folder root."
+    mappings = strategy.prepareStitching(folder, pixelSize, 1.0, ".")
+}
 if (mappings.isEmpty()) {
     println "ERROR: no tile mappings. Check FOLDER and that TileConfiguration.txt is present."
     return
