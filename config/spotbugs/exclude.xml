@@ -22,12 +22,14 @@
 
     <!--
       memoryStaysBounded asserts that registration holds the streaming memory envelope the whole
-      stitcher exists to protect. Establishing a baseline for a heap measurement is the one
-      legitimate reason to request a collection, and the call is confined to that single test.
+      stitcher exists to protect, by measuring what is still reachable after the solve returns.
+      Requesting a collection is the one legitimate reason the detector itself allows (measurement),
+      and both of that test's readings are taken through settledHeapBytes, which is where the calls
+      now live. Scoped to that helper alone.
     -->
     <Match>
         <Bug pattern="DM_GC"/>
         <Class name="qupath.ext.basicstitching.TileRegistrationEngineTest"/>
-        <Method name="memoryStaysBounded"/>
+        <Method name="settledHeapBytes"/>
     </Match>
 </FindBugsFilter>

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A run of unregisterable tiles between two tissue regions was placed as a staircase rather than interpolated across.** Tiles with no measurable overlap content (blank slide) inherit their position from the tiles around them. That diffusion used to freeze each tile the first time it was reached from a registered neighbour, so it only ever saw the side it was reached from: a span of blank tiles took the left boundary's correction on its left half and the right boundary's on its right half, with a step in the middle. It now relaxes to convergence (Laplace's equation, registered tiles as fixed boundary), which places each tile at the average of everything around it and turns that step into a smooth ramp. A single isolated blank tile is unaffected -- both approaches already gave it its neighbours' mean -- and a tile with no path to any registered tile still stays at nominal, since there is nothing to interpolate from. Registration logs now report how many tiles were placed this way and the largest such correction.
+
+### Changed
+- **`memoryStaysBounded` now measures retained memory instead of live heap.** It compared heap usage before and after the solve without collecting first, so it counted transient garbage, including garbage left by other tests sharing the JVM. The same code read anywhere from 9 MB to 101 MB against a 100 MB bound. It now takes both readings after a settled collection and asserts that nothing scaling with tile count survives the solve, which is the property that actually matters (overlap bands must not be cached across edges). Peak transient use is no longer asserted, because this fixture's tiles total under 10 MB -- a bound it could pass while reading every tile whole proved nothing.
+
 ### Removed
 - **`DirectTileStitcher.shouldUseDirectStitching(int)` method and `TILE_COUNT_THRESHOLD` constant.** `StitchingWorkflow` routes every tile count through the direct stitcher, so nothing called the predicate, and the `SparseImageServer` path it chose between no longer exists. Removed rather than left in place, where a threshold implies a fallback path a reader would go looking for.
 

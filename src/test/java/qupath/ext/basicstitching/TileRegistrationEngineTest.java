@@ -127,6 +127,58 @@ class TileRegistrationEngineTest {
     }
 
     @Test
+    void blankGapBetweenTwoRegions_rampsAcross_ratherThanStaircasing() throws IOException {
+        // The second case the user asked for: not one isolated blank tile, but a run of them between
+        // two pieces of tissue -- the empty slide between two sections. Those tiles have to be placed
+        // "in the middle" of what surrounds them, which for a span means interpolating between the two
+        // sides, not snapping each tile to whichever side happens to be nearer.
+        //
+        // A single outward wavefront cannot do that: it freezes each tile the first time it is
+        // reached, so the left half of the gap all takes the left boundary's value and the right half
+        // all takes the right's, giving a staircase with a step in the middle. Relaxing to convergence
+        // -- Laplace with the registered tiles as fixed boundary -- gives the linear ramp asserted
+        // below. The two are indistinguishable on a single isolated tile and on any symmetric gap,
+        // which is why this uses an even-length span and checks every tile in it.
+        //
+        // One row of 8, textured at both ends and blank across the middle four.
+        SyntheticGridFixture.Grid grid =
+                SyntheticGridFixture.write(tempDir, 8, 1, TILE_W, TILE_H, 0.15, 1.0, 6.0, List.of(2, 3, 4, 5), 11);
+
+        RegistrationResult result = register(grid);
+
+        assertFalse(result.degenerate(), "the textured ends must still register: " + result.summary());
+
+        double[] left = result.deltaFor("2.tif"); // index 1, the last textured tile on the left
+        double[] right = result.deltaFor("7.tif"); // index 6, the first on the right
+        double span = right[0] - left[0];
+        assertTrue(
+                Math.abs(span) > 2.0,
+                "the two sides must be corrected differently or this test proves nothing; span " + span);
+
+        // Five steps from index 1 to index 6, so the k-th blank tile sits k/5 of the way across.
+        String[] gap = {"3.tif", "4.tif", "5.tif", "6.tif"};
+        for (int k = 0; k < gap.length; k++) {
+            double expected = left[0] + span * (k + 1) / 5.0;
+            assertEquals(
+                    expected,
+                    result.deltaFor(gap[k])[0],
+                    1e-4,
+                    gap[k] + " must sit " + (k + 1) + "/5 of the way across the gap, not at either boundary");
+        }
+
+        // And say it as the shape rather than the numbers: strictly monotonic, no flat pair. A
+        // staircase repeats a value at the step, so this fails on it independently of the arithmetic
+        // above.
+        for (int k = 1; k < gap.length; k++) {
+            double prev = result.deltaFor(gap[k - 1])[0];
+            double curr = result.deltaFor(gap[k])[0];
+            assertTrue(
+                    Math.signum(curr - prev) == Math.signum(span) && Math.abs(curr - prev) > 1e-9,
+                    "the gap must ramp monotonically; " + gap[k - 1] + "=" + prev + " then " + gap[k] + "=" + curr);
+        }
+    }
+
+    @Test
     void unreadableTiles_produceIdentityNotAnException() throws IOException {
         SyntheticGridFixture.Grid grid = SyntheticGridFixture.write(tempDir, 2, 2, TILE_W, TILE_H, 0.15, 2.0, 9);
         for (var node : grid.nominal()) {
@@ -167,21 +219,52 @@ class TileRegistrationEngineTest {
 
     @Test
     void memoryStaysBounded() throws IOException {
-        // The whole stitcher exists to hold ~40 MB regardless of tile count; registration must not
-        // be the thing that breaks that. Only overlap bands are ever read, never whole tiles, and
-        // bands are not cached across edges.
+        // The whole stitcher exists to hold ~40 MB regardless of tile count; registration must not be
+        // the thing that breaks that. What is checked here is that nothing scaling with tile count is
+        // RETAINED once the solve returns -- specifically that overlap bands are not cached across
+        // edges, which is the one design decision that would quietly reintroduce unbounded growth.
+        //
+        // Both readings are taken after a collection. Comparing live heap without collecting measured
+        // transient garbage instead, including garbage other tests in this JVM had left behind, which
+        // made it read anywhere from 9 MB to 101 MB against a 100 MB bound for the same code.
+        //
+        // Peak transient use during the solve is deliberately NOT asserted here: this fixture's 100
+        // tiles come to under 10 MB in total, so even reading every tile whole would fit inside any
+        // bound worth setting, and a test that cannot fail for the reason it names is worse than none.
         SyntheticGridFixture.Grid grid = SyntheticGridFixture.write(tempDir, 10, 10, TILE_W, TILE_H, 0.15, 2.0, 4);
 
         Runtime runtime = Runtime.getRuntime();
-        System.gc();
-        long before = runtime.totalMemory() - runtime.freeMemory();
+        long before = settledHeapBytes(runtime);
 
         RegistrationResult result = TileRegistrationEngine.register(
                 new RegistrationRequest("0", grid.nominal(), settings().withThreads(4)));
 
-        long after = runtime.totalMemory() - runtime.freeMemory();
+        long retained = settledHeapBytes(runtime) - before;
         assertFalse(result.degenerate());
-        long grownMb = Math.max(0, after - before) / (1024 * 1024);
-        assertTrue(grownMb < 100, "registration grew the heap by " + grownMb + " MB; expected well under 100");
+        long retainedMb = Math.max(0, retained) / (1024 * 1024);
+        assertTrue(
+                retainedMb < 20,
+                "registration retained " + retainedMb
+                        + " MB after the solve; only per-tile corrections should survive");
+    }
+
+    /**
+     * Live heap after asking for a collection, repeated until the reading stops falling.
+     *
+     * <p>{@code System.gc()} is a hint, so a single call can return before anything has been
+     * reclaimed. Iterating until two consecutive readings agree makes the measurement about what is
+     * reachable rather than about when the collector happened to run.
+     */
+    private static long settledHeapBytes(Runtime runtime) {
+        long previous = Long.MAX_VALUE;
+        for (int i = 0; i < 5; i++) {
+            System.gc();
+            long used = runtime.totalMemory() - runtime.freeMemory();
+            if (used >= previous) {
+                return used;
+            }
+            previous = used;
+        }
+        return previous;
     }
 }

@@ -48,6 +48,22 @@ public final class TileRegistrationEngine {
     /** Correction bound when an axis has no neighbours to derive an overlap from. */
     private static final double FALLBACK_SEARCH_FRACTION = 0.05;
 
+    /**
+     * Convergence threshold for the unregistered-tile interpolation, in pixels. This bounds the
+     * largest change in a single sweep, not the remaining error, which is why it sits well below the
+     * whole pixel that placement rounds to: the two differ by roughly the number of sweeps still
+     * owed.
+     */
+    private static final double FILL_TOLERANCE_PX = 1e-5;
+
+    /**
+     * Sweep cap for that interpolation. Gauss-Seidel's slowest mode decays with the square of the
+     * unregistered region's width, so this clears a gap around 90 tiles across -- far beyond any real
+     * blank run. It bounds a pathological graph rather than being a limit to plan around, and falling
+     * short warns rather than failing, since a partly-relaxed field still beats nominal.
+     */
+    private static final int MAX_FILL_SWEEPS = 10_000;
+
     private TileRegistrationEngine() {}
 
     /**
@@ -136,9 +152,9 @@ public final class TileRegistrationEngine {
             // strands the tile tens of pixels out of step with its corrected neighbours -- the worst
             // seam in the mosaic. Diffuse the neighbours' field into those islands instead, unless
             // the caller has turned that off.
-            int filledIslands = settings.fillUnregistered()
+            FillOutcome fill = settings.fillUnregistered()
                     ? fillUnregisteredIslands(nominal, graph.edges(), outcome.edges(), deltas)
-                    : 0;
+                    : new FillOutcome(0, 0);
 
             int finalAccepted = (int)
                     outcome.edges().stream().filter(EdgeMeasurement::accepted).count();
@@ -156,10 +172,14 @@ public final class TileRegistrationEngine {
             logger.info("Tile registration: {}", result.summary());
             logSearchUsage(measured, tileW, tileH, perEdgeX, perEdgeY);
             logEdgeDiagnostics(nominal, outcome.edges());
-            if (filledIslands > 0) {
+            if (fill.filled() > 0) {
                 logger.info(
-                        "Filled {} unregisterable tile(s) from neighbouring corrections instead of nominal",
-                        filledIslands);
+                        "Interpolated {} of {} tile(s) ({}%) that had no measurable edge, from the surrounding"
+                                + " corrections instead of nominal; largest interpolated correction {} px",
+                        fill.filled(),
+                        nominal.size(),
+                        String.format(Locale.ROOT, "%.1f", 100.0 * fill.filled() / nominal.size()),
+                        String.format(Locale.ROOT, "%.2f", fill.maxCorrectionPx()));
             }
             logRejections(outcome.edges());
             return result;
@@ -312,13 +332,29 @@ public final class TileRegistrationEngine {
      * whether any given edge was accepted. A tile with no path to a registered tile has no field to
      * inherit and is left at nominal.
      *
+     * <h2>Why this is a Laplace solve and not a single outward sweep</h2>
+     *
+     * <p>The field is obtained by solving Laplace's equation on the unregistered tiles, with the
+     * registered ones held fixed as Dirichlet boundary values: every unknown tile is iterated to the
+     * average of <i>all</i> its neighbours, and the sweep repeats until no tile moves. That average
+     * property is exactly "placed in the middle of the tiles around it", and it is what makes a
+     * <i>block</i> of blank tiles come out right.
+     *
+     * <p>The earlier implementation propagated a wavefront outward and froze each tile the moment it
+     * was first reached, so a tile only ever saw the ring behind it. A single isolated blank tile was
+     * fine -- all its neighbours were known on the first round -- but a run of blank tiles between two
+     * tissue regions became a staircase of nearest-boundary values rather than an interpolation
+     * between the two sides. Continuing to relax lets both boundaries reach the interior, which turns
+     * that staircase into the smooth ramp the geometry actually implies. At a mosaic edge, where a
+     * tile simply has fewer neighbours, the same average extrapolates the interior field outward.
+     *
      * @param nominal tiles in solve order
      * @param candidateEdges the grid adjacency (accepted or not)
      * @param edges the post-solve edge list, carrying final acceptance
      * @param deltas the per-filename corrections, mutated in place for filled tiles
-     * @return the number of tiles filled
+     * @return how many tiles were interpolated, and the largest correction handed to one
      */
-    private static int fillUnregisteredIslands(
+    private static FillOutcome fillUnregisteredIslands(
             List<TileNode> nominal,
             List<EdgePair> candidateEdges,
             List<EdgeMeasurement> edges,
@@ -344,57 +380,90 @@ public final class TileRegistrationEngine {
 
         double[] dx = new double[n];
         double[] dy = new double[n];
-        boolean[] known = new boolean[n];
         for (int i = 0; i < n; i++) {
             double[] d = deltas.get(nominal.get(i).filename());
             dx[i] = d[0];
             dy[i] = d[1];
-            known[i] = registered[i];
         }
 
-        // Jacobi relaxation: each round averages the already-known neighbours into every remaining
-        // island, spreading the field outward one ring at a time until nothing more can be reached.
-        int filled = 0;
-        boolean progressed = true;
-        while (progressed) {
-            progressed = false;
-            double[] nx = dx.clone();
-            double[] ny = dy.clone();
-            boolean[] next = known.clone();
-            for (int i = 0; i < n; i++) {
-                if (known[i]) {
-                    continue;
+        // Which unknowns have any path at all to a registered tile. One without has nothing to
+        // interpolate from and must stay at nominal -- and including it would leave the system
+        // singular, since a component with no boundary condition has no unique harmonic solution.
+        boolean[] solvable = new boolean[n];
+        int[] queue = new int[n];
+        int head = 0;
+        int tail = 0;
+        for (int i = 0; i < n; i++) {
+            if (registered[i]) {
+                queue[tail++] = i;
+            }
+        }
+        while (head < tail) {
+            for (int j : adjacency.get(queue[head++])) {
+                if (!registered[j] && !solvable[j]) {
+                    solvable[j] = true;
+                    queue[tail++] = j;
                 }
+            }
+        }
+
+        List<Integer> unknowns = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            if (solvable[i]) {
+                unknowns.add(i);
+            }
+        }
+        if (unknowns.isEmpty()) {
+            return new FillOutcome(0, 0);
+        }
+
+        // Gauss-Seidel: updates are read back within the same sweep, which propagates the boundary
+        // roughly twice as fast as Jacobi and needs no second array. The graph is tiny and each sweep
+        // is a pass over the edge list, so even a wide gap converges in microseconds.
+        double maxUpdate = 0;
+        int sweep = 0;
+        for (; sweep < MAX_FILL_SWEEPS; sweep++) {
+            maxUpdate = 0;
+            for (int i : unknowns) {
                 double sx = 0;
                 double sy = 0;
                 int c = 0;
                 for (int j : adjacency.get(i)) {
-                    if (known[j]) {
-                        sx += dx[j];
-                        sy += dy[j];
-                        c++;
-                    }
+                    sx += dx[j];
+                    sy += dy[j];
+                    c++;
                 }
-                if (c > 0) {
-                    nx[i] = sx / c;
-                    ny[i] = sy / c;
-                    next[i] = true;
-                    filled++;
-                    progressed = true;
+                if (c == 0) {
+                    continue;
                 }
+                double nx = sx / c;
+                double ny = sy / c;
+                maxUpdate = Math.max(maxUpdate, Math.max(Math.abs(nx - dx[i]), Math.abs(ny - dy[i])));
+                dx[i] = nx;
+                dy[i] = ny;
             }
-            dx = nx;
-            dy = ny;
-            known = next;
+            if (maxUpdate < FILL_TOLERANCE_PX) {
+                break;
+            }
+        }
+        if (maxUpdate >= FILL_TOLERANCE_PX) {
+            logger.warn(
+                    "Unregistered-tile interpolation stopped after {} sweeps with {} px still moving;"
+                            + " positions are usable but not fully converged",
+                    MAX_FILL_SWEEPS,
+                    String.format(Locale.ROOT, "%.3f", maxUpdate));
         }
 
-        for (int i = 0; i < n; i++) {
-            if (!registered[i] && known[i]) {
-                deltas.put(nominal.get(i).filename(), new double[] {dx[i], dy[i]});
-            }
+        double maxCorrection = 0;
+        for (int i : unknowns) {
+            deltas.put(nominal.get(i).filename(), new double[] {dx[i], dy[i]});
+            maxCorrection = Math.max(maxCorrection, Math.hypot(dx[i], dy[i]));
         }
-        return filled;
+        return new FillOutcome(unknowns.size(), maxCorrection);
     }
+
+    /** What the unregistered-tile interpolation did, for reporting. */
+    private record FillOutcome(int filled, double maxCorrectionPx) {}
 
     private static <T> List<List<T>> partition(List<T> items, int parts) {
         List<List<T>> chunks = new ArrayList<>();
@@ -549,6 +618,25 @@ public final class TileRegistrationEngine {
      * black, and a poorly-stained fluorescence channel is nearly empty. Sampling actual content and
      * picking the busiest subdirectory beats hardcoding a per-modality default, and needs no
      * knowledge of what the subdirectories mean.
+     *
+     * <h2>Callers that cannot use this, and why it is not therefore redundant</h2>
+     *
+     * <p>QPSC never reaches this method, and the duplication with {@code
+     * ModalityHandler.registrationReferenceIndex} on that side is deliberate -- do not resolve it by
+     * deleting either one. The difference is what each caller can see:
+     *
+     * <ul>
+     *   <li><b>Stitching this library directly</b> passes every subdirectory to one call, so the
+     *       candidates really are comparable side by side. That is this method.
+     *   <li><b>QPSC</b> moves each angle into its own temporary directory before stitching it, so a
+     *       Solve-mode run only ever sees a single subdirectory. There is nothing here to choose
+     *       between, and the choice has to be made upstream while the angles are all still visible.
+     * </ul>
+     *
+     * <p>The upstream rule is also the better one where it applies: PPM knows a priori that the
+     * 90-degree angle is the bright one, whereas sampling measures the same fact with less
+     * confidence and some I/O. This method is the fallback for callers that lack that knowledge, not
+     * a second implementation of it.
      *
      * @param candidates subdirectory name to that subdirectory's tiles
      * @param sampleSize how many tiles to sample per candidate
