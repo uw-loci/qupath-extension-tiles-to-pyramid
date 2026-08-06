@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Overlap blending options: last tile wins (default), linear feather, cosine feather.** Chosen in QuPath Preferences under "Tiles-to-pyramid", and shared with QPSC like every other setting there. Until now every overlap was a hard cut: `BlendStrategy` and its one implementation were constructed and handed to the compositor, but neither of the interface's methods was ever called, so the whole mechanism had never run.
+  - The default remains the hard cut, and deliberately so. Feathering averages two views of the same feature, so wherever the tiles disagree -- and after registration they still disagree by a pixel or two -- the average is a soft double image. It is a trade, not an improvement.
+  - What a feather does fix is an intensity *step*: uneven illumination or exposure drift leaves neighbouring tiles at different brightness, and correct positioning cannot remove the line between them.
+  - The overlap width the feather spans is measured from where tiles actually ended up, so it follows any registration corrections instead of assuming the acquisition-time overlap percentage.
+  - The default path is untouched and byte-identical: last-tile-wins reports that it needs no overlap detection, so the compositor keeps its direct raster-copy path and allocates no accumulator. The feathers add a float accumulator plus a weight plane per chunk (about 16 MB on a full-size RGB chunk), released with the chunk; a test asserts nothing outlives it.
+
 ### Fixed
 - **A run of unregisterable tiles between two tissue regions was placed as a staircase rather than interpolated across.** Tiles with no measurable overlap content (blank slide) inherit their position from the tiles around them. That diffusion used to freeze each tile the first time it was reached from a registered neighbour, so it only ever saw the side it was reached from: a span of blank tiles took the left boundary's correction on its left half and the right boundary's on its right half, with a step in the middle. It now relaxes to convergence (Laplace's equation, registered tiles as fixed boundary), which places each tile at the average of everything around it and turns that step into a smooth ramp. A single isolated blank tile is unaffected -- both approaches already gave it its neighbours' mean -- and a tile with no path to any registered tile still stays at nominal, since there is nothing to interpolate from. Registration logs now report how many tiles were placed this way and the largest such correction.
 
@@ -14,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`memoryStaysBounded` now measures retained memory instead of live heap.** It compared heap usage before and after the solve without collecting first, so it counted transient garbage, including garbage left by other tests sharing the JVM. The same code read anywhere from 9 MB to 101 MB against a 100 MB bound. It now takes both readings after a settled collection and asserts that nothing scaling with tile count survives the solve, which is the property that actually matters (overlap bands must not be cached across edges). Peak transient use is no longer asserted, because this fixture's tiles total under 10 MB -- a bound it could pass while reading every tile whole proved nothing.
 
 ### Removed
+- **`OverwriteBlendStrategy`.** Folded into `OverlapBlend.LAST_WINS` alongside the two feathers, so all three modes live in one place rather than one being a separate class.
 - **`DirectTileStitcher.shouldUseDirectStitching(int)` method and `TILE_COUNT_THRESHOLD` constant.** `StitchingWorkflow` routes every tile count through the direct stitcher, so nothing called the predicate, and the `SparseImageServer` path it chose between no longer exists. Removed rather than left in place, where a threshold implies a fallback path a reader would go looking for.
 
 ### Changed

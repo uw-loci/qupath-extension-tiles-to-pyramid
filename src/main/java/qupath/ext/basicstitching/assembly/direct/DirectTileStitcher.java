@@ -112,7 +112,7 @@ public class DirectTileStitcher {
 
             // 3. Create compositor and reader pool (try-with-resources for cleanup on exception)
             boolean whiteBackground = dims.isRGB();
-            BlendStrategy blend = new OverwriteBlendStrategy();
+            BlendStrategy blend = config.getOverlapBlend();
 
             try (TileReaderPool readerPool = new TileReaderPool(DEFAULT_MAX_OPEN_READERS)) {
                 ChunkCompositor compositor =
@@ -242,7 +242,7 @@ public class DirectTileStitcher {
 
                 // 6. Create compositor with bounded reader pool
                 boolean whiteBackground = dims.isRGB();
-                BlendStrategy blend = new OverwriteBlendStrategy();
+                BlendStrategy blend = config.getOverlapBlend();
 
                 try (TileReaderPool readerPool = new TileReaderPool(DEFAULT_MAX_OPEN_READERS)) {
                     ChunkCompositor compositor = new ChunkCompositor(

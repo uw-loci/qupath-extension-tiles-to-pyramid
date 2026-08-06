@@ -3,6 +3,8 @@ package qupath.ext.basicstitching.assembly.direct;
 import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
+import java.awt.image.Raster;
+import java.awt.image.WritableRaster;
 import java.io.IOException;
 import java.util.List;
 import org.slf4j.Logger;
@@ -83,6 +85,10 @@ public class ChunkCompositor {
         // Query spatial index for contributing tiles
         List<TileMapping> tiles = spatialIndex.query(chunkX, chunkY, chunkW, chunkH);
 
+        if (blendStrategy.requiresOverlapDetection()) {
+            return compositeBlended(z, t, chunkX, chunkY, chunkW, chunkH, tiles);
+        }
+
         // Create output buffer with appropriate type and background
         BufferedImage output = createOutputBuffer(chunkW, chunkH);
 
@@ -153,6 +159,154 @@ public class ChunkCompositor {
         }
 
         return output;
+    }
+
+    /**
+     * Composite one chunk through a weighted accumulator, for the feathering strategies.
+     *
+     * <p>Kept entirely separate from the overwrite path above rather than generalising it. The
+     * overwrite path transfers raster data directly, allocates nothing per chunk, and is what every
+     * existing stitch uses; routing it through an accumulator would make the default slower and no
+     * longer bit-exact for the sake of code that only the non-default modes run.
+     *
+     * <h2>Memory</h2>
+     *
+     * <p>The accumulator is the one place the streaming design's bounded footprint is at risk: a
+     * 1024x1024 RGB chunk needs 12 MB of float sums plus 4 MB of weights. That is per chunk and
+     * released as soon as the chunk is written, and it is why the buffers are allocated here rather
+     * than held on the compositor -- a field would keep them alive for the whole stitch, and a
+     * pyramid write holds several chunks in flight.
+     */
+    private BufferedImage compositeBlended(
+            int z, int t, int chunkX, int chunkY, int chunkW, int chunkH, List<TileMapping> tiles) {
+
+        BufferedImage output = createOutputBuffer(chunkW, chunkH);
+        WritableRaster outRaster = output.getRaster();
+        int bands = outRaster.getNumBands();
+        int pixels = chunkW * chunkH;
+
+        float[][] accum = new float[bands][pixels];
+        float[] weights = new float[pixels];
+
+        int overlapX = spatialIndex.getOverlapPxX();
+        int overlapY = spatialIndex.getOverlapPxY();
+        int originX = spatialIndex.getOriginX();
+        int originY = spatialIndex.getOriginY();
+
+        for (TileMapping tile : tiles) {
+            if (tile.region.getZ() != z || tile.region.getT() != t) {
+                continue;
+            }
+            int tileX = tile.region.getX() - originX;
+            int tileY = tile.region.getY() - originY;
+            int tileW = tile.region.getWidth();
+            int tileH = tile.region.getHeight();
+
+            int isectLeft = Math.max(tileX, chunkX);
+            int isectTop = Math.max(tileY, chunkY);
+            int isectRight = Math.min(tileX + tileW, chunkX + chunkW);
+            int isectBottom = Math.min(tileY + tileH, chunkY + chunkH);
+            if (isectRight <= isectLeft || isectBottom <= isectTop) {
+                continue;
+            }
+
+            int isectW = isectRight - isectLeft;
+            int isectH = isectBottom - isectTop;
+            int srcX = isectLeft - tileX;
+            int srcY = isectTop - tileY;
+            int dstX = isectLeft - chunkX;
+            int dstY = isectTop - chunkY;
+
+            BufferedImage tileData;
+            try {
+                tileData = readerPool.readRegion(tile.file, srcX, srcY, isectW, isectH);
+            } catch (IOException e) {
+                logger.warn("Failed to read tile region from {}: {}", tile.file.getName(), e.getMessage());
+                continue;
+            }
+
+            // The taper is separable, so the per-pixel weight is one X term times one Y term. Both
+            // are computed once for the intersection rather than per pixel, which turns O(w*h)
+            // strategy calls into O(w+h).
+            float[] wx = axisWeights(srcX, isectW, tileW, overlapX);
+            float[] wy = axisWeights(srcY, isectH, tileH, overlapY);
+
+            Raster src = tileData.getRaster();
+            int srcBands = src.getNumBands();
+            int[] samples = null;
+            for (int b = 0; b < bands; b++) {
+                // A single-band tile feeding an RGB output replicates into every channel; anything
+                // else takes the matching band, or the last one it has.
+                int srcBand = Math.min(b, srcBands - 1);
+                samples = src.getSamples(0, 0, isectW, isectH, srcBand, samples);
+                float[] acc = accum[b];
+                for (int row = 0; row < isectH; row++) {
+                    int outRow = (dstY + row) * chunkW + dstX;
+                    int inRow = row * isectW;
+                    float rowW = wy[row];
+                    for (int col = 0; col < isectW; col++) {
+                        acc[outRow + col] += rowW * wx[col] * samples[inRow + col];
+                    }
+                }
+            }
+            // Weights are band-independent, so they are summed once rather than per band.
+            for (int row = 0; row < isectH; row++) {
+                int outRow = (dstY + row) * chunkW + dstX;
+                float rowW = wy[row];
+                for (int col = 0; col < isectW; col++) {
+                    weights[outRow + col] += rowW * wx[col];
+                }
+            }
+        }
+
+        writeNormalised(outRaster, accum, weights, chunkW, chunkH);
+        return output;
+    }
+
+    /**
+     * Per-column (or per-row) blend weights for the slice of a tile that lands in this chunk.
+     *
+     * @param offset where the slice starts inside the tile
+     * @param length how many pixels of the tile the slice covers
+     * @param tileSize the tile's full extent on this axis
+     * @param overlap the measured overlap width on this axis
+     * @return one weight per pixel of the slice
+     */
+    private float[] axisWeights(int offset, int length, int tileSize, int overlap) {
+        float[] w = new float[length];
+        for (int i = 0; i < length; i++) {
+            int pos = offset + i;
+            // Distance to the nearer of the two edges, counting the outermost pixel as 1 so no
+            // in-tile pixel is ever at distance zero.
+            int distFromEdge = Math.min(pos + 1, tileSize - pos);
+            w[i] = blendStrategy.weight(distFromEdge, overlap);
+        }
+        return w;
+    }
+
+    /**
+     * Divide the accumulated sums by the accumulated weights and write the result.
+     *
+     * <p>Pixels no tile covered keep the background the buffer was created with, which is how the
+     * blended path reproduces the overwrite path's treatment of gaps.
+     */
+    private static void writeNormalised(
+            WritableRaster raster, float[][] accum, float[] weights, int chunkW, int chunkH) {
+        int bands = raster.getNumBands();
+        int[] out = new int[chunkW * chunkH];
+        for (int b = 0; b < bands; b++) {
+            int max = (1 << raster.getSampleModel().getSampleSize(b)) - 1;
+            float[] acc = accum[b];
+            // Uncovered pixels must not be written at all, or they would overwrite the background.
+            // Reading the existing samples back is what lets one setSamples call carry both.
+            raster.getSamples(0, 0, chunkW, chunkH, b, out);
+            for (int i = 0; i < out.length; i++) {
+                if (weights[i] > 0) {
+                    out[i] = Math.max(0, Math.min(max, Math.round(acc[i] / weights[i])));
+                }
+            }
+            raster.setSamples(0, 0, chunkW, chunkH, b, out);
+        }
     }
 
     /**

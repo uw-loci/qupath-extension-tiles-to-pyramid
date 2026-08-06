@@ -123,10 +123,34 @@ persistent tuning knobs in QuPath's Preferences.
 | Coarsest search downsample | 8 | starting scale of the coarse-to-fine search (power of two) |
 | Candidate peaks kept | 3 | peaks carried between pyramid levels |
 | Worker threads | 0 (auto) | 0 = half the cores |
+| Overlap blending | Last tile wins | how pixels covered by two tiles are resolved (see below) |
 
 Because the tuning lives in global QuPath preferences, QPSC reads the same values -- set them once
 and they apply to both a standalone stitch and a QPSC acquisition. The settings actually used are
 also written into the `TileRegistration.txt` header, so a solve is self-documenting.
+
+### Overlap blending: the seam, not the position
+
+Registration decides *where* each tile goes. Blending decides what happens to the pixels where two
+tiles land on top of each other -- a separate question, and it applies whether or not you register.
+
+| Mode | What it does | Character |
+|---|---|---|
+| **Last tile wins** (default) | hard cut at the tile boundary | sharp everywhere; shows a visible step wherever two tiles differ in brightness |
+| **Linear feather** | weight rises linearly from each tile's edge across the overlap | the common default elsewhere (Fiji Grid/Collection, ASHLAR); hides an intensity step, blurs a little along every join |
+| **Cosine feather** | raised-cosine roll-off over the same span | no kink where the ramp ends, so no faint line of its own on smooth backgrounds; blurs slightly more |
+
+**Reach for a feather to fix an *intensity* seam, not a positional one.** Uneven illumination, or
+exposure that drifted across a long acquisition, leaves neighbouring tiles at different brightness,
+and no amount of correct positioning removes the line between them -- that is what feathering is
+for. It cannot fix a misplaced tile, and it makes one look worse: feathering averages two views of
+the same feature, so wherever the tiles disagree the average is a soft double image. Register first,
+then decide whether a seam remains that is worth trading sharpness for.
+
+The overlap the feather spans is measured from where the tiles actually ended up, so it accounts for
+any registration corrections rather than assuming the overlap percentage used at acquisition. The
+default costs nothing: it takes the same direct raster-copy path it always did and produces
+byte-identical output.
 
 ### Why solve once and reuse
 

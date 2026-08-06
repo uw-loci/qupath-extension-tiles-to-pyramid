@@ -1,5 +1,6 @@
 package qupath.ext.basicstitching.config;
 
+import qupath.ext.basicstitching.assembly.direct.OverlapBlend;
 import qupath.ext.basicstitching.registration.RegistrationMode;
 
 /**
@@ -63,6 +64,35 @@ public class StitchingConfig {
      */
     public void setRegistrationMode(RegistrationMode registrationMode) {
         this.registrationMode = registrationMode == null ? RegistrationMode.disabled() : registrationMode;
+    }
+
+    /**
+     * How pixels covered by more than one tile are resolved, or null if the caller has not said.
+     *
+     * <p>Null rather than a default value, so "unset" is distinguishable from "deliberately chose the
+     * hard cut". {@code StitchingWorkflow} fills an unset value from the user's shared preference and
+     * leaves an explicit one alone; without the distinction, a caller asking for
+     * {@link OverlapBlend#LAST_WINS} would be silently overridden by whatever the preference said.
+     */
+    private OverlapBlend overlapBlend = null;
+
+    /** @return how overlapping pixels are resolved, defaulting to the hard cut; never null. */
+    public OverlapBlend getOverlapBlend() {
+        return overlapBlend == null ? OverlapBlend.LAST_WINS : overlapBlend;
+    }
+
+    /** @return whether a caller has explicitly chosen a blending mode. */
+    public boolean isOverlapBlendSet() {
+        return overlapBlend != null;
+    }
+
+    /**
+     * Set how overlapping pixels are resolved.
+     *
+     * @param overlapBlend the mode; null clears the choice, returning to "ask the preference"
+     */
+    public void setOverlapBlend(OverlapBlend overlapBlend) {
+        this.overlapBlend = overlapBlend;
     }
 
     /** @return whether {@link #pixelSizeInMicrons} should override metadata pixel size. */

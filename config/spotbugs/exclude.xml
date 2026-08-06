@@ -21,15 +21,14 @@
     </Match>
 
     <!--
-      memoryStaysBounded asserts that registration holds the streaming memory envelope the whole
-      stitcher exists to protect, by measuring what is still reachable after the solve returns.
-      Requesting a collection is the one legitimate reason the detector itself allows (measurement),
-      and both of that test's readings are taken through settledHeapBytes, which is where the calls
-      now live. Scoped to that helper alone.
+      Several tests assert that stitching holds the streaming memory envelope the whole architecture
+      exists to protect, by measuring what is still reachable once an operation returns. Requesting a
+      collection is the one legitimate reason the detector itself allows (measurement). All of them
+      measure through HeapMeasurement, so the exclusion is a single method rather than one per test.
     -->
     <Match>
         <Bug pattern="DM_GC"/>
-        <Class name="qupath.ext.basicstitching.TileRegistrationEngineTest"/>
+        <Class name="qupath.ext.basicstitching.HeapMeasurement"/>
         <Method name="settledHeapBytes"/>
     </Match>
 </FindBugsFilter>

@@ -8,10 +8,12 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.basicstitching.assembly.direct.DirectTileStitcher;
+import qupath.ext.basicstitching.assembly.direct.OverlapBlend;
 import qupath.ext.basicstitching.config.StitchingConfig;
 import qupath.ext.basicstitching.stitching.StitchingStrategy;
 import qupath.ext.basicstitching.stitching.StitchingStrategyFactory;
 import qupath.ext.basicstitching.stitching.TileMapping;
+import qupath.ext.basicstitching.utilities.RegistrationPreferences;
 import qupath.lib.common.GeneralTools;
 
 /**
@@ -145,6 +147,15 @@ public class StitchingWorkflow {
             logger.info("  - Pixel size: {} um", config.pixelSizeInMicrons);
             logger.info("  - Downsample: {}", config.baseDownsample);
 
+            // Overlap blending is policy, not a per-run choice, so it is resolved here from the
+            // shared preferences rather than by each caller. Doing it in one place is what makes a
+            // QPSC-driven acquisition and a standalone stitch agree; a caller that has already set
+            // an explicit mode (tests, and any future per-run override) keeps it.
+            if (!config.isOverlapBlendSet()) {
+                config.setOverlapBlend(preferredOverlapBlend());
+            }
+            logger.info("  - Overlap blending: {}", config.getOverlapBlend().label());
+
             // 1. Select the appropriate strategy for this stitching type
             StitchingStrategy strategy = StitchingStrategyFactory.getStrategy(config);
             if (strategy == null) {
@@ -250,6 +261,24 @@ public class StitchingWorkflow {
         } catch (Exception e) {
             logger.error("Critical exception in StitchingWorkflow", e);
             return StitchingResult.empty();
+        }
+    }
+
+    /**
+     * The user's configured overlap blending, or the hard cut if it cannot be read.
+     *
+     * <p>Guarded the same way QPSC guards the registration settings: the preferences depend on
+     * QuPath's GUI preference machinery, which is absent in a headless run and in tests, and a
+     * cosmetic choice must never be the thing that fails a stitch.
+     *
+     * @return the mode to use; never null
+     */
+    private static OverlapBlend preferredOverlapBlend() {
+        try {
+            return RegistrationPreferences.overlapBlend();
+        } catch (Throwable t) {
+            logger.debug("Overlap blending preference unavailable ({}); using last-tile-wins", t.toString());
+            return OverlapBlend.LAST_WINS;
         }
     }
 }

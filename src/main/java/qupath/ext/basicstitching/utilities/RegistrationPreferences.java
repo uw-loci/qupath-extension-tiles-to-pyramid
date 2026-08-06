@@ -1,26 +1,31 @@
 package qupath.ext.basicstitching.utilities;
 
+import java.util.Arrays;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.DoubleProperty;
 import javafx.beans.property.IntegerProperty;
+import javafx.beans.property.ObjectProperty;
 import javafx.collections.ObservableList;
 import org.controlsfx.control.PropertySheet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.basicstitching.assembly.direct.OverlapBlend;
 import qupath.ext.basicstitching.registration.RegistrationSettings;
 import qupath.fx.prefs.controlsfx.PropertyItemBuilder;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.prefs.PathPrefs;
 
 /**
- * Persistent, user-visible tuning for content-based tile registration.
+ * Persistent, user-visible stitching policy: content-based tile registration, and how overlapping
+ * pixels are blended.
  *
  * <h2>Why these live in QuPath's Preferences pane</h2>
  *
- * The stitch dialog exposes only the two genuinely per-run choices -- how much the tiles overlap and
+ * The stitch dialog exposes only the genuinely per-run choices -- how much the tiles overlap and
  * which subdirectory to solve on. Everything else here is <i>policy</i>: how strict a match must be,
- * how far a tile may be corrected, how the solver trades measurements against nominal. Policy is
- * stable across runs, so it belongs in one persistent place rather than being re-entered every time.
+ * how far a tile may be corrected, how the solver trades measurements against nominal, whether a
+ * seam is cut or feathered. Policy is stable across runs, so it belongs in one persistent place
+ * rather than being re-entered every time.
  *
  * <p>Putting it in QuPath's global Preferences (category {@value #CATEGORY}) also makes it the single
  * source of truth shared with QPSC: QPSC reads these same settings through {@link #toSettings()}
@@ -29,6 +34,14 @@ import qupath.lib.gui.prefs.PathPrefs;
  *
  * <p>Every value is defaulted to the tested configuration and clamped to a sane range on read, so an
  * out-of-range edit degrades to the nearest valid value rather than failing a stitch.
+ *
+ * <h2>The class name</h2>
+ *
+ * <p>Now narrower than what the class holds, and kept anyway: QPSC resolves this class <i>by name</i>
+ * across an extension boundary, against whatever tiles-to-pyramid version the user happens to have
+ * installed (see {@code TileRegistrationSupport}, which catches the skew case). Renaming it would
+ * turn a version mismatch from "falls back to defaults" into a hard failure, which is not a trade
+ * worth making for a tidier name.
  */
 public final class RegistrationPreferences {
 
@@ -61,6 +74,9 @@ public final class RegistrationPreferences {
             PathPrefs.createPersistentPreference("basicstitching.registration.fillUnregistered", true);
     private static final IntegerProperty threads =
             PathPrefs.createPersistentPreference("basicstitching.registration.threads", 0);
+
+    private static final ObjectProperty<OverlapBlend> overlapBlend = PathPrefs.createPersistentPreference(
+            "basicstitching.stitching.overlapBlend", OverlapBlend.LAST_WINS, OverlapBlend.class);
 
     /**
      * Register every knob in QuPath's Preferences pane under the {@value #CATEGORY} category. Safe to
@@ -151,7 +167,36 @@ public final class RegistrationPreferences {
                         + " uses a small share of the open-file budget, so memory is unaffected. Default 0 (auto).")
                 .build());
 
-        logger.info("Registered {} tile-registration preferences under '{}'", 11, CATEGORY);
+        items.add(new PropertyItemBuilder<>(overlapBlend, OverlapBlend.class)
+                .propertyType(PropertyItemBuilder.PropertyType.CHOICE)
+                .name("Stitching: overlap blending")
+                .category(CATEGORY)
+                .choices(Arrays.asList(OverlapBlend.values()))
+                .description("How pixels covered by two tiles are resolved.\n"
+                        + "  Last tile wins: a hard cut. Sharp, but shows a step where tiles differ in brightness.\n"
+                        + "  Linear feather: fades each tile out across the overlap. Hides an exposure or"
+                        + " illumination step, at the cost of some blur along every join.\n"
+                        + "  Cosine feather: the same idea with a smoother roll-off and no kink where the ramp"
+                        + " ends; blurs slightly more.\n"
+                        + "Feathering averages two views of the same feature, so any residual misregistration"
+                        + " becomes a soft double image -- reach for it to fix INTENSITY seams, which registration"
+                        + " cannot. Default last tile wins.")
+                .build());
+
+        logger.info("Registered {} tiles-to-pyramid preferences under '{}'", 12, CATEGORY);
+    }
+
+    /**
+     * The user's chosen overlap blending.
+     *
+     * <p>Read by the stitching workflow for every stitch, registered or not, so a QPSC acquisition
+     * and a standalone stitch resolve overlaps the same way.
+     *
+     * @return the configured mode; never null
+     */
+    public static OverlapBlend overlapBlend() {
+        OverlapBlend blend = overlapBlend.get();
+        return blend == null ? OverlapBlend.LAST_WINS : blend;
     }
 
     /**

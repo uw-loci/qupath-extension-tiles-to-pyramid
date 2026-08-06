@@ -100,8 +100,22 @@ The design constraint is **bounded memory: roughly 40 MB regardless of tile coun
   composites on demand as the writer pulls tiles.
 
 `ChunkCompositor.compositeChunk` is where pixels land: query the index, allocate one chunk buffer,
-and for each intersecting tile read its sub-region and transfer it in. Overlaps currently resolve
-last-writer-wins.
+and for each intersecting tile read its sub-region and transfer it in.
+
+Overlaps resolve according to `OverlapBlend`, taken from the shared preferences (default
+`LAST_WINS`). There are two distinct paths, and the split is deliberate:
+
+- **`LAST_WINS`** answers `false` to `requiresOverlapDetection()` and takes the direct raster
+  transfer described above. No accumulator, byte-identical to what it has always produced.
+- **The feathers** answer `true` and route to `compositeBlended`, which accumulates
+  `weight * sample` into a float plane per band plus a weight plane, then normalises. Weights are
+  separable, so they cost one strategy call per row and per column rather than one per pixel. The
+  overlap width they taper across comes from `TileSpatialIndex.getOverlapPxX/Y`, measured from the
+  tiles' final positions so registration corrections are included.
+
+The accumulator is the one place the bounded-memory property is at risk -- about 16 MB on a
+full-size RGB chunk -- so it is allocated per call and never held on the compositor; a pyramid write
+has several chunks in flight.
 
 ## 6. Output writers
 

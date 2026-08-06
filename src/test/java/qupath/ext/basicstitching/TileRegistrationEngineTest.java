@@ -234,37 +234,17 @@ class TileRegistrationEngineTest {
         SyntheticGridFixture.Grid grid = SyntheticGridFixture.write(tempDir, 10, 10, TILE_W, TILE_H, 0.15, 2.0, 4);
 
         Runtime runtime = Runtime.getRuntime();
-        long before = settledHeapBytes(runtime);
+        long before = HeapMeasurement.settledHeapBytes(runtime);
 
         RegistrationResult result = TileRegistrationEngine.register(
                 new RegistrationRequest("0", grid.nominal(), settings().withThreads(4)));
 
-        long retained = settledHeapBytes(runtime) - before;
+        long retained = HeapMeasurement.settledHeapBytes(runtime) - before;
         assertFalse(result.degenerate());
         long retainedMb = Math.max(0, retained) / (1024 * 1024);
         assertTrue(
                 retainedMb < 20,
                 "registration retained " + retainedMb
                         + " MB after the solve; only per-tile corrections should survive");
-    }
-
-    /**
-     * Live heap after asking for a collection, repeated until the reading stops falling.
-     *
-     * <p>{@code System.gc()} is a hint, so a single call can return before anything has been
-     * reclaimed. Iterating until two consecutive readings agree makes the measurement about what is
-     * reachable rather than about when the collector happened to run.
-     */
-    private static long settledHeapBytes(Runtime runtime) {
-        long previous = Long.MAX_VALUE;
-        for (int i = 0; i < 5; i++) {
-            System.gc();
-            long used = runtime.totalMemory() - runtime.freeMemory();
-            if (used >= previous) {
-                return used;
-            }
-            previous = used;
-        }
-        return previous;
     }
 }
