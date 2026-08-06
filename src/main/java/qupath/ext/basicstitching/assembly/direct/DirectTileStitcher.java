@@ -43,18 +43,6 @@ public class DirectTileStitcher {
 
     private static final int DEFAULT_CHUNK_SIZE = 1024;
     private static final int DEFAULT_MAX_OPEN_READERS = 64;
-    private static final int TILE_COUNT_THRESHOLD = 500;
-
-    /**
-     * Whether the direct stitcher should be used for the given tile count.
-     * Threshold is 500 tiles -- below this, the existing SparseImageServer path is fine.
-     *
-     * @param tileCount Number of tiles to stitch
-     * @return true if direct stitching should be used
-     */
-    public static boolean shouldUseDirectStitching(int tileCount) {
-        return tileCount >= TILE_COUNT_THRESHOLD;
-    }
 
     /**
      * Stitch tiles using the memory-efficient direct path.

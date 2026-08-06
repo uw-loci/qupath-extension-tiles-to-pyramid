@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **`DirectTileStitcher.shouldUseDirectStitching(int)` method and `TILE_COUNT_THRESHOLD` constant.** `StitchingWorkflow` routes every tile count through the direct stitcher, so nothing called the predicate, and the `SparseImageServer` path it chose between no longer exists. Removed rather than left in place, where a threshold implies a fallback path a reader would go looking for.
+
 ### Changed
 - **Clarified registration preference labels and descriptions.** Text only; solver behaviour is unchanged from 0.6.5.
   - "Min shift search (px)" renamed to "Max shift per step, floor (px)". The two settings define one search window -- half-width = max(floor px, percent x tile size) -- and the old pair of names read as two independent knobs.
