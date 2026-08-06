@@ -37,7 +37,15 @@ import qupath.ext.basicstitching.utilities.RegistrationPreferences
 // Forward slashes on purpose: Windows accepts them, and they avoid the backslash-escape trap that
 // silently mangles a pasted path in the script editor.
 def FOLDER = "D:/2025QPSC/data/MH_Slides/MH_PPM/ppm_20x_9/66505_58782"
-double PIXEL_SIZE = 0.1725
+// MUST match the pixel size the ACQUISITION used -- the one in config_<scope>.yml under
+// hardware.objectives[].pixel_size_xy_um, and echoed in the acquisition log as
+// "--pixel-size" / "Pixel size from config". TileConfiguration.txt stores stage MICRONS, so
+// this constant is what converts them to pixels. Getting it wrong does not fail: it silently
+// manufactures a linear correction ramp of exactly (PIXEL_SIZE / true - 1) across the mosaic,
+// which is indistinguishable from a real scale error. That cost a full round of wrong analysis
+// on 2026-08-06 -- the acquisition had been corrected to 0.1732 while this still said 0.1725,
+// and the probe duly reported the same -0.4% "error" it had before the fix.
+double PIXEL_SIZE = 0.1732
 // Which subdirectory to register. Name ONE angle -- "." scans every subdirectory, which on a
 // 4-angle acquisition reads 4x the tiles (8700 instead of 2175) and spends most of the run in the
 // dimension scan for three angles it then throws away. Run the script once per angle instead:
@@ -266,6 +274,7 @@ def slope = { pts ->
 }
 
 println "--- implied scale error ---"
+println "  (this script converted stage microns with PIXEL_SIZE = " + pixelSize + ")"
 ["X": [colPts, "width"], "Y": [rowPts, "height"]].each { axisName, v ->
     def m = slope(v[0])
     if (m == null) {
@@ -279,10 +288,18 @@ println "--- implied scale error ---"
     println "     pixel size in use " + pixelSize + " um -> implied "
             + String.format(java.util.Locale.ROOT, "%.5f", implied) + " um"
 }
-println "  A slope well under 0.05% is noise. A consistent slope on BOTH axes is a pixel-size"
-println "  calibration error that registration is silently absorbing: it still stitches, but every"
-println "  tile then depends on a long chain of measurements to accumulate hundreds of pixels of"
-println "  correction, and any broken link in that chain shows up as a visible seam."
+println "  A slope well under 0.05% is noise."
+println ""
+println "  BEFORE concluding anything from a non-zero slope, compare the implied pixel size above"
+println "  against the PIXEL_SIZE this script used:"
+println "    * implied ~= the acquisition's pixel size, but != this script's PIXEL_SIZE"
+println "        -> the ACQUISITION is fine and THIS SCRIPT is stale. Fix PIXEL_SIZE and re-run."
+println "    * implied != the acquisition's pixel size (and this script matches it)"
+println "        -> a real calibration error registration is silently absorbing. It still"
+println "           stitches, but every tile then depends on a long chain of measurements to"
+println "           accumulate hundreds of pixels of correction, and any broken link in that"
+println "           chain shows up as a visible seam. Fix it at the source."
+println "  The two cases produce an IDENTICAL ramp, so the comparison is the only way to tell."
 null
 
 static String f(double v) {
