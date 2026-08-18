@@ -283,10 +283,10 @@ println "  (this script converted stage microns with PIXEL_SIZE = " + pixelSize 
     }
     // corrected = nominal * (1 + m), so the true pixel size is larger/smaller by the same factor.
     double implied = pixelSize / (1.0 + m)
-    println "  " + axisName + ": slope " + String.format(java.util.Locale.ROOT, "%+.5f", m)
-            + " = " + String.format(java.util.Locale.ROOT, "%+.3f%%", m * 100.0)
-    println "     pixel size in use " + pixelSize + " um -> implied "
-            + String.format(java.util.Locale.ROOT, "%.5f", implied) + " um"
+    println "  " + axisName + ": slope " + String.format(java.util.Locale.ROOT, "%+.5f", m) +
+            " = " + String.format(java.util.Locale.ROOT, "%+.3f%%", m * 100.0)
+    println "     pixel size in use " + pixelSize + " um -> implied " +
+            String.format(java.util.Locale.ROOT, "%.5f", implied) + " um"
 }
 println "  A slope well under 0.05% is noise."
 println ""
