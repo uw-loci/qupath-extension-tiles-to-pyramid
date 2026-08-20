@@ -268,21 +268,27 @@ public final class TileRegistrationEngine {
 
         // The shared world region, expressed in each tile's own local pixels. Only these bands are
         // read -- never the whole tile.
-        int ovW;
-        int ovH;
-        int ax;
-        int ay;
-        if (edge.horizontal()) {
-            ovW = (int) Math.round(ti.widthPx() - nominalDx);
-            ovH = Math.min(ti.heightPx(), tj.heightPx());
-            ax = (int) Math.round(nominalDx);
-            ay = 0;
-        } else {
-            ovW = Math.min(ti.widthPx(), tj.widthPx());
-            ovH = (int) Math.round(ti.heightPx() - nominalDy);
-            ax = 0;
-            ay = (int) Math.round(nominalDy);
-        }
+        //
+        // BOTH axes must be honoured, including the one perpendicular to the seam. The grid is not
+        // necessarily axis-aligned: a fraction of a degree of rotation between stage and camera (or
+        // introduced by a multi-tile alignment refinement) makes consecutive columns drift in Y and
+        // consecutive rows drift in X. Zeroing that perpendicular offset made the two bands cover
+        // DIFFERENT world regions, so NCC dutifully reported the drift itself as the measured
+        // offset; since measured = nominal + offset, the drift got counted TWICE and the difference
+        // was applied as a spurious per-edge shift equal to the drift. Measured on a real 0.251 deg
+        // grid: +8 px of bogus Y shift on every horizontal edge and -6 px of bogus X shift on every
+        // vertical edge -- a visibly torn seam at every tile boundary, and strictly worse than not
+        // registering at all. Invisible on a perfectly square grid, where the drift is 0, which is
+        // why it survived validation.
+        int ovW = (int) Math.round(Math.min(ti.widthPx(), tj.widthPx()) - Math.abs(nominalDx));
+        int ovH = (int) Math.round(Math.min(ti.heightPx(), tj.heightPx()) - Math.abs(nominalDy));
+        int ax = (int) Math.round(Math.max(0.0, nominalDx));
+        int ay = (int) Math.round(Math.max(0.0, nominalDy));
+        int bx = (int) Math.round(Math.max(0.0, -nominalDx));
+        int by = (int) Math.round(Math.max(0.0, -nominalDy));
+        // Rounding each origin independently can overrun a tile by a pixel; keep both reads inside.
+        ovW = Math.min(ovW, Math.min(ti.widthPx() - ax, tj.widthPx() - bx));
+        ovH = Math.min(ovH, Math.min(ti.heightPx() - ay, tj.heightPx() - by));
 
         if (ovW < RegistrationSettings.MIN_BAND_PX || ovH < RegistrationSettings.MIN_BAND_PX) {
             return new EdgeMeasurement(
@@ -291,7 +297,7 @@ public final class TileRegistrationEngine {
 
         try {
             OverlapBand bandA = reader.read(ti.file(), ax, ay, ovW, ovH);
-            OverlapBand bandB = reader.read(tj.file(), 0, 0, ovW, ovH);
+            OverlapBand bandB = reader.read(tj.file(), bx, by, ovW, ovH);
             return registrar.measure(edge, bandA, bandB, nominalDx, nominalDy, searchX, searchY, settings);
         } catch (java.io.IOException | RuntimeException e) {
             logger.debug("Could not read overlap for {} / {}: {}", ti.filename(), tj.filename(), e.toString());

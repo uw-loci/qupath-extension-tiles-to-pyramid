@@ -55,6 +55,36 @@ class TileRegistrationEngineTest {
     }
 
     @Test
+    void rotatedGrid_isNotMoved() throws IOException {
+        // A grid that is already correct but NOT axis-aligned: stage and camera slightly out of
+        // square, so each column steps a few pixels in Y and each row a few pixels in X. The
+        // tiles sit exactly where TileConfiguration.txt says, so zero correction is the only correct
+        // answer.
+        //
+        // Regression: the overlap band for a horizontal edge was read at ay = 0 (and the neighbour
+        // at bx = 0), silently assuming the perpendicular offset was zero. On a rotated grid the two
+        // bands then covered DIFFERENT world regions, NCC reported the drift itself as the measured
+        // offset, and since measured = nominal + offset the drift was counted twice -- applying a
+        // spurious shift equal to it on EVERY edge. Measured on a real 0.251 deg acquisition: +8 px
+        // of bogus Y shift per horizontal edge and -6 px of bogus X shift per vertical edge, i.e. a
+        // torn seam at every tile boundary, strictly worse than not registering at all.
+        // What matters is the perpendicular drift in PIXELS per step, not the angle. The real
+        // acquisition stepped 1860 px per column, so 0.251 deg drifted ~8 px. Bigger tiles than the
+        // other tests use, at 0.8 deg, reproduce that (~12 px per step) while keeping the drift
+        // under medianStep's 2%-of-tile gap tolerance, so the lattice is still detected as a grid.
+        // At 0.25 deg on a 256 px tile the drift is sub-pixel and the defect is genuinely invisible.
+        SyntheticGridFixture.Grid grid = SyntheticGridFixture.writeRotated(tempDir, 4, 4, 1024, 768, 0.15, 0.8, 11);
+
+        RegistrationResult result = register(grid);
+
+        assertFalse(result.degenerate(), "a rotated textured grid must still register: " + result.summary());
+        assertTrue(
+                result.maxAbsDeltaPx() <= 2.0,
+                "a rotated but already-correct grid must not be moved; got max |delta| = " + result.maxAbsDeltaPx()
+                        + " px -- " + result.summary());
+    }
+
+    @Test
     void endToEnd_noJitter_leavesGridEssentiallyUnmoved() throws IOException {
         // Guards the opposite failure from the one above: registration must not invent corrections
         // for a grid that is already correct.

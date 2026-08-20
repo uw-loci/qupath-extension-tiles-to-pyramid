@@ -132,6 +132,73 @@ final class SyntheticGridFixture {
         return new Grid(nominal, truth, tileW, tileH);
     }
 
+    /**
+     * Write a grid whose nominal lattice is ROTATED by {@code rotationDeg}, with the tiles carved at
+     * exactly those nominal positions -- so the correct answer is a ZERO correction.
+     *
+     * <p>Models the common real case of a stage and camera that are not perfectly square (or a
+     * multi-tile alignment refinement that solved a small rotation): consecutive columns drift in Y
+     * and consecutive rows drift in X. The overlap band for an edge must follow that perpendicular
+     * drift; a reader that assumes it is zero compares two different world regions and reports the
+     * drift as a measurement, which then gets applied as a spurious per-edge shift.
+     *
+     * @param dir destination directory
+     * @param cols grid columns
+     * @param rows grid rows
+     * @param tileW tile width in pixels
+     * @param tileH tile height in pixels
+     * @param overlapFrac fraction of each tile shared with its neighbour
+     * @param rotationDeg lattice rotation in degrees; a fraction of a degree is realistic
+     * @param seed random seed; fixed by callers so failures reproduce
+     * @return the grid's nominal positions and ground truth (rounding residual only)
+     * @throws IOException if the tiles cannot be written
+     */
+    static Grid writeRotated(
+            Path dir, int cols, int rows, int tileW, int tileH, double overlapFrac, double rotationDeg, long seed)
+            throws IOException {
+
+        Random rng = new Random(seed);
+        int stepX = (int) Math.round(tileW * (1 - overlapFrac));
+        int stepY = (int) Math.round(tileH * (1 - overlapFrac));
+        double sin = Math.sin(Math.toRadians(rotationDeg));
+        double cos = Math.cos(Math.toRadians(rotationDeg));
+
+        double span = Math.max((cols - 1) * stepX, (rows - 1) * stepY);
+        int margin = (int) Math.ceil(Math.abs(sin) * span) + 8;
+        int srcW = margin * 2 + (cols - 1) * stepX + tileW;
+        int srcH = margin * 2 + (rows - 1) * stepY + tileH;
+        float[][] source = texture(srcW, srcH, rng);
+
+        List<TileNode> nominal = new ArrayList<>();
+        Map<String, double[]> truth = new LinkedHashMap<>();
+        List<String> configLines = new ArrayList<>();
+        configLines.add("dim = 2");
+
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                int idx = r * cols + c;
+                String name = (idx + 1) + ".tif";
+                double gx = c * stepX;
+                double gy = r * stepY;
+                double nomX = gx * cos - gy * sin;
+                double nomY = gx * sin + gy * cos;
+                int trueX = (int) Math.round(margin + nomX);
+                int trueY = (int) Math.round(margin + nomY);
+
+                File file = dir.resolve(name).toFile();
+                writeTile(file, source, trueX, trueY, tileW, tileH, Content.TEXTURE);
+
+                nominal.add(new TileNode(name, file, nomX, nomY, tileW, tileH));
+                // Only the sub-pixel rounding residual: the tiles ARE where nominal says they are.
+                truth.put(name, new double[] {trueX - margin - nomX, trueY - margin - nomY});
+                configLines.add(String.format(Locale.ROOT, "%s; ; (%.3f, %.3f)", name, nomX, nomY));
+            }
+        }
+
+        Files.write(dir.resolve("TileConfiguration.txt"), configLines, StandardCharsets.US_ASCII);
+        return new Grid(nominal, truth, tileW, tileH);
+    }
+
     /** Convenience: jitter only, no coherent drift. */
     static Grid write(
             Path dir,
