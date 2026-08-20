@@ -212,9 +212,25 @@ Per-edge shifts reached 90% of the search allowance -- real corrections may be c
   slightly wrong pixel size) is absorbed as a smooth field of per-tile translations -- it stitches
   correctly, but the corrections grow toward the edges of the grid; fixing the pixel-size
   calibration at the source shrinks them.
+- **The grid itself may be rotated, and the overlap band follows it.** Corrections are translations,
+  but the *nominal lattice* is often not axis-aligned: a fraction of a degree between stage and
+  camera, or an alignment refinement that solved a small rotation, makes consecutive columns drift
+  in Y and rows drift in X. Each edge's band is therefore read at the offset given by **both** axes.
+  Reading it on the seam axis alone makes the two bands cover different regions of the slide, so the
+  drift is measured as an offset and then applied on top of the nominal that already contained it --
+  see the falsified guarantee below.
 - **A correct nominal position beats a confident wrong correction.** Featureless bands, blown-out
   fields, lone dust specks, and repeating texture are all detected and refused rather than guessed
-  at. The worst case is "no improvement", never "tiles thrown across the mosaic".
+  at, so a *rejected* match degrades to nominal.
+
+  This is a statement about the gates, and it was over-claimed until 2026-08-20: the gates cannot
+  catch a match that is confident and correct *for the region it was given* when the wrong region
+  was handed to it. Reading each edge's band on the seam axis only did exactly that on a rotated
+  grid -- NCC 0.95-0.99, every edge accepted, empty reject histogram, and a spurious shift equal to
+  the perpendicular drift applied to every seam, which is **worse than nominal**, not "no
+  improvement". Fixed in the same release; `rotatedGrid_isNotMoved` now holds the line. The general
+  lesson stands: when registration looks wrong, check what the band was pointed at before you
+  suspect the solver.
 - `TileConfiguration.txt` is never modified; corrections are applied in memory, so re-running is
   safe.
 
