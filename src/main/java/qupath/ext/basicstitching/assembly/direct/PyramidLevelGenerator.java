@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.basicstitching.channel.ChannelSemantics;
 
 /**
  * Generates downsampled pyramid levels by reading 2x2 blocks from the previous
@@ -34,8 +35,42 @@ public class PyramidLevelGenerator {
             int chunkSize,
             Consumer<Double> progressCallback)
             throws IOException {
+        generateLevels(writer, numLevels, baseWidth, baseHeight, chunkSize, progressCallback, ChannelSemantics.LINEAR);
+    }
+
+    /**
+     * As above, honouring a channel's declared resampling policy.
+     *
+     * <p>Area-averaging is only valid for continuous data. A label map averaged into a class the
+     * pixel never had, or an axial angle averaged across its wrap, produces a pyramid that looks
+     * right at every level and means nothing -- and nothing downstream can detect it. So a
+     * non-combinable channel is decimated by selection instead, and an angular one is averaged
+     * circularly when it declared the period needed to recover angles from its counts.
+     *
+     * @param declaration the tile's declared handling; use {@link ChannelSemantics#LINEAR} for
+     *     ordinary continuous data
+     */
+    public static void generateLevels(
+            ZarrOutputWriter writer,
+            int numLevels,
+            int baseWidth,
+            int baseHeight,
+            int chunkSize,
+            Consumer<Double> progressCallback,
+            ChannelSemantics.Declaration declaration)
+            throws IOException {
         if (numLevels <= 1) {
             return;
+        }
+        if (declaration == null) {
+            declaration = ChannelSemantics.LINEAR;
+        }
+        if (!declaration.policy().mayCombine()) {
+            logger.info(
+                    "Channel declares resample policy {}: pyramid levels will be built by {} "
+                            + "instead of area-averaging.",
+                    declaration.policy(),
+                    declaration.canAverageCircularly() ? "circular averaging" : "decimation");
         }
 
         int nChannels = writer.getNumChannels();
@@ -99,8 +134,8 @@ public class PyramidLevelGenerator {
                             int actualDstH = Math.min(outH, (srcH + 1) / 2);
 
                             // Downsample 2x via area averaging
-                            Object dstData =
-                                    downsample2x(srcData, srcW, srcH, actualDstW, actualDstH, nChannels, is16Bit);
+                            Object dstData = downsample2x(
+                                    srcData, srcW, srcH, actualDstW, actualDstH, nChannels, is16Bit, declaration);
 
                             // Write to current level for this plane
                             writer.writeRawData(
@@ -121,18 +156,142 @@ public class PyramidLevelGenerator {
      * Downsample data by 2x using area averaging.
      * For multi-channel data, the flat array is laid out as [C, H, W].
      */
-    private static Object downsample2x(
-            Object srcData, int srcW, int srcH, int dstW, int dstH, int nChannels, boolean is16Bit) {
+    // Package-private for testing: the wrap behaviour is the whole point.
+    static Object downsample2x(
+            Object srcData,
+            int srcW,
+            int srcH,
+            int dstW,
+            int dstH,
+            int nChannels,
+            boolean is16Bit,
+            ChannelSemantics.Declaration declaration) {
         if (is16Bit) {
             short[] src = (short[]) srcData;
             short[] dst = new short[nChannels * dstH * dstW];
-            downsampleShort(src, dst, srcW, srcH, dstW, dstH, nChannels);
+            if (declaration.canAverageCircularly()) {
+                downsampleAngularShort(src, dst, srcW, srcH, dstW, dstH, nChannels, declaration);
+            } else if (declaration.policy().mayCombine()) {
+                downsampleShort(src, dst, srcW, srcH, dstW, dstH, nChannels);
+            } else {
+                decimateShort(src, dst, srcW, srcH, dstW, dstH, nChannels);
+            }
             return dst;
         } else {
             byte[] src = (byte[]) srcData;
             byte[] dst = new byte[nChannels * dstH * dstW];
-            downsampleByte(src, dst, srcW, srcH, dstW, dstH, nChannels);
+            if (declaration.policy().mayCombine()) {
+                downsampleByte(src, dst, srcW, srcH, dstW, dstH, nChannels);
+            } else {
+                decimateByte(src, dst, srcW, srcH, dstW, dstH, nChannels);
+            }
             return dst;
+        }
+    }
+
+    /**
+     * Decimate by taking the top-left pixel of each 2x2 block.
+     *
+     * <p>Every output value is a value that actually occurred in the input, which is the only
+     * property that matters for labels, masks and object ids. Nearest-neighbour is also a safe
+     * (if lossier) fallback for angular data whose period was not declared.
+     */
+    // Package-private for testing: the wrap behaviour is the whole point.
+    static void decimateShort(short[] src, short[] dst, int srcW, int srcH, int dstW, int dstH, int nChannels) {
+        for (int c = 0; c < nChannels; c++) {
+            int srcOff = c * srcH * srcW;
+            int dstOff = c * dstH * dstW;
+            for (int dy = 0; dy < dstH; dy++) {
+                int sy = dy * 2;
+                for (int dx = 0; dx < dstW; dx++) {
+                    dst[dstOff + dy * dstW + dx] = src[srcOff + sy * srcW + dx * 2];
+                }
+            }
+        }
+    }
+
+    /** 8-bit counterpart of {@link #decimateShort}. */
+    private static void decimateByte(byte[] src, byte[] dst, int srcW, int srcH, int dstW, int dstH, int nChannels) {
+        for (int c = 0; c < nChannels; c++) {
+            int srcOff = c * srcH * srcW;
+            int dstOff = c * dstH * dstW;
+            for (int dy = 0; dy < dstH; dy++) {
+                int sy = dy * 2;
+                for (int dx = 0; dx < dstW; dx++) {
+                    dst[dstOff + dy * dstW + dx] = src[srcOff + sy * srcW + dx * 2];
+                }
+            }
+        }
+    }
+
+    /**
+     * Average an angular channel over 2x2 blocks, in the complex plane.
+     *
+     * <p>The counts are converted to angles, folded by the policy's harmonic so the wrap point
+     * disappears (an axial angle repeats twice per revolution, so it is averaged at double
+     * angle), averaged as unit vectors, and converted back. This is what makes 179 and 1 average
+     * to 0 rather than to 90.
+     */
+    // Package-private for testing: the wrap behaviour is the whole point.
+    static void downsampleAngularShort(
+            short[] src,
+            short[] dst,
+            int srcW,
+            int srcH,
+            int dstW,
+            int dstH,
+            int nChannels,
+            ChannelSemantics.Declaration declaration) {
+
+        // The declared period is one full cycle of the STORED values, so counts map
+        // onto a single turn regardless of whether the channel is axial or
+        // directional -- the folding is already baked into what the period means.
+        // (Multiplying by the harmonic here spans two turns for an axial channel,
+        // and a mean landing a hair below zero then wraps to 2*pi, which decodes to
+        // half the period: exactly the 90-degree answer this code exists to avoid.)
+        double period = declaration.period();
+        double toAngle = 2.0 * Math.PI / period;
+        long periodCounts = Math.round(period);
+
+        for (int c = 0; c < nChannels; c++) {
+            int srcOff = c * srcH * srcW;
+            int dstOff = c * dstH * dstW;
+            for (int dy = 0; dy < dstH; dy++) {
+                int sy = dy * 2;
+                for (int dx = 0; dx < dstW; dx++) {
+                    int sx = dx * 2;
+                    double sumSin = 0;
+                    double sumCos = 0;
+                    int count = 0;
+                    for (int oy = 0; oy < 2; oy++) {
+                        int y = sy + oy;
+                        if (y >= srcH) {
+                            continue;
+                        }
+                        for (int ox = 0; ox < 2; ox++) {
+                            int x = sx + ox;
+                            if (x >= srcW) {
+                                continue;
+                            }
+                            double angle = (src[srcOff + y * srcW + x] & 0xFFFF) * toAngle;
+                            sumSin += Math.sin(angle);
+                            sumCos += Math.cos(angle);
+                            count++;
+                        }
+                    }
+                    if (count == 0) {
+                        continue;
+                    }
+                    double mean = Math.atan2(sumSin / count, sumCos / count);
+                    if (mean < 0) {
+                        mean += 2.0 * Math.PI;
+                    }
+                    // Rounding can land exactly on the period; fold back so the stored
+                    // range stays half-open, as the writer declared it.
+                    long value = Math.floorMod(Math.round(mean / toAngle), periodCounts);
+                    dst[dstOff + dy * dstW + dx] = (short) value;
+                }
+            }
         }
     }
 
@@ -181,8 +340,8 @@ public class PyramidLevelGenerator {
     /**
      * Downsample 16-bit data by area-averaging 2x2 pixel blocks.
      */
-    private static void downsampleShort(
-            short[] src, short[] dst, int srcW, int srcH, int dstW, int dstH, int nChannels) {
+    // Package-private for testing: the wrap behaviour is the whole point.
+    static void downsampleShort(short[] src, short[] dst, int srcW, int srcH, int dstW, int dstH, int nChannels) {
         int srcPlane = srcH * srcW;
         int dstPlane = dstH * dstW;
 

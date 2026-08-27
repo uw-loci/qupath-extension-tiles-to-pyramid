@@ -10,6 +10,7 @@ import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.basicstitching.assembly.PyramidImageWriter;
+import qupath.ext.basicstitching.channel.ChannelSemantics;
 import qupath.ext.basicstitching.config.StitchingConfig;
 import qupath.ext.basicstitching.stitching.TileMapping;
 
@@ -112,7 +113,21 @@ public class DirectTileStitcher {
 
             // 3. Create compositor and reader pool (try-with-resources for cleanup on exception)
             boolean whiteBackground = dims.isRGB();
+
+            // A channel that declares it must not be combined cannot be feathered across a
+            // seam either: a weighted blend of two label values, or of two angles across
+            // their wrap, is exactly the corruption the declaration exists to prevent. Fall
+            // back to a sharp cut, which only ever emits values that were actually measured.
+            ChannelSemantics.Declaration declaration = ChannelSemantics.read(mappings.get(0).file);
             BlendStrategy blend = config.getOverlapBlend();
+            if (!declaration.policy().mayCombine() && blend != OverlapBlend.LAST_WINS) {
+                logger.info(
+                        "Channel declares resample policy {}; overriding overlap blending "
+                                + "from {} to LAST_WINS so seam pixels are selected, not mixed.",
+                        declaration.policy(),
+                        blend);
+                blend = OverlapBlend.LAST_WINS;
+            }
 
             try (TileReaderPool readerPool = new TileReaderPool(DEFAULT_MAX_OPEN_READERS)) {
                 ChunkCompositor compositor =
@@ -215,6 +230,10 @@ public class DirectTileStitcher {
                     zCount,
                     tCount);
 
+            // See the TIFF path for why a non-combinable channel cannot be feathered
+            // or area-averaged. Read once here; used for both the seam and the pyramid.
+            ChannelSemantics.Declaration declaration = ChannelSemantics.read(mappings.get(0).file);
+
             // 3. Compute pyramid levels
             int numLevels = computePyramidLevels(imageWidth, imageHeight, DEFAULT_CHUNK_SIZE);
             logger.info("Pyramid levels: {}", numLevels);
@@ -243,6 +262,14 @@ public class DirectTileStitcher {
                 // 6. Create compositor with bounded reader pool
                 boolean whiteBackground = dims.isRGB();
                 BlendStrategy blend = config.getOverlapBlend();
+                if (!declaration.policy().mayCombine() && blend != OverlapBlend.LAST_WINS) {
+                    logger.info(
+                            "Channel declares resample policy {}; overriding overlap blending "
+                                    + "from {} to LAST_WINS so seam pixels are selected, not mixed.",
+                            declaration.policy(),
+                            blend);
+                    blend = OverlapBlend.LAST_WINS;
+                }
 
                 try (TileReaderPool readerPool = new TileReaderPool(DEFAULT_MAX_OPEN_READERS)) {
                     ChunkCompositor compositor = new ChunkCompositor(
@@ -303,11 +330,17 @@ public class DirectTileStitcher {
                 if (numLevels > 1) {
                     logger.info("Generating {} pyramid levels...", numLevels - 1);
                     PyramidLevelGenerator.generateLevels(
-                            writer, numLevels, imageWidth, imageHeight, DEFAULT_CHUNK_SIZE, progress -> {
+                            writer,
+                            numLevels,
+                            imageWidth,
+                            imageHeight,
+                            DEFAULT_CHUNK_SIZE,
+                            progress -> {
                                 if (progressCallback != null) {
                                     progressCallback.accept(0.8 + 0.2 * progress);
                                 }
-                            });
+                            },
+                            declaration);
                 }
             }
             // Writer closed here
