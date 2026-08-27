@@ -140,6 +140,8 @@ tiles land on top of each other -- a separate question, and it applies whether o
 | **Linear feather** | weight rises linearly from each tile's edge across the overlap | the common default elsewhere (Fiji Grid/Collection, ASHLAR); hides an intensity step, blurs a little along every join |
 | **Cosine feather** | raised-cosine roll-off over the same span | no kink where the ramp ends, so no faint line of its own on smooth backgrounds; blurs slightly more |
 
+**Channel-declared resample policies override your choice.** If a tile declares its channel semantics (`qpsc.resample` in OME metadata), and that policy forbids combining values (`nearest` for label maps, `angular180`/`angular360` for angles), the stitcher automatically switches to **Last tile wins** regardless of your preference. This prevents silent data corruption: a label class the pixel never had, or an angle averaged across its wrap. The log reports when an override occurs. Tiles that declare nothing, or declare `linear`, are stitched with your chosen blending mode.
+
 **Reach for a feather to fix an *intensity* seam, not a positional one.** Uneven illumination, or
 exposure that drifted across a long acquisition, leaves neighbouring tiles at different brightness,
 and no amount of correct positioning removes the line between them -- that is what feathering is
