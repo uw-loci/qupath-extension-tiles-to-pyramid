@@ -66,7 +66,7 @@ dependencies {
     shadow("io.github.qupath:qupath-extension-bioformats:0.7.0")
 
     // Add Bio-Formats explicitly for compile time to avoid "class file for loci.formats.FormatException not found"
-    shadow("ome:formats-gpl:7.1.0")
+    shadow("ome:formats-gpl:8.5.0")
 
     // OME-ZARR support. PROVIDED for the same reason: QuPath ships jzarr 0.4.2 (the identical
     // version) plus jblosc and the platform-correct blosc native in its lib/.
