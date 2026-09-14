@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-09-14
+
 ### Fixed
 - **The stitch result dialog showed "..." instead of the output paths.** An alert's label wraps only at spaces, so a long Windows path collapsed to an ellipsis. The paths now appear in a read-only, resizable text area that can be selected and copied.
 - **The stitch dialog reopened tiny after a stitch.** The result dialog shared its window title, and the Dialog Manager extension remembers window size per title, so the stitch dialog inherited the result dialog's small size. The result dialog is now titled "Tiles to Pyramid - Result", and the stitch dialog refits its height to its content when shown, which also repairs a stale size already saved.
