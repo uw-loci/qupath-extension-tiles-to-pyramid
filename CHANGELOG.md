@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Channel merge in the stitch dialog.** When the selected folder holds two or more matching sub-folders of single-channel tiles, a "Merge the N channel stitches into one multichannel image" option appears; ticked, the per-channel stitches are combined with `ChannelMerger` into `<folder>_merged`, channels named after their sub-folders. The option is hidden for RGB tiles (one image, not channels), for a single tile folder, and for MicroManager input. The per-channel images are kept. The choice is remembered.
+- **The stitch dialog remembers its settings.** Output format, stitching method, compression, downsample, sub-folder text and the merge choice persist between runs; the output format used to reset to OME-TIFF on every open.
+
+### Changed
+- **An empty sub-folder text now stitches the selected folder itself, and only that folder.** It used to match every sub-folder. Applies to the filename-coordinate, TileConfiguration.txt and Vectra methods (`TileDirectories`). Non-empty text is unchanged, including QPSC's `"."`, which still selects sub-folders whose names contain a dot.
+- **Stitching runs in the background.** The dialog closes and QuPath stays responsive; a dialog reports the outputs (and the merged image) when it finishes. A second stitch cannot be started while one is running.
+- **The start button is labelled "Stitch", and Enter no longer triggers it.** Pressing Enter in a text field used to start a stitch.
+- The extension description now reflects what it does (registration, OME-ZARR, channel merge), and the dialog's GitHub link points at `uw-loci/qupath-extension-tiles-to-pyramid` instead of the retired BasicStitching repo.
+
+### Fixed
+- **The stitch dialog could not be opened a second time.** Its controls were static and reused, so the second open threw "Children: duplicate children added" and nothing appeared. Each open now builds its own controls.
+- **The Stitch/Cancel buttons could be pushed off-screen.** The form sits in a scroll pane capped at 70% of the screen height, hidden rows no longer reserve space, and the dialog is resizable.
 - **Stitcher honours a tile's declared resample policy.** Tiles declare their channel semantics in OME metadata under `qpsc.resample` (written by microscope_imageprocessing): `linear` for continuous data, `nearest` for labels/masks/object ids, or `angular180`/`angular360` for angles. The stitcher now respects these declarations and adapts its processing:
   - **Overlap blending**: When a tile declares a non-combinable policy, the overlap blend strategy is automatically overridden to LAST_WINS (hard cut at the seam) regardless of the user's preference. This prevents the corruption that averaging would cause: a label class that the pixel never belonged to, or an angle averaged across its wrap. The log reports when an override occurs.
   - **Pyramid downsampling**: Each pyramid level uses the appropriate strategy for the declared policy: decimation (selecting actual pixel values) for `nearest`, circular averaging (via complex-plane unit vectors) for angular channels, and area-averaging for `linear`. An angular channel with a declared period is averaged correctly across the wrap; one without a period falls back to decimation. This prevents pyramids that look right at every level but are meaningless.

@@ -24,35 +24,33 @@ public class FileNameStitchingStrategy implements StitchingStrategy {
         Path rootdir = Paths.get(folderPath);
         Pattern pattern = Pattern.compile(".*\\[(\\d+),(\\d+)\\].*\\.(tif|tiff|ome\\.tif)$");
 
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(rootdir)) {
-            for (Path path : stream) {
-                if (Files.isDirectory(path) && path.getFileName().toString().contains(matchingString)) {
-                    logger.info("Processing subdir: {}", path);
-                    try (DirectoryStream<Path> tifStream = Files.newDirectoryStream(path, "*.tif*")) {
-                        for (Path tifPath : tifStream) {
-                            String filename = tifPath.getFileName().toString();
-                            Matcher matcher = pattern.matcher(filename);
-                            if (matcher.matches()) {
-                                int x = Integer.parseInt(matcher.group(1));
-                                int y = Integer.parseInt(matcher.group(2));
-                                // Scale by pixel size if needed
-                                int xPx = (int) Math.round(x / pixelSizeInMicrons);
-                                int yPx = (int) Math.round(y / pixelSizeInMicrons);
-                                Map<String, Integer> dims = UtilityFunctions.getTiffDimensions(tifPath.toFile());
-                                if (dims != null) {
-                                    ImageRegion region = ImageRegion.createInstance(
-                                            xPx, yPx, dims.get("width"), dims.get("height"), 0, 0);
-                                    mappings.add(new TileMapping(
-                                            tifPath.toFile(),
-                                            region,
-                                            path.getFileName().toString()));
-                                    logger.debug("Added mapping for file {} at ({}, {})", filename, xPx, yPx);
-                                } else {
-                                    logger.warn("Failed to get TIFF dimensions for {}", filename);
-                                }
+        try {
+            for (Path path : TileDirectories.resolve(rootdir, matchingString)) {
+                logger.info("Processing tile folder: {}", path);
+                try (DirectoryStream<Path> tifStream = Files.newDirectoryStream(path, "*.tif*")) {
+                    for (Path tifPath : tifStream) {
+                        String filename = tifPath.getFileName().toString();
+                        Matcher matcher = pattern.matcher(filename);
+                        if (matcher.matches()) {
+                            int x = Integer.parseInt(matcher.group(1));
+                            int y = Integer.parseInt(matcher.group(2));
+                            // Scale by pixel size if needed
+                            int xPx = (int) Math.round(x / pixelSizeInMicrons);
+                            int yPx = (int) Math.round(y / pixelSizeInMicrons);
+                            Map<String, Integer> dims = UtilityFunctions.getTiffDimensions(tifPath.toFile());
+                            if (dims != null) {
+                                ImageRegion region = ImageRegion.createInstance(
+                                        xPx, yPx, dims.get("width"), dims.get("height"), 0, 0);
+                                mappings.add(new TileMapping(
+                                        tifPath.toFile(),
+                                        region,
+                                        path.getFileName().toString()));
+                                logger.debug("Added mapping for file {} at ({}, {})", filename, xPx, yPx);
                             } else {
-                                logger.debug("Filename does not match pattern: {}", filename);
+                                logger.warn("Failed to get TIFF dimensions for {}", filename);
                             }
+                        } else {
+                            logger.debug("Filename does not match pattern: {}", filename);
                         }
                     }
                 }

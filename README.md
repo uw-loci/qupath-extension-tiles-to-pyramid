@@ -19,7 +19,7 @@ A basic image stitching extension for QuPath that combines multiple image tiles 
 - **Robust Error Handling**: Comprehensive logging and validation for troubleshooting
 - **Memory Efficient**: Direct tile stitcher uses ~40 MB steady state regardless of tile count (vs 2-4+ GB with legacy SparseImageServer approach)
 - **Large Acquisition Support**: Handles 1600+ tiles without OOM via spatial indexing and bounded reader pool
-- **Multichannel Merge**: Combine N same-shape single-channel pyramids (from per-channel stitching) into one multichannel image via a separate `ChannelMerger` step (see [Dimensions and channels](#what-the-extension-can-handle-dimensions-and-channels))
+- **Multichannel Merge**: Combine N same-shape single-channel pyramids (from per-channel stitching) into one multichannel image, offered in the stitch dialog when there are channels to merge (see [Dimensions and channels](#what-the-extension-can-handle-dimensions-and-channels))
 
 ## What the extension can handle: dimensions and channels
 
@@ -72,8 +72,11 @@ every `(z, t)` plane:
 at a time**: each channel is its own input subdirectory, producing one single-channel pyramid per
 channel. Those per-channel pyramids are then combined into a single multichannel OME-TIFF or OME-ZARR
 by a separate **channel-merge** step (`ChannelMerger`), which requires them to share the same width,
-height, and pixel type. That merge is *not* part of the in-dialog stitch -- it is a public API driven
-by the calling system (QPSC) or a script, with no menu item of its own. Co-registration across the
+height, and pixel type. In the stitch dialog it appears as a "Merge the N channel stitches..." checkbox
+when the selected folder holds two or more matching sub-folders of single-channel tiles; it stays hidden
+for RGB tiles, a single tile folder, or MicroManager input. The merged image is written as
+`<folder>_merged` beside the per-channel images (which are kept), with channels named after the
+sub-folders. QPSC and scripts call `ChannelMerger` directly. Co-registration across the
 channels is why registration solves one reference subdirectory and reuses it for the rest (see
 [Tile registration](#tile-registration)).
 
@@ -274,6 +277,8 @@ Developers of qpsc may want to also run the following to enable working with qps
 1. Open QuPath
 2. Navigate to **Extensions** -> **Tiles to Pyramid** -> **Tiles-to-pyramid**
 3. The stitching dialog will open
+4. Choose the folder and options, then click **Stitch**. Pressing Enter in a field does not start it.
+   The stitch runs in the background; a dialog lists the outputs when it finishes.
 
 ### Stitching Strategies
 
@@ -365,7 +370,7 @@ input_folder/bounds/
     +-- TileConfiguration.txt
     +-- [tile files]
 ```
-With matching string "." results in:
+With matching string "." (every folder name here contains a dot) results in:
 - `-5.0.ome.tif`
 - `0.0.ome.tif`  
 - `5.0.ome.tif`
@@ -436,7 +441,8 @@ Common to both:
 | **Base Downsample** | Downsampling factor for output | 1.0 |
 | **Compression** | QuPath OME writer compression type (`LZW`, `JPEG`, `J2K`, `J2K_LOSSY`, `ZLIB`, `UNCOMPRESSED`, `DEFAULT`); applies to both output formats (mapped to Blosc codecs for OME-ZARR) | J2K |
 | **Output Format** | OME-TIFF (single file) or OME-ZARR (directory) | OME-TIFF |
-| **Matching String** | Filter subdirectories by name pattern. Use "." to process all subdirectories separately | "" (all) |
+| **Matching String** ("Stitch sub-folders with text string") | Stitch each sub-folder whose name contains this text, one output per sub-folder. **Empty stitches the selected folder itself, and only that folder.** Not used by the MicroManager method | Last-used value (initially "20x") |
+| **Merge channels** | Shown only when 2+ matching sub-folders of single-channel (non-RGB) tiles will be stitched. Combines the per-channel stitches into one multichannel `<folder>_merged` image; the per-channel images are kept. Choice is remembered | On |
 | **Z-Spacing (um)** | Z-axis spacing for 3D datasets | 1.0 |
 | **Solve tile overlaps (content-based registration)** | Checkbox to enable overlap measurement and correction. When enabled, measures the real overlap between neighbouring tiles and corrects their positions before stitching, closing seams caused by stage backlash and drift. Writes a `TileRegistration.txt` solution file beside the tiles. Choice is remembered between sessions. See [Tile registration](#tile-registration) for details. | Off (faster, nominal positions) |
 
@@ -581,7 +587,7 @@ input_folder/
 
 ### Output Structure
 Output files are named based on the subdirectory being processed:
-- When matching string equals folder name: uses folder name
+- When the matching string is empty: the selected folder is stitched on its own and the output is named after it
 - When processing multiple subdirectories: each gets its own output file named after the subdirectory
 
 ```

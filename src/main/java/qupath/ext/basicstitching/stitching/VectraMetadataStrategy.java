@@ -36,28 +36,23 @@ public class VectraMetadataStrategy implements StitchingStrategy {
         List<TileMapping> mappings = new ArrayList<>();
         Path rootdir = Paths.get(folderPath);
 
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(rootdir)) {
-            for (Path path : stream) {
-                if (Files.isDirectory(path) && path.getFileName().toString().contains(matchingString)) {
-                    logger.info("Processing subdir: {}", path);
-                    try (DirectoryStream<Path> tifStream = Files.newDirectoryStream(path, "*.tif*")) {
-                        for (Path tifPath : tifStream) {
-                            String filename = tifPath.getFileName().toString();
-                            UtilityFunctions.VectraRegionInfo info = UtilityFunctions.getVectraPositionAndDimensions(
-                                    tifPath.toFile(), xFudgeFactor, yFudgeFactor);
-                            if (info != null) {
-                                // If info.xPx/yPx are already in pixels, no scaling by pixelSizeInMicrons needed
-                                ImageRegion region =
-                                        ImageRegion.createInstance(info.xPx, info.yPx, info.width, info.height, 0, 0);
-                                mappings.add(new TileMapping(
-                                        tifPath.toFile(),
-                                        region,
-                                        path.getFileName().toString()));
-                                logger.debug(
-                                        "Added mapping for Vectra file {} at ({}, {})", filename, info.xPx, info.yPx);
-                            } else {
-                                logger.warn("Failed to extract Vectra metadata for {}", filename);
-                            }
+        try {
+            for (Path path : TileDirectories.resolve(rootdir, matchingString)) {
+                logger.info("Processing tile folder: {}", path);
+                try (DirectoryStream<Path> tifStream = Files.newDirectoryStream(path, "*.tif*")) {
+                    for (Path tifPath : tifStream) {
+                        String filename = tifPath.getFileName().toString();
+                        UtilityFunctions.VectraRegionInfo info = UtilityFunctions.getVectraPositionAndDimensions(
+                                tifPath.toFile(), xFudgeFactor, yFudgeFactor);
+                        if (info != null) {
+                            // If info.xPx/yPx are already in pixels, no scaling by pixelSizeInMicrons needed
+                            ImageRegion region =
+                                    ImageRegion.createInstance(info.xPx, info.yPx, info.width, info.height, 0, 0);
+                            mappings.add(new TileMapping(
+                                    tifPath.toFile(), region, path.getFileName().toString()));
+                            logger.debug("Added mapping for Vectra file {} at ({}, {})", filename, info.xPx, info.yPx);
+                        } else {
+                            logger.warn("Failed to extract Vectra metadata for {}", filename);
                         }
                     }
                 }

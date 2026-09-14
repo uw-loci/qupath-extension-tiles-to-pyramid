@@ -75,25 +75,25 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
         // This takes priority over root directory processing to avoid accidentally
         // lumping all angles together when the root directory name also matches.
         logger.info("Searching for subdirectories matching '{}' within: {}", matchingString, folderPath);
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(rootdir)) {
-            for (Path path : stream) {
-                if (Files.isDirectory(path) && path.getFileName().toString().contains(matchingString)) {
-                    Path configPath = path.resolve("TileConfiguration.txt");
-                    if (!Files.exists(configPath)) {
-                        logger.warn("No TileConfiguration.txt in subdir: {}", path);
-                        continue;
-                    }
-                    logger.info("Processing subdir: {} with config {}", path, configPath);
-                    mappings.addAll(processDirectory(path, configPath, pixelSizeInMicrons, baseDownsample));
+        // A blank matching string resolves to the root folder alone (TileDirectories).
+        try {
+            for (Path path : TileDirectories.resolve(rootdir, matchingString)) {
+                Path configPath = path.resolve("TileConfiguration.txt");
+                if (!Files.exists(configPath)) {
+                    logger.warn("No TileConfiguration.txt in tile folder: {}", path);
+                    continue;
                 }
+                logger.info("Processing tile folder: {} with config {}", path, configPath);
+                mappings.addAll(processDirectory(path, configPath, pixelSizeInMicrons, baseDownsample));
             }
         } catch (Exception e) {
             logger.error("Error searching subdirectories in TileConfigurationTxtStrategy", e);
         }
 
         // If no matching subdirectories found, fall back to processing the root directory
-        // directly (common for brightfield where tiles are in the folder itself)
-        if (mappings.isEmpty()) {
+        // directly (common for brightfield where tiles are in the folder itself). Not needed in
+        // single-folder mode, which already tried the root.
+        if (mappings.isEmpty() && !TileDirectories.isSingleFolder(matchingString)) {
             Path rootConfigPath = rootdir.resolve("TileConfiguration.txt");
             if (Files.exists(rootConfigPath)) {
                 logger.info("No matching subdirectories found. Processing root directory directly: {}", rootdir);

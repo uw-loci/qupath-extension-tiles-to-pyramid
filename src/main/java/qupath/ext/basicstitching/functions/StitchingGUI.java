@@ -7,13 +7,20 @@ import static qupath.ext.basicstitching.utilities.UtilityFunctions.getCompressio
 
 import java.awt.Desktop;
 import java.io.File;
+import java.io.IOException;
 import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Stream;
 import javafx.application.Platform;
 import javafx.scene.Node;
 import javafx.scene.control.*;
@@ -22,16 +29,23 @@ import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Modality;
+import javafx.stage.Screen;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.basicstitching.assembly.ChannelMerger;
+import qupath.ext.basicstitching.assembly.direct.TileReaderPool;
 import qupath.ext.basicstitching.config.StitchingConfig;
 import qupath.ext.basicstitching.registration.RegistrationMode;
 import qupath.ext.basicstitching.registration.RegistrationSettings;
 import qupath.ext.basicstitching.registration.TileRegistrationSolution;
 import qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy;
+import qupath.ext.basicstitching.stitching.TileDirectories;
 import qupath.ext.basicstitching.utilities.QPPreferences;
 import qupath.ext.basicstitching.utilities.RegistrationPreferences;
 import qupath.ext.basicstitching.workflow.StitchingWorkflow;
+import qupath.fx.dialogs.Dialogs;
+import qupath.lib.common.GeneralTools;
+import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.scripting.QPEx;
 
 /**
@@ -46,76 +60,99 @@ public class StitchingGUI {
 
     private static final Logger logger = LoggerFactory.getLogger(StitchingGUI.class);
 
-    // GUI Components - static fields for persistence across dialog instances
-    static TextField folderField = new TextField(QPPreferences.getFolderLocationSaved());
-    static ComboBox<String> compressionBox = new ComboBox<>();
-    static ComboBox<StitchingConfig.OutputFormat> outputFormatBox = new ComboBox<>();
-    static TextField pixelSizeField = new TextField(QPPreferences.getImagePixelSizeInMicronsSaved());
-    static CheckBox pixelSizeOverrideCheckbox = new CheckBox("Manually edit pixel size");
-    static Label pixelSizeSourceLabel = new Label("");
-    static Button estimatePixelSizeButton = new Button("Try calculating pixel size...");
-    static TextField downsampleField = new TextField(QPPreferences.getDownsampleSaved());
-    static TextField matchStringField = new TextField(QPPreferences.getSearchStringSaved());
-    static ComboBox<String> stitchingGridBox = new ComboBox<>();
-    static Button folderButton = new Button("Select Folder");
-    static CheckBox resolveOverlapsCheckbox = new CheckBox("Solve tile overlaps (content-based registration)");
+    // One dialog-launched stitch at a time: it runs in the background, so the menu stays live.
+    private static final AtomicBoolean STITCH_RUNNING = new AtomicBoolean(false);
+
+    // GUI components are per-dialog: a JavaFX node can have only one parent, so reusing static
+    // nodes threw "duplicate children added" on the second open. Values carry over through
+    // QPPreferences instead (saved in processDialogResult).
+    private final TextField folderField = new TextField(QPPreferences.getFolderLocationSaved());
+    private final ComboBox<String> compressionBox = new ComboBox<>();
+    private final ComboBox<StitchingConfig.OutputFormat> outputFormatBox = new ComboBox<>();
+    private final TextField pixelSizeField = new TextField(QPPreferences.getImagePixelSizeInMicronsSaved());
+    private final CheckBox pixelSizeOverrideCheckbox = new CheckBox("Manually edit pixel size");
+    private final Label pixelSizeSourceLabel = new Label("");
+    private final Button estimatePixelSizeButton = new Button("Try calculating pixel size...");
+    private final TextField downsampleField = new TextField(QPPreferences.getDownsampleSaved());
+    private final TextField matchStringField = new TextField(QPPreferences.getSearchStringSaved());
+    private final ComboBox<String> stitchingGridBox = new ComboBox<>();
+    private final Button folderButton = new Button("Select Folder");
+    private final CheckBox resolveOverlapsCheckbox = new CheckBox("Solve tile overlaps (content-based registration)");
+    // Shown only when the folder holds 2+ matching single-channel subdirectories (RGB is not channels).
+    private final CheckBox mergeChannelsCheckbox = new CheckBox("Merge channels into one multichannel image");
     // Per-run registration controls (the tuning knobs live in Preferences -> Tiles-to-pyramid).
-    static final String AUTO_REFERENCE = "Auto (most texture)";
-    static CheckBox overlapAutoCheckbox = new CheckBox("Overlap %: derive from the tile grid");
-    static TextField overlapXField = new TextField("10");
-    static TextField overlapYField = new TextField("10");
-    static Label overlapXLabel = new Label("Overlap X %:");
-    static Label overlapYLabel = new Label("Overlap Y %:");
-    static Label referenceLabel = new Label("Reference subdirectory:");
-    static ComboBox<String> referenceBox = new ComboBox<>();
-    static Label registrationHintLabel = new Label("Advanced tuning: Preferences -> Tiles-to-pyramid");
-    static GridPane registrationOptionsPane = new GridPane();
-    static CheckBox useFudgeFactorCheckbox = new CheckBox("Apply fudge factor to adjust for gaps between tiles");
-    static TextField xFudgeField = new TextField("1.0");
-    static TextField yFudgeField = new TextField("1.0");
-    static Hyperlink vectraForumLink = new Hyperlink("See forum discussion");
+    private static final String AUTO_REFERENCE = "Auto (most texture)";
+    private final CheckBox overlapAutoCheckbox = new CheckBox("Overlap %: derive from the tile grid");
+    private final TextField overlapXField = new TextField("10");
+    private final TextField overlapYField = new TextField("10");
+    private final Label overlapXLabel = new Label("Overlap X %:");
+    private final Label overlapYLabel = new Label("Overlap Y %:");
+    private final Label referenceLabel = new Label("Reference subdirectory:");
+    private final ComboBox<String> referenceBox = new ComboBox<>();
+    private final Label registrationHintLabel = new Label("Advanced tuning: Preferences -> Tiles-to-pyramid");
+    private final GridPane registrationOptionsPane = new GridPane();
+    private final CheckBox useFudgeFactorCheckbox = new CheckBox("Apply fudge factor to adjust for gaps between tiles");
+    private final TextField xFudgeField = new TextField("1.0");
+    private final TextField yFudgeField = new TextField("1.0");
+    private final Hyperlink vectraForumLink = new Hyperlink("See forum discussion");
     // Labels
-    static Label stitchingGridLabel = new Label("Stitching Method:");
-    static Label folderLabel = new Label("Folder location:");
-    static Label compressionLabel = new Label("Compression type:");
-    static Label outputFormatLabel = new Label("Output format:");
-    static Label pixelSizeLabel = new Label("Pixel size, microns:");
-    static Label downsampleLabel = new Label("Downsample:");
-    static Label matchStringLabel = new Label("Stitch sub-folders with text string:");
-    static Hyperlink githubLink = new Hyperlink("GitHub ReadMe");
-    static Label xFudgeLabel = new Label("X fudge factor:");
-    static Label yFudgeLabel = new Label("Y fudge factor:");
+    private final Label stitchingGridLabel = new Label("Stitching Method:");
+    private final Label folderLabel = new Label("Folder location:");
+    private final Label compressionLabel = new Label("Compression type:");
+    private final Label outputFormatLabel = new Label("Output format:");
+    private final Label pixelSizeLabel = new Label("Pixel size, microns:");
+    private final Label downsampleLabel = new Label("Downsample:");
+    private final Label matchStringLabel = new Label("Stitch sub-folders with text string:");
+    private final Hyperlink githubLink = new Hyperlink("GitHub ReadMe");
+    private final Label xFudgeLabel = new Label("X fudge factor:");
+    private final Label yFudgeLabel = new Label("Y fudge factor:");
 
     // Map to hold the positions of each GUI element
-    private static Map<Node, Integer> guiElementPositions = new HashMap<>();
+    private final Map<Node, Integer> guiElementPositions = new HashMap<>();
 
     /**
      * Creates and displays the main GUI dialog for stitching configuration.
      * Handles user input validation, preference saving, and initiates stitching process.
      */
     public static void createGUI() {
-        // Create the dialog
+        if (STITCH_RUNNING.get()) {
+            showAlertDialog("A stitch is already running. Wait for it to finish before starting another.");
+            return;
+        }
+        new StitchingGUI().show();
+    }
+
+    private void show() {
         Dialog<ButtonType> dlg = new Dialog<>();
         dlg.initModality(Modality.APPLICATION_MODAL);
-        dlg.setTitle("Input Stitching Method and Options");
-        dlg.setHeaderText("Enter your settings below:");
+        var qupath = QuPathGUI.getInstance();
+        if (qupath != null && qupath.getStage() != null) {
+            dlg.initOwner(qupath.getStage());
+        }
+        dlg.setTitle("Tiles to Pyramid");
+        dlg.setHeaderText("Choose the tile folder and stitching options, then click Stitch.");
+        dlg.setResizable(true);
 
-        // Set the content
-        dlg.getDialogPane().setContent(createContent());
+        // The form is taller than a laptop screen once registration options are shown; without a
+        // scroll pane the button bar is pushed off the bottom and the dialog cannot be run.
+        ScrollPane scroll = new ScrollPane(createContent());
+        scroll.setFitToWidth(true);
+        scroll.setMaxHeight(Screen.getPrimary().getVisualBounds().getHeight() * 0.7);
+        dlg.getDialogPane().setContent(scroll);
 
-        // Add Okay and Cancel buttons
-        dlg.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+        ButtonType stitchType = new ButtonType("Stitch", ButtonBar.ButtonData.OK_DONE);
+        dlg.getDialogPane().getButtonTypes().addAll(stitchType, ButtonType.CANCEL);
+        // OK_DONE makes Stitch the default button, so Enter in any text field would start a long
+        // stitch. Only an explicit click should.
+        ((Button) dlg.getDialogPane().lookupButton(stitchType)).setDefaultButton(false);
 
-        // Show the dialog and capture the response
         Optional<ButtonType> result = dlg.showAndWait();
-
-        // Handling the response
-        if (result.isPresent() && result.get() == ButtonType.OK) {
+        if (result.isPresent() && result.get() == stitchType) {
             processDialogResult();
         }
     }
 
-    private static void processDialogResult() {
+    private void processDialogResult() {
         try {
             // Read values from dialog and save to persistent preferences
             String folderPath = folderField.getText();
@@ -127,6 +164,15 @@ public class StitchingGUI {
             String matchingString = matchStringField.getText();
             String stitchingType = stitchingGridBox.getValue();
             double zSpacingMicrons = 1.0;
+
+            QPPreferences.setFolderLocationSaved(folderPath);
+            QPPreferences.setStitchingMethodSaved(stitchingType);
+            QPPreferences.setCompressionTypeSaved(compressionType);
+            QPPreferences.setDownsampleSaved(downsampleField.getText());
+            QPPreferences.setSearchStringSaved(matchingString);
+            if (pixelSizeOverrideCheckbox.isSelected()) {
+                QPPreferences.setImagePixelSizeInMicronsSaved(pixelSizeField.getText());
+            }
 
             // Handle fudge factors for Vectra
             double xFudgeFactor = 1.0;
@@ -189,19 +235,161 @@ public class StitchingGUI {
                         solutionOut);
             }
 
-            // Use the new workflow
-            String finalImageName = StitchingWorkflow.run(config);
-
-            // Optionally: display success or error dialog
-            if (finalImageName != null) {
-                showAlertDialog("Stitching complete: " + finalImageName);
-            } else {
-                showAlertDialog("Stitching failed. See logs for details.");
+            QPPreferences.setOutputFormatSaved(config.outputFormat.name());
+            boolean mergeOffered = mergeChannelsCheckbox.isVisible();
+            if (mergeOffered) {
+                QPPreferences.setMergeChannelsSaved(mergeChannelsCheckbox.isSelected());
             }
+            runInBackground(config, mergeOffered && mergeChannelsCheckbox.isSelected());
 
         } catch (Exception e) {
             logger.error("Error processing dialog result", e);
             showAlertDialog("Error processing input: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Run the stitch (and the optional channel merge) off the FX thread so QuPath stays responsive,
+     * reporting the outcome in a dialog when it finishes.
+     */
+    private static void runInBackground(StitchingConfig config, boolean mergeChannels) {
+        if (!STITCH_RUNNING.compareAndSet(false, true)) {
+            showAlertDialog("A stitch is already running. Wait for it to finish before starting another.");
+            return;
+        }
+        Dialogs.showInfoNotification(
+                "Tiles to Pyramid", "Stitching started in the background. You will be told when it finishes.");
+        Thread worker = new Thread(
+                () -> {
+                    boolean ok = false;
+                    StringBuilder message = new StringBuilder();
+                    try {
+                        StitchingWorkflow.StitchingResult result = StitchingWorkflow.runDetailed(config);
+                        List<String> outputs = result.outputs();
+                        if (outputs.isEmpty()) {
+                            message.append("Stitching failed. See the log for details.");
+                        } else {
+                            ok = true;
+                            message.append("Stitching complete:");
+                            outputs.forEach(o -> message.append("\n  ").append(o));
+                            if (!result.failedSubdirs().isEmpty()) {
+                                ok = false;
+                                message.append("\n\nFailed: ").append(result.failedSubdirs());
+                            }
+                            if (mergeChannels && outputs.size() >= 2) {
+                                String merged = mergeChannelOutputs(outputs, config);
+                                if (merged != null) {
+                                    message.append("\n\nMerged channels into:\n  ")
+                                            .append(merged);
+                                } else {
+                                    ok = false;
+                                    message.append("\n\nChannel merge failed; the per-channel images were kept. "
+                                            + "See the log for details.");
+                                }
+                            }
+                        }
+                    } catch (Throwable t) {
+                        logger.error("Stitching failed", t);
+                        message.setLength(0);
+                        message.append("Stitching failed: ").append(t.getMessage());
+                    } finally {
+                        STITCH_RUNNING.set(false);
+                    }
+                    boolean success = ok;
+                    Platform.runLater(() -> {
+                        if (success) {
+                            showInfoDialog(message.toString());
+                        } else {
+                            showAlertDialog(message.toString());
+                        }
+                    });
+                },
+                "tiles-to-pyramid-stitch");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    /**
+     * Combine the per-subdirectory stitches into one multichannel image named after the selected
+     * folder. Channels are ordered and named by their subdirectory (the output file stem).
+     */
+    private static String mergeChannelOutputs(List<String> outputs, StitchingConfig config) {
+        List<String> sorted = new ArrayList<>(outputs);
+        Collections.sort(sorted);
+        List<String> names = sorted.stream()
+                .map(p -> GeneralTools.stripExtension(new File(p).getName()))
+                .toList();
+        String stem = new File(config.folderPath).getName() + "_merged";
+        logger.info("Merging {} channel stitches {} into {}", sorted.size(), names, stem);
+        return ChannelMerger.merge(sorted, names, config.outputPath, stem, config.compressionType, config.outputFormat);
+    }
+
+    /**
+     * Adds the "merge channels" option. It is visible only when merging applies: two or more tile
+     * folders will be stitched and their tiles are single-channel (RGB is one image, not channels).
+     */
+    private void addMergeChannelsComponent(GridPane pane) {
+        mergeChannelsCheckbox.setSelected(QPPreferences.getMergeChannelsSaved());
+        mergeChannelsCheckbox.setTooltip(
+                new Tooltip("Each matching sub-folder is stitched to its own single-channel image.\n"
+                        + "When ticked, those images are also combined into one multichannel image\n"
+                        + "named <folder>_merged, with channels named after the sub-folders.\n"
+                        + "The per-channel images are kept. Not offered for RGB tiles."));
+        Integer row = guiElementPositions.get(mergeChannelsCheckbox);
+        if (row != null) {
+            pane.add(mergeChannelsCheckbox, 0, row, 2, 1);
+        } else {
+            logger.error("Row index not found for mergeChannelsCheckbox");
+        }
+        folderField.textProperty().addListener((obs, o, n) -> refreshMergeVisibility());
+        matchStringField.textProperty().addListener((obs, o, n) -> refreshMergeVisibility());
+    }
+
+    private void refreshMergeVisibility() {
+        int channels = countChannelFolders();
+        mergeChannelsCheckbox.setVisible(channels >= 2);
+        if (channels >= 2) {
+            mergeChannelsCheckbox.setText("Merge the " + channels + " channel stitches into one multichannel image");
+        }
+    }
+
+    /** Number of tile folders that will stitch to separate single-channel images; 0 if merging does not apply. */
+    private int countChannelFolders() {
+        String method = stitchingGridBox.getValue();
+        if (method != null && method.startsWith("MicroManager")) {
+            return 0; // one stitched output per run
+        }
+        String path = folderField.getText();
+        if (path == null || path.isBlank()) {
+            return 0;
+        }
+        try {
+            List<Path> dirs = TileDirectories.resolve(Paths.get(path.trim()), matchStringField.getText());
+            if (dirs.size() < 2) {
+                return 0;
+            }
+            File tile = firstTiff(dirs.get(0));
+            if (tile == null || TileReaderPool.getDimensions(tile).isRGB()) {
+                return 0;
+            }
+            return dirs.size();
+        } catch (Exception e) {
+            logger.debug("Could not determine channel folders for {}: {}", path, e.getMessage());
+            return 0;
+        }
+    }
+
+    private static File firstTiff(Path dir) throws IOException {
+        try (Stream<Path> files = Files.list(dir)) {
+            return files.filter(Files::isRegularFile)
+                    .filter(p -> {
+                        String n = p.getFileName().toString().toLowerCase(Locale.ROOT);
+                        return n.endsWith(".tif") || n.endsWith(".tiff");
+                    })
+                    .sorted()
+                    .findFirst()
+                    .map(Path::toFile)
+                    .orElse(null);
         }
     }
 
@@ -227,7 +415,7 @@ public class StitchingGUI {
      *
      * @return A GridPane containing all the configured components.
      */
-    private static GridPane createContent() {
+    private GridPane createContent() {
         // Create a new GridPane for layout
         GridPane pane = new GridPane();
 
@@ -242,6 +430,7 @@ public class StitchingGUI {
         addStitchingGridComponents(pane);
         addFolderSelectionComponents(pane);
         addMatchStringComponents(pane);
+        addMergeChannelsComponent(pane);
         addCompressionComponents(pane);
         addOutputFormatComponents(pane);
         addPixelSizeComponents(pane);
@@ -257,13 +446,20 @@ public class StitchingGUI {
         // Update the components' visibility based on the current selection
         updateComponentsBasedOnSelection(pane);
         addFudgeFactorComponents(pane);
+
+        // Hidden rows (Vectra fudge factors, pixel size for other methods) must not reserve space.
+        for (Node child : pane.getChildren()) {
+            if (!child.managedProperty().isBound()) {
+                child.managedProperty().bind(child.visibleProperty());
+            }
+        }
         return pane;
     }
 
     /**
      * Adds a label and its associated control to the specified GridPane.
      */
-    private static void addToGrid(GridPane pane, Node label, Node control) {
+    private void addToGrid(GridPane pane, Node label, Node control) {
         Integer rowIndex = guiElementPositions.get(label);
         if (rowIndex != null) {
             pane.add(label, 0, rowIndex);
@@ -281,7 +477,7 @@ public class StitchingGUI {
      * a {@code TileRegistration.txt} solution beside the tiles. When unticked, tiles are placed at
      * their nominal stage positions -- the historical behaviour and the faster path.
      */
-    private static void addRegistrationComponent(GridPane pane) {
+    private void addRegistrationComponent(GridPane pane) {
         resolveOverlapsCheckbox.setSelected(QPPreferences.getResolveOverlapsSaved());
         resolveOverlapsCheckbox.setTooltip(
                 new Tooltip("Measure the real overlap between neighbouring tiles and correct their positions before\n"
@@ -305,7 +501,7 @@ public class StitchingGUI {
      * (confidence, max shift, solver knobs) is persistent tuning and lives in the Preferences pane
      * under "Tiles-to-pyramid", so it is not duplicated here; a hint points there.
      */
-    private static void buildRegistrationOptions(GridPane pane) {
+    private void buildRegistrationOptions(GridPane pane) {
         registrationOptionsPane.setHgap(8);
         registrationOptionsPane.setVgap(6);
         registrationOptionsPane.setStyle("-fx-padding: 4 0 4 18;"); // indent under the checkbox
@@ -370,7 +566,7 @@ public class StitchingGUI {
      * folder, keeping {@link #AUTO_REFERENCE} first and preserving the current selection when it
      * still exists.
      */
-    private static void refreshReferenceChoices() {
+    private void refreshReferenceChoices() {
         String previous = referenceBox.getValue();
         java.util.List<String> choices = new java.util.ArrayList<>();
         choices.add(AUTO_REFERENCE);
@@ -392,10 +588,10 @@ public class StitchingGUI {
     /**
      * Adds a GitHub repository hyperlink to the GridPane.
      */
-    private static void addGitHubLinkComponent(GridPane pane) {
+    private void addGitHubLinkComponent(GridPane pane) {
         githubLink.setOnAction(e -> {
             try {
-                Desktop.getDesktop().browse(new URI("https://github.com/MichaelSNelson/BasicStitching"));
+                Desktop.getDesktop().browse(new URI("https://github.com/uw-loci/qupath-extension-tiles-to-pyramid"));
             } catch (Exception ex) {
                 logger.error("Error opening link", ex);
             }
@@ -410,7 +606,7 @@ public class StitchingGUI {
     /**
      * Initializes the positions of GUI elements in the GridPane.
      */
-    private static void initializePositions() {
+    private void initializePositions() {
         int currentPosition = 0;
 
         guiElementPositions.put(stitchingGridLabel, currentPosition++);
@@ -421,6 +617,7 @@ public class StitchingGUI {
         guiElementPositions.put(pixelSizeOverrideCheckbox, currentPosition++);
         guiElementPositions.put(downsampleLabel, currentPosition++);
         guiElementPositions.put(matchStringLabel, currentPosition++);
+        guiElementPositions.put(mergeChannelsCheckbox, currentPosition++);
         guiElementPositions.put(resolveOverlapsCheckbox, currentPosition++);
         guiElementPositions.put(registrationOptionsPane, currentPosition++);
         guiElementPositions.put(githubLink, currentPosition++);
@@ -433,7 +630,7 @@ public class StitchingGUI {
     /**
      * Adds stitching grid components to the specified GridPane.
      */
-    private static void addStitchingGridComponents(GridPane pane) {
+    private void addStitchingGridComponents(GridPane pane) {
         stitchingGridBox.getItems().clear();
         stitchingGridBox
                 .getItems()
@@ -456,7 +653,7 @@ public class StitchingGUI {
     /**
      * Adds components for folder selection to the specified GridPane.
      */
-    private static void addFolderSelectionComponents(GridPane pane) {
+    private void addFolderSelectionComponents(GridPane pane) {
         // Only set default if the field is empty (preserve user's last selection)
         if (folderField.getText() == null || folderField.getText().trim().isEmpty()) {
             // Try saved preference first, then fall back to project folder
@@ -525,7 +722,7 @@ public class StitchingGUI {
     /**
      * Adds compression selection components to the specified GridPane.
      */
-    private static void addCompressionComponents(GridPane pane) {
+    private void addCompressionComponents(GridPane pane) {
         List<String> compressionTypes = getCompressionTypeList();
         compressionBox.getItems().clear();
         compressionBox.getItems().addAll(compressionTypes);
@@ -542,12 +739,17 @@ public class StitchingGUI {
     /**
      * Adds output format selection components to the specified GridPane.
      */
-    private static void addOutputFormatComponents(GridPane pane) {
+    private void addOutputFormatComponents(GridPane pane) {
         outputFormatBox.getItems().clear();
         outputFormatBox.getItems().addAll(StitchingConfig.OutputFormat.values());
 
-        // Default to OME-TIFF for backward compatibility
-        outputFormatBox.setValue(StitchingConfig.OutputFormat.OME_TIFF);
+        StitchingConfig.OutputFormat saved;
+        try {
+            saved = StitchingConfig.OutputFormat.valueOf(QPPreferences.getOutputFormatSaved());
+        } catch (IllegalArgumentException | NullPointerException e) {
+            saved = StitchingConfig.OutputFormat.OME_TIFF;
+        }
+        outputFormatBox.setValue(saved);
 
         Tooltip formatTooltip = new Tooltip("OME-TIFF: Traditional single-file format (widely compatible)\n"
                 + "OME-ZARR: Cloud-native directory format (better compression, parallel writing, cloud storage)");
@@ -567,7 +769,7 @@ public class StitchingGUI {
      * the "Manually edit pixel size" checkbox unlocks the field; unticking
      * it restores the auto-detected value.
      */
-    private static void addPixelSizeComponents(GridPane pane) {
+    private void addPixelSizeComponents(GridPane pane) {
         Tooltip pixelSizeTooltip = new Tooltip("Pixel size in microns for the tile images.\n"
                 + "Auto-detected from MMStack metadata in the selected folder when available.\n"
                 + "Tick 'Manually edit pixel size' to override.");
@@ -629,7 +831,7 @@ public class StitchingGUI {
      * success, write it into the field as a manual override. Runs the
      * measurement off the FX thread so the dialog stays responsive.
      */
-    private static void estimatePixelSizeFromFolder() {
+    private void estimatePixelSizeFromFolder() {
         String path = folderField.getText();
         if (path == null || path.trim().isEmpty()) {
             showAlertDialog("Select an input folder first.");
@@ -679,7 +881,7 @@ public class StitchingGUI {
      * ticked (the user wants their value preserved). Safe to call from any
      * folder-state change.
      */
-    private static void autoFillPixelSizeFromFolder() {
+    private void autoFillPixelSizeFromFolder() {
         if (pixelSizeOverrideCheckbox.isSelected()) {
             return;
         }
@@ -706,7 +908,7 @@ public class StitchingGUI {
     /**
      * Adds downsample input components to the specified GridPane.
      */
-    private static void addDownsampleComponents(GridPane pane) {
+    private void addDownsampleComponents(GridPane pane) {
         Tooltip downsampleTooltip =
                 new Tooltip("The amount by which the highest resolution plane will be initially downsampled.");
         downsampleLabel.setTooltip(downsampleTooltip);
@@ -718,8 +920,9 @@ public class StitchingGUI {
     /**
      * Adds matching string input components to the specified GridPane.
      */
-    private static void addMatchStringComponents(GridPane pane) {
-        Tooltip matchStringTooltip = new Tooltip("Only stitch sub-folders whose names contain this text.");
+    private void addMatchStringComponents(GridPane pane) {
+        Tooltip matchStringTooltip = new Tooltip("Stitch each sub-folder whose name contains this text.\n"
+                + "Leave empty to stitch the selected folder itself, and only that folder.");
         matchStringLabel.setTooltip(matchStringTooltip);
         matchStringField.setTooltip(matchStringTooltip);
 
@@ -730,7 +933,7 @@ public class StitchingGUI {
      * Updates the visibility of certain GUI components based on the current selection
      * in the stitching method combo box.
      */
-    private static void updateComponentsBasedOnSelection(GridPane pane) {
+    private void updateComponentsBasedOnSelection(GridPane pane) {
         String selectedValue = stitchingGridBox.getValue();
         boolean hidePixelSize = "Vectra tiles with metadata".equals(selectedValue)
                 || "Coordinates in TileConfiguration.txt file".equals(selectedValue);
@@ -749,13 +952,14 @@ public class StitchingGUI {
             setFudgeFactorVisibility(false);
         }
 
+        refreshMergeVisibility();
         adjustLayout(pane);
     }
 
     /**
      * Adjusts the layout of the GridPane based on the current positions.
      */
-    private static void adjustLayout(GridPane pane) {
+    private void adjustLayout(GridPane pane) {
         for (Map.Entry<Node, Integer> entry : guiElementPositions.entrySet()) {
             Node node = entry.getKey();
             Integer newRow = entry.getValue();
@@ -769,6 +973,14 @@ public class StitchingGUI {
     /**
      * Shows a warning alert dialog with the specified message.
      */
+    private static void showInfoDialog(String message) {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setTitle("Tiles to Pyramid");
+        alert.setHeaderText(null);
+        alert.setContentText(message);
+        alert.showAndWait();
+    }
+
     public static void showAlertDialog(String message) {
         Alert alert = new Alert(Alert.AlertType.WARNING);
         alert.setTitle("Warning!");
@@ -778,7 +990,7 @@ public class StitchingGUI {
         alert.showAndWait();
     }
 
-    private static void addFudgeFactorComponents(GridPane pane) {
+    private void addFudgeFactorComponents(GridPane pane) {
         // Checkbox with tooltip
         Tooltip fudgeTooltip =
                 new Tooltip("Fudge factor to adjust for empty black lines between tiles (slightly less than 1.0).\n"
@@ -829,7 +1041,7 @@ public class StitchingGUI {
         });
     }
 
-    private static void setFudgeFactorVisibility(boolean visible) {
+    private void setFudgeFactorVisibility(boolean visible) {
         xFudgeLabel.setVisible(visible);
         xFudgeField.setVisible(visible);
         yFudgeLabel.setVisible(visible);

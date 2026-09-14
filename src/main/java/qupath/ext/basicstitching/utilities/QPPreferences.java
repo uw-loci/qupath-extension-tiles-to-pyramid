@@ -45,6 +45,14 @@ public class QPPreferences {
     private static final StringProperty regOverlapYSaved =
             PathPrefs.createPersistentPreference("basicstitching.dialog.regOverlapY", "10");
 
+    // Output format, stored as the StitchingConfig.OutputFormat enum name.
+    private static final StringProperty outputFormatSaved =
+            PathPrefs.createPersistentPreference("basicstitching.dialog.outputFormat", "OME_TIFF");
+
+    // Merge per-channel stitches into one multichannel image (only offered when there are channels).
+    private static final BooleanProperty mergeChannelsSaved =
+            PathPrefs.createPersistentPreference("basicstitching.dialog.mergeChannels", true);
+
     // Folder Location
     public static String getFolderLocationSaved() {
         return folderLocationSaved.getValue();
@@ -131,5 +139,21 @@ public class QPPreferences {
 
     public static void setRegOverlapYSaved(final String y) {
         regOverlapYSaved.setValue(y);
+    }
+
+    public static String getOutputFormatSaved() {
+        return outputFormatSaved.getValue();
+    }
+
+    public static void setOutputFormatSaved(final String format) {
+        outputFormatSaved.setValue(format);
+    }
+
+    public static boolean getMergeChannelsSaved() {
+        return mergeChannelsSaved.getValue();
+    }
+
+    public static void setMergeChannelsSaved(final boolean merge) {
+        mergeChannelsSaved.setValue(merge);
     }
 }
