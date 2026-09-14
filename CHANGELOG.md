@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-09-14
+
 ### Added
 - **Channel merge in the stitch dialog.** When the selected folder holds two or more matching sub-folders of single-channel tiles, a "Merge the N channel stitches into one multichannel image" option appears; ticked, the per-channel stitches are combined with `ChannelMerger` into `<folder>_merged`, channels named after their sub-folders. The option is hidden for RGB tiles (one image, not channels), for a single tile folder, and for MicroManager input. The per-channel images are kept. The choice is remembered.
 - **The stitch dialog remembers its settings.** Output format, stitching method, compression, downsample, sub-folder text and the merge choice persist between runs; the output format used to reset to OME-TIFF on every open.
