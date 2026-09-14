@@ -22,14 +22,18 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 import javafx.application.Platform;
+import javafx.geometry.Rectangle2D;
 import javafx.scene.Node;
+import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
+import javafx.scene.layout.Region;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Modality;
 import javafx.stage.Screen;
+import javafx.stage.Window;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.basicstitching.assembly.ChannelMerger;
@@ -135,10 +139,18 @@ public class StitchingGUI {
 
         // The form is taller than a laptop screen once registration options are shown; without a
         // scroll pane the button bar is pushed off the bottom and the dialog cannot be run.
-        ScrollPane scroll = new ScrollPane(createContent());
+        GridPane content = createContent();
+        ScrollPane scroll = new ScrollPane(content);
         scroll.setFitToWidth(true);
         scroll.setMaxHeight(Screen.getPrimary().getVisualBounds().getHeight() * 0.7);
         dlg.getDialogPane().setContent(scroll);
+        // A dialog window keeps its first size, so rows appearing later (ticking "Solve tile
+        // overlaps") would only scroll inside it. Refit the window whenever the form changes height;
+        // the scroll pane cap still bounds it, and beyond that the form scrolls.
+        content.heightProperty().addListener((obs, o, n) -> Platform.runLater(() -> fitWindowToContent(dlg)));
+        // Also refit once shown: a window-size manager may restore a stale (too small) height saved
+        // under this title, which would hide the buttons until something changed the form.
+        dlg.setOnShown(e -> Platform.runLater(() -> fitWindowToContent(dlg)));
 
         ButtonType stitchType = new ButtonType("Stitch", ButtonBar.ButtonData.OK_DONE);
         dlg.getDialogPane().getButtonTypes().addAll(stitchType, ButtonType.CANCEL);
@@ -149,6 +161,27 @@ public class StitchingGUI {
         Optional<ButtonType> result = dlg.showAndWait();
         if (result.isPresent() && result.get() == stitchType) {
             processDialogResult();
+        }
+    }
+
+    /**
+     * Resize the dialog window to its content's preferred height, keeping any extra width the user
+     * dragged in, and nudge it up if it would now run off the bottom of its screen.
+     */
+    private static void fitWindowToContent(Dialog<?> dlg) {
+        Scene scene = dlg.getDialogPane().getScene();
+        Window window = scene == null ? null : scene.getWindow();
+        if (window == null || !window.isShowing()) {
+            return;
+        }
+        double userWidth = window.getWidth();
+        window.sizeToScene();
+        window.setWidth(Math.max(userWidth, window.getWidth()));
+        var screens =
+                Screen.getScreensForRectangle(window.getX(), window.getY(), window.getWidth(), window.getHeight());
+        Rectangle2D bounds = (screens.isEmpty() ? Screen.getPrimary() : screens.get(0)).getVisualBounds();
+        if (window.getY() + window.getHeight() > bounds.getMaxY()) {
+            window.setY(Math.max(bounds.getMinY(), bounds.getMaxY() - window.getHeight()));
         }
     }
 
@@ -270,7 +303,7 @@ public class StitchingGUI {
                             message.append("Stitching failed. See the log for details.");
                         } else {
                             ok = true;
-                            message.append("Stitching complete:");
+                            message.append("Output files:");
                             outputs.forEach(o -> message.append("\n  ").append(o));
                             if (!result.failedSubdirs().isEmpty()) {
                                 ok = false;
@@ -296,13 +329,7 @@ public class StitchingGUI {
                         STITCH_RUNNING.set(false);
                     }
                     boolean success = ok;
-                    Platform.runLater(() -> {
-                        if (success) {
-                            showInfoDialog(message.toString());
-                        } else {
-                            showAlertDialog(message.toString());
-                        }
-                    });
+                    Platform.runLater(() -> showResultDialog(success, message.toString()));
                 },
                 "tiles-to-pyramid-stitch");
         worker.setDaemon(true);
@@ -451,6 +478,10 @@ public class StitchingGUI {
         for (Node child : pane.getChildren()) {
             if (!child.managedProperty().isBound()) {
                 child.managedProperty().bind(child.visibleProperty());
+            }
+            // Labels keep their full text; the scroll bar appearing must not truncate them.
+            if (child instanceof Label label) {
+                label.setMinWidth(Region.USE_PREF_SIZE);
             }
         }
         return pane;
@@ -641,6 +672,12 @@ public class StitchingGUI {
                         "MicroManager metadata (MMStack or TIFF series)");
 
         stitchingGridBox.setValue(QPPreferences.getStitchingMethodSaved());
+        // Remember a choice as soon as it is made, not only when Stitch is clicked (Cancel lost it).
+        stitchingGridBox.valueProperty().addListener((obs, o, n) -> {
+            if (n != null) {
+                QPPreferences.setStitchingMethodSaved(n);
+            }
+        });
         stitchingGridBox.setOnAction(e -> updateComponentsBasedOnSelection(pane));
 
         Tooltip stitchingTooltip = new Tooltip("Method used to determine tile positions for stitching.");
@@ -728,6 +765,11 @@ public class StitchingGUI {
         compressionBox.getItems().addAll(compressionTypes);
 
         compressionBox.setValue(QPPreferences.getCompressionTypeSaved());
+        compressionBox.valueProperty().addListener((obs, o, n) -> {
+            if (n != null) {
+                QPPreferences.setCompressionTypeSaved(n);
+            }
+        });
 
         Tooltip compressionTooltip = new Tooltip("Select the type of image compression.");
         compressionLabel.setTooltip(compressionTooltip);
@@ -750,6 +792,11 @@ public class StitchingGUI {
             saved = StitchingConfig.OutputFormat.OME_TIFF;
         }
         outputFormatBox.setValue(saved);
+        outputFormatBox.valueProperty().addListener((obs, o, n) -> {
+            if (n != null) {
+                QPPreferences.setOutputFormatSaved(n.name());
+            }
+        });
 
         Tooltip formatTooltip = new Tooltip("OME-TIFF: Traditional single-file format (widely compatible)\n"
                 + "OME-ZARR: Cloud-native directory format (better compression, parallel writing, cloud storage)");
@@ -942,6 +989,7 @@ public class StitchingGUI {
         pixelSizeField.setVisible(!hidePixelSize);
         pixelSizeOverrideCheckbox.setVisible(!hidePixelSize);
         pixelSizeSourceLabel.setVisible(!hidePixelSize);
+        estimatePixelSizeButton.setVisible(!hidePixelSize);
 
         // Show fudge factor components only for Vectra
         boolean showFudgeFactor = "Vectra tiles with metadata".equals(selectedValue);
@@ -973,11 +1021,24 @@ public class StitchingGUI {
     /**
      * Shows a warning alert dialog with the specified message.
      */
-    private static void showInfoDialog(String message) {
-        Alert alert = new Alert(Alert.AlertType.INFORMATION);
-        alert.setTitle("Tiles to Pyramid");
-        alert.setHeaderText(null);
-        alert.setContentText(message);
+    /**
+     * Report a finished stitch. The text goes in a read-only text area, not the alert's label: a
+     * label wraps only at spaces, so a long output path collapsed to "..." and could not be copied.
+     */
+    private static void showResultDialog(boolean success, String message) {
+        Alert alert = new Alert(success ? Alert.AlertType.INFORMATION : Alert.AlertType.WARNING);
+        // Distinct from the stitch dialog's title: the Dialog Manager extension remembers window
+        // size per title, so sharing one made the stitch dialog reopen at this alert's small size.
+        alert.setTitle("Tiles to Pyramid - Result");
+        alert.setHeaderText(success ? "Stitching complete" : "Stitching did not fully succeed");
+        TextArea text = new TextArea(message);
+        text.setEditable(false);
+        text.setWrapText(false);
+        text.setPrefColumnCount(70);
+        // +2: one spare row, one for the horizontal scroll bar a long path brings up.
+        text.setPrefRowCount((int) Math.min(12, message.lines().count() + 2));
+        alert.getDialogPane().setContent(text);
+        alert.setResizable(true);
         alert.showAndWait();
     }
 

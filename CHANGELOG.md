@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The stitch result dialog showed "..." instead of the output paths.** An alert's label wraps only at spaces, so a long Windows path collapsed to an ellipsis. The paths now appear in a read-only, resizable text area that can be selected and copied.
+- **The stitch dialog reopened tiny after a stitch.** The result dialog shared its window title, and the Dialog Manager extension remembers window size per title, so the stitch dialog inherited the result dialog's small size. The result dialog is now titled "Tiles to Pyramid - Result", and the stitch dialog refits its height to its content when shown, which also repairs a stale size already saved.
+- **Ticking "Solve tile overlaps" scrolled inside a window that never grew.** The window now resizes to fit whenever the form changes height (still capped at 70% of the screen, beyond which it scrolls), keeping any extra width the user dragged in.
+- **The stitching method, compression and output format were only remembered after a stitch.** They are now saved as soon as they are changed, so Cancel keeps them.
+- "Try calculating pixel size..." no longer floats in an empty row for methods that hide the pixel size, and labels are no longer truncated when the scroll bar appears.
+
 ## [0.6.6] - 2026-09-14
 
 ### Added
