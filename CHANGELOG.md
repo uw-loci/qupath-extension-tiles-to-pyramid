@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.8] - 2026-09-14
+
+### Changed
+- The stitching method "Coordinates in TileConfiguration.txt file" is shown in the dialog as "TileConfiguration.txt file". Display only: the underlying identifier is unchanged, because `StitchingStrategyFactory` switches on it, QPSC passes it, and saved preferences store it.
+
 ## [0.6.7] - 2026-09-14
 
 ### Fixed

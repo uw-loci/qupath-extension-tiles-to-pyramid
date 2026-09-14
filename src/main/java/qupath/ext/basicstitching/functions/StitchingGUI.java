@@ -34,6 +34,7 @@ import javafx.stage.DirectoryChooser;
 import javafx.stage.Modality;
 import javafx.stage.Screen;
 import javafx.stage.Window;
+import javafx.util.StringConverter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.basicstitching.assembly.ChannelMerger;
@@ -670,6 +671,21 @@ public class StitchingGUI {
                         "Filename[x,y] with coordinates in microns",
                         "Coordinates in TileConfiguration.txt file",
                         "MicroManager metadata (MMStack or TIFF series)");
+        // The items are identifiers, not just labels: StitchingStrategyFactory switches on them, QPSC
+        // passes them, and the saved preference stores them. Rename only what the user sees.
+        stitchingGridBox.setConverter(new StringConverter<>() {
+            @Override
+            public String toString(String method) {
+                return "Coordinates in TileConfiguration.txt file".equals(method)
+                        ? "TileConfiguration.txt file"
+                        : method;
+            }
+
+            @Override
+            public String fromString(String label) {
+                return "TileConfiguration.txt file".equals(label) ? "Coordinates in TileConfiguration.txt file" : label;
+            }
+        });
 
         stitchingGridBox.setValue(QPPreferences.getStitchingMethodSaved());
         // Remember a choice as soon as it is made, not only when Stitch is clicked (Cancel lost it).
