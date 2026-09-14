@@ -80,6 +80,41 @@ sub-folders. QPSC and scripts call `ChannelMerger` directly. Co-registration acr
 channels is why registration solves one reference subdirectory and reuses it for the rest (see
 [Tile registration](#tile-registration)).
 
+### Merging channels in the dialog
+
+```
+IF_run/                  Stitching Method: TileConfiguration.txt file; sub-folder text: 20x
++-- DAPI_20x/            TileConfiguration.txt + single-channel 16-bit tiles
++-- FITC_20x/            TileConfiguration.txt + tiles with the same file names as DAPI_20x
++-- TRITC_20x/           TileConfiguration.txt + tiles with the same file names
+```
+
+Select `IF_run`, tick **Merge the 3 channel stitches into one multichannel image**, and click
+**Stitch**. Written into `IF_run/`: `DAPI_20x.ome.tif`, `FITC_20x.ome.tif`, `TRITC_20x.ome.tif`, and
+`IF_run_merged.ome.tif` with channels `DAPI_20x`, `FITC_20x`, `TRITC_20x`.
+
+What to know before relying on the merged image:
+
+- **When the option appears.** Only when the folder and sub-folder text select two or more
+  sub-folders, and the first `.tif`/`.tiff` (by name) of the first sub-folder (by name) is not RGB.
+  "N" is the number of matching sub-folders; only that one tile is checked, so keep every matching
+  sub-folder single-channel, with the same tile size and pixel type.
+- **"RGB" means 3 or more bands at 8-bit** (or a packed RGB image type). 8-bit multichannel
+  fluorescence tiles therefore count as RGB and hide the option; save one channel per file to use it.
+- **Channel order and names.** Channels are ordered by the per-channel output file name (plain text
+  order, case-sensitive, so `ch10` sorts before `ch2`; zero-pad numbers) and named after the file
+  stem. With a Downsample other than 1 the stem includes `_<n>x_downsample`, and a re-run into a
+  folder that already holds the outputs writes numbered copies whose suffix also appears in the name.
+- **Colours are not set by the dialog.** Each channel keeps its per-channel file's default; set
+  colours in QuPath afterwards, or call `ChannelMerger.merge(..., channelColors, ...)` from a script.
+- **Width, height and pixel type must match.** If they differ, no merged image is written; the
+  per-channel images remain in the folder.
+- **Partial failures.** If one sub-folder fails to stitch, the rest are still merged, so the merged
+  image lacks that channel. Check the "Failed:" list in the result window before using it.
+- **With Solve tile overlaps.** All channels share one registration solve, applied by tile file
+  name. Tiles must have the same file names in every channel folder; otherwise the non-reference
+  channels stay at their nominal positions and will not line up in the merged image.
+
 ## Tile registration
 
 Stage coordinates are *nominal*. Real stages have backlash, finite encoder resolution, and thermal
@@ -259,10 +294,10 @@ Alternatively, drag and drop the extension into QuPath.
 
 ### Option 2: Build from Source
 ```bash
-git clone https://github.com/yourusername/qupath-basic-stitching.git
-cd qupath-basic-stitching
-./gradlew build
-# Copy build/libs/qupath-extension-basic-stitching-*.jar to your QuPath extensions directory
+git clone https://github.com/uw-loci/qupath-extension-tiles-to-pyramid.git
+cd qupath-extension-tiles-to-pyramid
+./gradlew shadowJar
+# Copy build/libs/qupath-extension-tiles-to-pyramid-*-all.jar to your QuPath extensions directory
 ```
 Developers of qpsc may want to also run the following to enable working with qpsc in IntelliJ.
 ```
@@ -276,9 +311,16 @@ Developers of qpsc may want to also run the following to enable working with qps
 ### Accessing the Extension
 1. Open QuPath
 2. Navigate to **Extensions** -> **Tiles to Pyramid** -> **Tiles-to-pyramid**
-3. The stitching dialog will open
-4. Choose the folder and options, then click **Stitch**. Pressing Enter in a field does not start it.
-   The stitch runs in the background; a dialog lists the outputs when it finishes.
+3. The **Tiles to Pyramid** dialog opens.
+4. Under **Stitching Method**, choose how your tile positions are recorded (see Stitching Strategies below).
+5. Click **Select Folder** and choose the folder that holds your tiles.
+6. In **Stitch sub-folders with text string**, type text that your tile sub-folder names contain, or
+   leave it empty to stitch the selected folder on its own. On first use this field contains `20x`.
+7. Click **Stitch**. Pressing Enter in a field does not start it.
+
+A notification says the stitch has started. QuPath stays usable, but a second stitch cannot start
+until this one finishes. When it does, a **Tiles to Pyramid - Result** window lists the full path of
+each output file, and you can copy the paths from it. Output is written into the folder you selected.
 
 ### Stitching Strategies
 
@@ -291,11 +333,11 @@ image_tile[1000,2500].tif
 ```
 
 **Usage:**
-- Select folder containing subdirectories with tiles
+- Select the folder containing sub-folders of tiles, or select a single tile folder and leave the sub-folder text empty
 - Coordinates in brackets represent physical positions in microns
 - Extension automatically calculates tile positions and overlaps
 
-#### 2. TileConfiguration.txt File
+#### 2. TileConfiguration.txt file
 For ImageJ/Fiji tile configuration format. The XY positions come from `TileConfiguration.txt`; optionally, z-slice and timepoint indices are derived from directory names if tiles are organized in `z{zz}/` or `t{tt}/z{zz}/` subdirectories.
 
 **Basic 2D layout (flat or projected):**
@@ -351,8 +393,8 @@ root/
 
 **Usage:**
 - Each group must contain a `TileConfiguration.txt` file (at the root for z/t layouts, or in each angle subdirectory for flat/projected)
-- Coordinates in the config represent pixel positions in the XY mosaic
-- Automatically scaled based on pixel size and downsample settings
+- Coordinates in the config are stage positions in micrometers; each is divided by the pixel size and the downsample to place the tile
+- **Dialog limitation:** the pixel-size field is hidden for this method, so a stitch from the dialog uses whatever the hidden field holds: the last manually entered pixel size (initially 7.2), or a value auto-filled from MicroManager metadata found in the folder. QPSC and scripts pass the pixel size explicitly and are not affected
 - Tile filenames in the config must match across all z/t planes (the stitcher recursively finds tiles by name, regardless of z/t nesting)
 - Flat / projected layouts (no z/t subdirectories) resolve to z=0, t=0 and produce 2D output, unchanged from prior behavior
 
@@ -422,7 +464,7 @@ Common to both:
 - For stage-inverted scopes, use the `flipStitchingX` and `flipStitchingY` flags to negate coordinates
 
 **Pixel Size Auto-fill:**
-- When you open the Stitch Images dialog or select an input folder, the pixel-size field is automatically filled from the first metadata file's `PixelSizeUm`
+- When you open the Tiles to Pyramid dialog or select an input folder, the pixel-size field is automatically filled from the first metadata file's `PixelSizeUm`
 - The field is **locked by default** to prevent accidental edits — a label shows the source (`(from MicroManager metadata)` / `(no MicroManager metadata - tick 'Manually edit' to set)` / `(manual override)`)
 - By default the metadata `PixelSizeUm` is authoritative, so an accidental dialog value cannot silently misalign a stitch when the metadata is correct
 - Tick **"Manually edit pixel size"** to override. When ticked, your value **wins over the metadata** — this is required for scopes whose metadata pixel size is wrong (e.g. laser-scanning microscopes whose zoom factor is not reflected in MicroManager's pixel-size calibration). Symptom of a wrong metadata pixel size: tiles are placed too far apart and overlap regions appear **duplicated** along every seam.
@@ -435,15 +477,15 @@ Common to both:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| **Input Folder** | Root directory containing image subdirectories | Required |
-| **Output Folder** | Directory for stitched output files | Required |
-| **Pixel Size (um)** | Physical size of each pixel in microns. Auto-detected from MMStack `*_metadata.txt` sidecars when available; field is locked by default. Tick "Manually edit pixel size" to override. | Detected from metadata; otherwise the last-used value (initially 7.2) |
-| **Base Downsample** | Downsampling factor for output | 1.0 |
-| **Compression** | QuPath OME writer compression type (`LZW`, `JPEG`, `J2K`, `J2K_LOSSY`, `ZLIB`, `UNCOMPRESSED`, `DEFAULT`); applies to both output formats (mapped to Blosc codecs for OME-ZARR) | J2K |
-| **Output Format** | OME-TIFF (single file) or OME-ZARR (directory) | OME-TIFF |
-| **Matching String** ("Stitch sub-folders with text string") | Stitch each sub-folder whose name contains this text, one output per sub-folder. **Empty stitches the selected folder itself, and only that folder.** Not used by the MicroManager method | Last-used value (initially "20x") |
-| **Merge channels** | Shown only when 2+ matching sub-folders of single-channel (non-RGB) tiles will be stitched. Combines the per-channel stitches into one multichannel `<folder>_merged` image; the per-channel images are kept. Choice is remembered | On |
-| **Z-Spacing (um)** | Z-axis spacing for 3D datasets | 1.0 |
+| **Stitching Method** | How tile positions are read: "Vectra tiles with metadata", "Filename[x,y] with coordinates in microns", "TileConfiguration.txt file", or "MicroManager metadata (MMStack or TIFF series)". Remembered as soon as it is changed | Last-used (initially TileConfiguration.txt file) |
+| **Folder location** (**Select Folder**) | The folder that holds your tiles. Stitched images are written **into this same folder** | Last-used folder |
+| **Pixel size, microns** | Physical size of each pixel in micrometers. Auto-detected from MMStack `*_metadata.txt` sidecars when available; field is locked by default. Tick "Manually edit pixel size" to override. Hidden for the Vectra and TileConfiguration.txt methods | Detected from metadata; otherwise the last manually entered value (initially 7.2) |
+| **Downsample** | Downsampling factor for output | Last-used (initially 1) |
+| **Compression type** | QuPath OME writer compression type (`LZW`, `JPEG`, `J2K`, `J2K_LOSSY`, `ZLIB`, `UNCOMPRESSED`, `DEFAULT`); applies to both output formats (mapped to Blosc codecs for OME-ZARR) | Last-used (initially J2K) |
+| **Output format** | OME-TIFF (single file) or OME-ZARR (directory) | Last-used (initially OME-TIFF) |
+| **Stitch sub-folders with text string** | Stitch each sub-folder whose name contains this text, one output per sub-folder. **Empty stitches the selected folder itself, and only that folder.** Not used by the MicroManager method | Last-used (initially "20x") |
+| **Merge the N channel stitches into one multichannel image** | Shown only when 2+ matching sub-folders of single-channel (non-RGB) tiles will be stitched; not offered for the MicroManager method. Combines the per-channel stitches into one multichannel `<folder>_merged` image; the per-channel images are kept. See [Merging channels in the dialog](#merging-channels-in-the-dialog). Choice is remembered | On |
+| **Z-Spacing (um)** | Scripts only (`StitchingConfig`); the dialog always records 1.0 | 1.0 |
 | **Solve tile overlaps (content-based registration)** | Checkbox to enable overlap measurement and correction. When enabled, measures the real overlap between neighbouring tiles and corrects their positions before stitching, closing seams caused by stage backlash and drift. Writes a `TileRegistration.txt` solution file beside the tiles. Choice is remembered between sessions. See [Tile registration](#tile-registration) for details. | Off (faster, nominal positions) |
 
 ### Output Format Options
@@ -522,12 +564,12 @@ StitchingConfig config = new StitchingConfig(
     "zstd",                                       // ZARR compression (fast + good ratio)
     0.25,                                         // 0.25 um/pixel
     1.0,                                          // Base downsample
-    ".",                                          // Process all subdirectories
+    ".",                                          // Sub-folders whose names contain "." (e.g. 0.0, 5.0)
     1.0,                                          // Z-spacing
     StitchingConfig.OutputFormat.OME_ZARR         // ZARR format
 );
 String result = StitchingWorkflow.run(config);
-// Output: multiple .ome.zarr directories, one per subdirectory
+// Output: one <subdir>.ome.zarr directory per sub-folder whose name contains "."
 ```
 
 #### Batch Processing with Downsampling (TIFF)
@@ -571,7 +613,10 @@ Using matching string "." will create three separate stitched images, one for ea
 
 ### Input Directory Structure
 ```
-input_folder/
+One run uses one Stitching Method, so every sub-folder it selects must use that method's layout.
+
+```
+input_folder/             Method: Filename[x,y]; sub-folder text: slide
 +-- slide001_tumor/
 |   +-- tile_001[0,0].tif
 |   +-- tile_002[1000,0].tif
@@ -580,26 +625,36 @@ input_folder/
 |   +-- tile_001[0,0].tif
 |   +-- tile_002[1000,0].tif
 +-- slide003_control/
-    +-- TileConfiguration.txt
-    +-- image_001.tif
-    +-- image_002.tif
+    +-- tile_001[0,0].tif
+    +-- tile_002[1000,0].tif
 ```
 
 ### Output Structure
-Output files are named based on the subdirectory being processed:
-- When the matching string is empty: the selected folder is stitched on its own and the output is named after it
-- When processing multiple subdirectories: each gets its own output file named after the subdirectory
+Output is written into the folder you selected, one file per stitched folder, named after it:
+- When the sub-folder text is empty: the selected folder is stitched on its own and the output is named after it
+- When processing multiple sub-folders: each gets its own output file named after the sub-folder
 
 ```
-output_folder/
+input_folder/             (the folder you selected)
++-- slide001_tumor/
++-- slide002_normal/
++-- slide003_control/
 +-- slide001_tumor.ome.tif
 +-- slide002_normal.ome.tif
 +-- slide003_control.ome.tif
 ```
 
-When processing subdirectories:
+A single tile folder, sub-folder text left empty:
 ```
-output_folder/
+scan_042/                 (select scan_042 itself)
++-- tile[0,0].tif
++-- tile[1000,0].tif
++-- scan_042.ome.tif      (output)
+```
+
+When processing angle sub-folders with sub-folder text ".":
+```
+bounds/                   (the folder you selected)
 +-- -5.0.ome.tif
 +-- 0.0.ome.tif
 +-- 5.0.ome.tif
@@ -649,10 +704,10 @@ output_folder/
 - **Solution**: Ensure all referenced files exist and names match exactly
 - **Check**: Case sensitivity on Linux/macOS systems
 
-#### Multiple subdirectories stitched into one file
-- **Cause**: Using substring matching that matches unintended folders
-- **Solution**: Use exact matching or "." to process each subdirectory separately
-- **Example**: "5.0" matches both "5.0" and "-5.0"; use "." instead
+#### More sub-folders stitched than intended
+- **Cause**: The sub-folder text selects every sub-folder whose name *contains* it, and each match produces its own output
+- **Solution**: To stitch one folder, select that folder itself and leave the sub-folder text empty. Otherwise use text that only the wanted folders contain
+- **Example**: "5.0" matches both "5.0" and "-5.0"
 
 #### Out of Memory Errors
 - **Cause**: All acquisitions now use the memory-efficient direct stitcher, which uses ~40 MB steady state regardless of tile count. If memory issues occur, it may indicate a problem with the system environment or JVM configuration.
@@ -705,6 +760,7 @@ String lastPath = StitchingWorkflow.run(config);
 **Example - Detailed Results (Multi-Angle Workflows):**
 ```java
 // For multi-angle acquisitions where one angle may legitimately fail
+Logger logger = LoggerFactory.getLogger("stitch");
 StitchingResult result = StitchingWorkflow.runDetailed(config);
 if (result.hasAnyOutput()) {
     result.outputs().forEach(path -> logger.info("Stitched: {}", path));
@@ -767,8 +823,8 @@ We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.
 
 ### Development Setup
 ```bash
-git clone https://github.com/yourusername/qupath-basic-stitching.git
-cd qupath-basic-stitching
+git clone https://github.com/uw-loci/qupath-extension-tiles-to-pyramid.git
+cd qupath-extension-tiles-to-pyramid
 ./gradlew build
 ./gradlew test
 ```

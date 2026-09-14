@@ -26,16 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Channel merge in the stitch dialog.** When the selected folder holds two or more matching sub-folders of single-channel tiles, a "Merge the N channel stitches into one multichannel image" option appears; ticked, the per-channel stitches are combined with `ChannelMerger` into `<folder>_merged`, channels named after their sub-folders. The option is hidden for RGB tiles (one image, not channels), for a single tile folder, and for MicroManager input. The per-channel images are kept. The choice is remembered.
 - **The stitch dialog remembers its settings.** Output format, stitching method, compression, downsample, sub-folder text and the merge choice persist between runs; the output format used to reset to OME-TIFF on every open.
-
-### Changed
-- **An empty sub-folder text now stitches the selected folder itself, and only that folder.** It used to match every sub-folder. Applies to the filename-coordinate, TileConfiguration.txt and Vectra methods (`TileDirectories`). Non-empty text is unchanged, including QPSC's `"."`, which still selects sub-folders whose names contain a dot.
-- **Stitching runs in the background.** The dialog closes and QuPath stays responsive; a dialog reports the outputs (and the merged image) when it finishes. A second stitch cannot be started while one is running.
-- **The start button is labelled "Stitch", and Enter no longer triggers it.** Pressing Enter in a text field used to start a stitch.
-- The extension description now reflects what it does (registration, OME-ZARR, channel merge), and the dialog's GitHub link points at `uw-loci/qupath-extension-tiles-to-pyramid` instead of the retired BasicStitching repo.
-
-### Fixed
-- **The stitch dialog could not be opened a second time.** Its controls were static and reused, so the second open threw "Children: duplicate children added" and nothing appeared. Each open now builds its own controls.
-- **The Stitch/Cancel buttons could be pushed off-screen.** The form sits in a scroll pane capped at 70% of the screen height, hidden rows no longer reserve space, and the dialog is resizable.
 - **Stitcher honours a tile's declared resample policy.** Tiles declare their channel semantics in OME metadata under `qpsc.resample` (written by microscope_imageprocessing): `linear` for continuous data, `nearest` for labels/masks/object ids, or `angular180`/`angular360` for angles. The stitcher now respects these declarations and adapts its processing:
   - **Overlap blending**: When a tile declares a non-combinable policy, the overlap blend strategy is automatically overridden to LAST_WINS (hard cut at the seam) regardless of the user's preference. This prevents the corruption that averaging would cause: a label class that the pixel never belonged to, or an angle averaged across its wrap. The log reports when an override occurs.
   - **Pyramid downsampling**: Each pyramid level uses the appropriate strategy for the declared policy: decimation (selecting actual pixel values) for `nearest`, circular averaging (via complex-plane unit vectors) for angular channels, and area-averaging for `linear`. An angular channel with a declared period is averaged correctly across the wrap; one without a period falls back to decimation. This prevents pyramids that look right at every level but are meaningless.
@@ -46,21 +36,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The overlap width the feather spans is measured from where tiles actually ended up, so it follows any registration corrections instead of assuming the acquisition-time overlap percentage.
   - The default path is untouched and byte-identical: last-tile-wins reports that it needs no overlap detection, so the compositor keeps its direct raster-copy path and allocates no accumulator. The feathers add a float accumulator plus a weight plane per chunk (about 16 MB on a full-size RGB chunk), released with the chunk; a test asserts nothing outlives it.
 
-### Fixed
-- **A run of unregisterable tiles between two tissue regions was placed as a staircase rather than interpolated across.** Tiles with no measurable overlap content (blank slide) inherit their position from the tiles around them. That diffusion used to freeze each tile the first time it was reached from a registered neighbour, so it only ever saw the side it was reached from: a span of blank tiles took the left boundary's correction on its left half and the right boundary's on its right half, with a step in the middle. It now relaxes to convergence (Laplace's equation, registered tiles as fixed boundary), which places each tile at the average of everything around it and turns that step into a smooth ramp. A single isolated blank tile is unaffected -- both approaches already gave it its neighbours' mean -- and a tile with no path to any registered tile still stays at nominal, since there is nothing to interpolate from. Registration logs now report how many tiles were placed this way and the largest such correction.
-
 ### Changed
+- **An empty sub-folder text now stitches the selected folder itself, and only that folder.** It used to match every sub-folder. Applies to the filename-coordinate, TileConfiguration.txt and Vectra methods (`TileDirectories`). Non-empty text is unchanged, including QPSC's `"."`, which still selects sub-folders whose names contain a dot.
+- **Stitching runs in the background.** The dialog closes and QuPath stays responsive; a dialog reports the outputs (and the merged image) when it finishes. A second stitch cannot be started while one is running.
+- **The start button is labelled "Stitch", and Enter no longer triggers it.** Pressing Enter in a text field used to start a stitch.
+- The extension description now reflects what it does (registration, OME-ZARR, channel merge), and the dialog's GitHub link points at `uw-loci/qupath-extension-tiles-to-pyramid` instead of the retired BasicStitching repo.
 - **`memoryStaysBounded` now measures retained memory instead of live heap.** It compared heap usage before and after the solve without collecting first, so it counted transient garbage, including garbage left by other tests sharing the JVM. The same code read anywhere from 9 MB to 101 MB against a 100 MB bound. It now takes both readings after a settled collection and asserts that nothing scaling with tile count survives the solve, which is the property that actually matters (overlap bands must not be cached across edges). Peak transient use is no longer asserted, because this fixture's tiles total under 10 MB -- a bound it could pass while reading every tile whole proved nothing.
-
-### Removed
-- **`OverwriteBlendStrategy`.** Folded into `OverlapBlend.LAST_WINS` alongside the two feathers, so all three modes live in one place rather than one being a separate class.
-- **`DirectTileStitcher.shouldUseDirectStitching(int)` method and `TILE_COUNT_THRESHOLD` constant.** `StitchingWorkflow` routes every tile count through the direct stitcher, so nothing called the predicate, and the `SparseImageServer` path it chose between no longer exists. Removed rather than left in place, where a threshold implies a fallback path a reader would go looking for.
-
-### Changed
 - **Clarified registration preference labels and descriptions.** Text only; solver behaviour is unchanged from 0.6.5.
   - "Min shift search (px)" renamed to "Max shift per step, floor (px)". The two settings define one search window -- half-width = max(floor px, percent x tile size) -- and the old pair of names read as two independent knobs.
   - "Nominal pull (lambda)" now describes a gauge pin that fixes where a connected piece sits as a whole, rather than a pull that shrinks real measured corrections. Lambda stopped doing the latter in 0.6.5.
   - "Outlier rejection passes" now says edges are down-weighted, never cut. Cutting an edge un-ties its seam, which then drifts open by the whole accumulated error -- that was the 0.6.3 bug, so the text must not describe it.
+
+### Fixed
+- **The stitch dialog could not be opened a second time.** Its controls were static and reused, so the second open threw "Children: duplicate children added" and nothing appeared. Each open now builds its own controls.
+- **The Stitch/Cancel buttons could be pushed off-screen.** The form sits in a scroll pane capped at 70% of the screen height, hidden rows no longer reserve space, and the dialog is resizable.
+- **A run of unregisterable tiles between two tissue regions was placed as a staircase rather than interpolated across.** Tiles with no measurable overlap content (blank slide) inherit their position from the tiles around them. That diffusion used to freeze each tile the first time it was reached from a registered neighbour, so it only ever saw the side it was reached from: a span of blank tiles took the left boundary's correction on its left half and the right boundary's on its right half, with a step in the middle. It now relaxes to convergence (Laplace's equation, registered tiles as fixed boundary), which places each tile at the average of everything around it and turns that step into a smooth ramp. A single isolated blank tile is unaffected -- both approaches already gave it its neighbours' mean -- and a tile with no path to any registered tile still stays at nominal, since there is nothing to interpolate from. Registration logs now report how many tiles were placed this way and the largest such correction.
+
+### Removed
+- **`OverwriteBlendStrategy`.** Folded into `OverlapBlend.LAST_WINS` alongside the two feathers, so all three modes live in one place rather than one being a separate class.
+- **`DirectTileStitcher.shouldUseDirectStitching(int)` method and `TILE_COUNT_THRESHOLD` constant.** `StitchingWorkflow` routes every tile count through the direct stitcher, so nothing called the predicate, and the `SparseImageServer` path it chose between no longer exists. Removed rather than left in place, where a threshold implies a fallback path a reader would go looking for.
 
 ## [0.6.5] - 2026-08-04
 

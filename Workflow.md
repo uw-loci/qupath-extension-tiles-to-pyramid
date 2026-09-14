@@ -4,7 +4,8 @@ How a folder of tiles becomes a pyramidal OME-TIFF or OME-ZARR. The `TileConfigu
 strategy is used as the running example; the others differ only in step 3.
 
 ```
-MenuStartup -> StitchingGUI -> StitchingWorkflow.runDetailed(config)
+MenuStartup -> StitchingGUI -> StitchingWorkflow.runDetailed(config)   (background thread)
+   |                                                                  -> ChannelMerger.merge (optional)
    |
    +-- StitchingStrategyFactory.getStrategy(config)
    +-- strategy.prepareStitching(...)      -> List<TileMapping>   (nominal positions)
@@ -24,9 +25,17 @@ MenuStartup -> StitchingGUI -> StitchingWorkflow.runDetailed(config)
 ## 2. StitchingGUI (user dialog)
 
 `functions/StitchingGUI.java` collects the folder, output format, compression, pixel size and
-downsample, and builds a `StitchingConfig`. For MicroManager datasets it also offers a
-"Try calculating pixel size..." button, which measures pixel size from tile overlap by normalized
-cross-correlation rather than trusting the metadata.
+downsample, and builds a `StitchingConfig`. Whenever the pixel-size field is shown (Filename[x,y]
+and MicroManager methods) it offers a "Try calculating pixel size..." button, which measures pixel
+size from tile overlap by normalized cross-correlation rather than trusting the metadata; it reads
+MicroManager stage positions, so it only works on MicroManager datasets.
+
+Each open builds fresh controls (JavaFX nodes cannot be re-parented); values persist through
+`QPPreferences`. On **Stitch** it runs `StitchingWorkflow.runDetailed` on a background thread (one
+at a time), sets `RegistrationMode.Solve` when **Solve tile overlaps** is ticked, and, when the
+merge checkbox is shown and ticked, passes the outputs to `ChannelMerger.merge`. The outcome is
+reported in a "Tiles to Pyramid - Result" alert; titles differ because the Dialog Manager
+extension remembers window size per title.
 
 ## 3. StitchingStrategy (tile positions)
 
@@ -46,6 +55,12 @@ Implementations:
 | `VectraMetadataStrategy` | Vectra TIFF metadata |
 | `MicroManagerMetadataStrategy` | MicroManager sidecar JSON (`XPositionUm`/`YPositionUm`) |
 
+The filename, TileConfiguration and Vectra strategies find their tile folders through
+`TileDirectories.resolve`: a blank matching string means the selected folder itself and nothing
+else; otherwise the immediate sub-folders whose names contain the string. QPSC never passes a blank
+string (it passes an annotation or angle name, or `"."`). The dialog uses the same method to decide
+whether to offer the channel merge.
+
 Each returns `TileMapping(file, region, subdirName, seriesIndex)`, where `region` is an
 `ImageRegion` in **output-pixel space** (stage microns divided by pixel size, with any
 `flipStitchingX`/`flipStitchingY` already applied).
@@ -53,7 +68,8 @@ Each returns `TileMapping(file, region, subdirName, seriesIndex)`, where `region
 ## 4. TileRegistrationStep (optional position correction)
 
 `workflow/TileRegistrationStep.java`. A **no-op unless the caller sets a `RegistrationMode`** on
-the config.
+the config. The dialog sets `Solve` when **Solve tile overlaps** is ticked; QPSC sets `Solve` or
+`Apply`. Corrections are keyed by tile file name, so co-captured channels must share file names.
 
 Stage coordinates are nominal: real stages have backlash, finite encoder resolution, and thermal
 drift across a long acquisition. Registration measures where neighbouring tiles actually line up,
@@ -130,4 +146,9 @@ holds a global semaphore around OME-TIFF writes.
 ## 7. Multichannel merge
 
 `ChannelMerger.merge` combines separately-stitched single-channel outputs into one multichannel
-image via `ChannelMergeImageServer`. Callers that split channels import them individually instead.
+image via `ChannelMergeImageServer`. The stitch dialog calls it after the stitch when its "Merge the
+N channel stitches..." box is ticked (`StitchingGUI.mergeChannelOutputs`: outputs sorted by path,
+channels named by file stem, no colours passed, written as `<folder>_merged` with the dialog's
+compression and format). QPSC and scripts call it directly. Validation lives in
+`ChannelMergeImageServer.validateSourceCompatibility`: width, height and pixel type must match
+(otherwise it throws), and a level-count mismatch only warns.
