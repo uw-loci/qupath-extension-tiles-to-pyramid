@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Auto reference is chosen by how well seams match, not by texture.** It measures about 24 seams on each subdirectory and solves on the one whose matches are most decisive. The old texture score (spread over median) ranked a clean nuclear stain last on a real three-channel set, because a dark uniform background makes that ratio small.
 - **Auto re-measures weak seams on the other subdirectories.** A seam that is rejected, or whose runner-up peak is within 80% of the winner, is re-measured on every other subdirectory and the most decisive match is kept. Only weak seams are re-read, so the extra cost scales with how many seams are weak.
-- **API:** `RegistrationMode.Solve` takes a `RegistrationReference` (`Auto`, `Single`, `Projection`) instead of a nullable subdirectory name, and `RegistrationRequest` carries the channels to read.
+- **API:** `RegistrationMode.Solve` takes a `RegistrationReference` (`Auto`, `Single`, `Projection`), and `RegistrationRequest` carries the channels to read. The old `Solve(Path, RegistrationSettings, String)` constructor is kept so an installed QPSC built against it keeps registering when this version is installed first. Pass `RegistrationReference.auto()` instead of `null`, which is now ambiguous between the two constructors.
 
 ## [0.6.9] - 2026-09-15
 

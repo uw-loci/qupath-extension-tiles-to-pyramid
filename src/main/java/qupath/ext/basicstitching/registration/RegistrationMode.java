@@ -39,6 +39,27 @@ public sealed interface RegistrationMode {
                 reference = RegistrationReference.auto();
             }
         }
+
+        /**
+         * The pre-0.7 signature, naming one subdirectory or null for automatic.
+         *
+         * <p>Kept for binary compatibility across separately-installed extensions, not as a second
+         * way to do the same thing. QPSC and tiles-to-pyramid update independently from the
+         * catalog, and QPSC builds this mode itself: a QPSC compiled against the old signature,
+         * running against a tiles-to-pyramid without it, fails every registered stitch with
+         * {@link NoSuchMethodError}. QPSC also calls this form when it finds an older
+         * tiles-to-pyramid installed, since it is the only one both versions share.
+         *
+         * @param solutionOut where to write the solved corrections
+         * @param settings tuning
+         * @param subdir subdirectory to solve on, or null to choose automatically
+         */
+        public Solve(Path solutionOut, RegistrationSettings settings, String subdir) {
+            this(
+                    solutionOut,
+                    settings,
+                    subdir == null ? RegistrationReference.auto() : new RegistrationReference.Single(subdir));
+        }
     }
 
     /**

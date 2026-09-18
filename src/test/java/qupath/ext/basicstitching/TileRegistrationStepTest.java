@@ -134,7 +134,7 @@ class TileRegistrationStepTest {
         List<TileMapping> refBefore = mappings(g0, "angle_0");
         StitchingConfig solveConfig = config(tempDir);
         solveConfig.setRegistrationMode(new RegistrationMode.Solve(
-                solutionFile, RegistrationSettings.defaults().withThreads(1), null));
+                solutionFile, RegistrationSettings.defaults().withThreads(1), RegistrationReference.auto()));
         List<TileMapping> refAfter = TileRegistrationStep.applyTo(refBefore, solveConfig);
 
         assertTrue(Files.exists(solutionFile), "the solve must persist a solution for siblings to reuse");
@@ -166,7 +166,7 @@ class TileRegistrationStepTest {
         List<TileMapping> before = mappings(g0, "angle_0");
         StitchingConfig solveConfig = config(tempDir);
         solveConfig.setRegistrationMode(new RegistrationMode.Solve(
-                solutionFile, RegistrationSettings.defaults().withThreads(1), null));
+                solutionFile, RegistrationSettings.defaults().withThreads(1), RegistrationReference.auto()));
         TileRegistrationStep.applyTo(before, solveConfig);
 
         StitchingConfig applyConfig = config(tempDir);
@@ -201,7 +201,7 @@ class TileRegistrationStepTest {
 
         StitchingConfig solveConfig = config(tempDir);
         solveConfig.setRegistrationMode(new RegistrationMode.Solve(
-                solutionFile, RegistrationSettings.defaults().withThreads(1), null));
+                solutionFile, RegistrationSettings.defaults().withThreads(1), RegistrationReference.auto()));
         TileRegistrationStep.applyTo(mappings(g, "angle_0"), solveConfig);
 
         StitchingConfig wrongPixelSize = new StitchingConfig(
@@ -262,7 +262,9 @@ class TileRegistrationStepTest {
         SyntheticGridFixture.Grid g = SyntheticGridFixture.write(tempDir, 3, 3, TILE_W, TILE_H, 0.0, 3.0, 42);
         StitchingConfig config = config(tempDir);
         config.setRegistrationMode(new RegistrationMode.Solve(
-                tempDir.resolve("sol.txt"), RegistrationSettings.defaults().withThreads(1), null));
+                tempDir.resolve("sol.txt"),
+                RegistrationSettings.defaults().withThreads(1),
+                RegistrationReference.auto()));
 
         List<TileMapping> before = mappings(g, "angle_0");
         List<TileMapping> after = TileRegistrationStep.applyTo(before, config);

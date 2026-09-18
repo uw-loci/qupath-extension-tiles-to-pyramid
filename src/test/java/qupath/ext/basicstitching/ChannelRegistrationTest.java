@@ -89,6 +89,19 @@ class ChannelRegistrationTest {
         }
     }
 
+    // ------------------------------------------------------------ compatibility
+
+    @Test
+    void preSevenSolveSignatureStillMapsToTheSameReferences() {
+        // An installed QPSC built against the String form must keep working against this jar.
+        Path out = tempDir.resolve("s.txt");
+        assertEquals(
+                new RegistrationReference.Single("DAPI"),
+                new RegistrationMode.Solve(out, settings(), "DAPI").reference());
+        assertEquals(
+                RegistrationReference.auto(), new RegistrationMode.Solve(out, settings(), (String) null).reference());
+    }
+
     // ------------------------------------------------------------ normalization
 
     @Test
