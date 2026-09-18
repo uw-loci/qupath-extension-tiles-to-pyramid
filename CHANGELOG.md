@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-18
+
 ### Added
 - **Registration on a normalized merge of channels.** The reference can be a projection of several subdirectories. Each is scaled by one factor for the whole dataset (from a bounded sample of at most 64 tile centres), so a dim channel counts as much as a bright one and a feature looks the same in both tiles of a seam. The scales are recorded in `TileRegistration.txt`. In the dialog: "Normalized merge of all folders".
 - **`StitchingWorkflow.solveRegistration(config, subdirs)`** solves across the named subdirectories and writes the solution without stitching, for callers (QPSC) that stitch each channel separately but need the solve to see all of them.
@@ -15,8 +17,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Auto reference is chosen by how well seams match, not by texture.** It measures about 24 seams on each subdirectory and solves on the one whose matches are most decisive. The old texture score (spread over median) ranked a clean nuclear stain last on a real three-channel set, because a dark uniform background makes that ratio small.
 - **Auto re-measures weak seams on the other subdirectories.** A seam that is rejected, or whose runner-up peak is within 80% of the winner, is re-measured on every other subdirectory and the most decisive match is kept. Only weak seams are re-read, so the extra cost scales with how many seams are weak.
 - **API:** `RegistrationMode.Solve` takes a `RegistrationReference` (`Auto`, `Single`, `Projection`), and `RegistrationRequest` carries the channels to read. The old `Solve(Path, RegistrationSettings, String)` constructor is kept so an installed QPSC built against it keeps registering when this version is installed first. Pass `RegistrationReference.auto()` instead of `null`, which is now ambiguous between the two constructors.
-
-## [0.6.9] - 2026-09-15
 
 ### Fixed
 - **The TileConfiguration.txt method stitched with a hidden pixel size.** Its coordinates are micrometers divided by the pixel size, but the dialog hid the pixel-size field for this method, so a stitch used whatever the invisible field held (the last manually entered value, initially 7.2, or one auto-filled from MicroManager metadata) and could place tiles at the wrong spacing with no way to see why. The field is now shown for every method except Vectra, whose tiles carry pixel positions.
