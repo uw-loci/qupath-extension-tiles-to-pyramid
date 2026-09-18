@@ -4,6 +4,7 @@ import java.awt.image.BufferedImage;
 import java.awt.image.Raster;
 import java.io.File;
 import java.io.IOException;
+import java.util.List;
 import qupath.ext.basicstitching.assembly.direct.TileReaderPool;
 
 /**
@@ -51,11 +52,73 @@ public final class OverlapBandReader implements AutoCloseable {
      * @throws IOException if the region cannot be read
      */
     public OverlapBand read(File file, int x, int y, int width, int height) throws IOException {
-        BufferedImage img = pool.readRegion(file, x, y, width, height);
-        if (img == null) {
-            throw new IOException("Null region read from " + file);
+        BufferedImage img = readImage(file, x, y, width, height);
+        return OverlapBand.of(toGray(img), maxPossibleValue(img));
+    }
+
+    /**
+     * Read the same sub-region of one tile from each channel and combine them into one band: the
+     * mean of each channel's pixels times that channel's {@link RegistrationChannel#scale()}.
+     *
+     * <p>With a single channel at scale 1 this is exactly {@link #read}, so the gates see the same
+     * numbers they always have. The full-scale value used by the saturation check is combined the
+     * same way, so a projection only counts as saturated when its channels are, on average.
+     *
+     * @param channels the channels to combine; at least one
+     * @param filename the tile, as keyed in every channel
+     * @param x left edge of the region within the tile
+     * @param y top edge of the region within the tile
+     * @param width region width
+     * @param height region height
+     * @return the combined band
+     * @throws IOException if any channel's region cannot be read, or a channel lacks this tile
+     */
+    public OverlapBand read(List<RegistrationChannel> channels, String filename, int x, int y, int width, int height)
+            throws IOException {
+        if (channels.size() == 1 && channels.get(0).scale() == 1.0) {
+            return read(requireFile(channels.get(0), filename), x, y, width, height);
         }
-        return toBand(img);
+        float[][] acc = null;
+        double maxPossible = 0;
+        for (RegistrationChannel channel : channels) {
+            BufferedImage img = readImage(requireFile(channel, filename), x, y, width, height);
+            float[][] gray = toGray(img);
+            float scale = (float) channel.scale();
+            if (acc == null) {
+                acc = new float[gray.length][gray.length == 0 ? 0 : gray[0].length];
+            }
+            for (int yy = 0; yy < acc.length; yy++) {
+                float[] a = acc[yy];
+                float[] g = gray[yy];
+                for (int xx = 0; xx < a.length; xx++) {
+                    a[xx] += g[xx] * scale;
+                }
+            }
+            maxPossible += maxPossibleValue(img) * channel.scale();
+        }
+        int n = channels.size();
+        for (float[] row : acc) {
+            for (int xx = 0; xx < row.length; xx++) {
+                row[xx] /= n;
+            }
+        }
+        return OverlapBand.of(acc, maxPossible / n);
+    }
+
+    /**
+     * Read a sub-region as float grayscale without computing statistics, for callers that only
+     * need the pixel values (the normalization sampler).
+     *
+     * @param file tile file
+     * @param x left edge of the region within the tile
+     * @param y top edge of the region within the tile
+     * @param width region width
+     * @param height region height
+     * @return pixels as {@code [y][x]}
+     * @throws IOException if the region cannot be read
+     */
+    public float[][] readGray(File file, int x, int y, int width, int height) throws IOException {
+        return toGray(readImage(file, x, y, width, height));
     }
 
     /**
@@ -67,14 +130,32 @@ public final class OverlapBandReader implements AutoCloseable {
         return TileReaderPool.getDimensions(file);
     }
 
-    private static OverlapBand toBand(BufferedImage img) {
+    private BufferedImage readImage(File file, int x, int y, int width, int height) throws IOException {
+        BufferedImage img = pool.readRegion(file, x, y, width, height);
+        if (img == null) {
+            throw new IOException("Null region read from " + file);
+        }
+        return img;
+    }
+
+    private static File requireFile(RegistrationChannel channel, String filename) throws IOException {
+        File file = channel.fileFor(filename);
+        if (file == null) {
+            throw new IOException("Channel '" + channel.name() + "' has no tile " + filename);
+        }
+        return file;
+    }
+
+    /** Collapse every band of the image to one by an equal-weight mean. */
+    private static float[][] toGray(BufferedImage img) {
         Raster raster = img.getRaster();
         int w = raster.getWidth();
         int h = raster.getHeight();
         int bands = raster.getNumBands();
         int n = w * h;
+        float[][] gray = new float[h][w];
         if (n == 0) {
-            return new OverlapBand(new float[0][0], 0, 0, 0, maxPossibleValue(img));
+            return gray;
         }
 
         // Bulk per-band reads rather than per-pixel getPixel: a band is ~100k pixels and the
@@ -87,26 +168,14 @@ public final class OverlapBandReader implements AutoCloseable {
                 acc[i] += samples[i];
             }
         }
-
-        float[][] gray = new float[h][w];
-        double[] flat = new double[n];
-        double sum = 0;
-        double sumSq = 0;
         for (int yy = 0; yy < h; yy++) {
             float[] row = gray[yy];
             int base = yy * w;
             for (int xx = 0; xx < w; xx++) {
-                double v = acc[base + xx] / bands;
-                row[xx] = (float) v;
-                flat[base + xx] = v;
-                sum += v;
-                sumSq += v * v;
+                row[xx] = (float) (acc[base + xx] / bands);
             }
         }
-
-        double mean = sum / n;
-        double variance = Math.max(0, sumSq / n - mean * mean);
-        return new OverlapBand(gray, Ncc.medianOf(flat), Ncc.robustSpread(flat), variance, maxPossibleValue(img));
+        return gray;
     }
 
     /** Full scale for the image's bit depth, used only for the saturation check. */

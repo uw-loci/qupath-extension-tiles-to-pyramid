@@ -121,7 +121,7 @@ public record TileRegistrationSolution(SolutionHeader header, Map<String, double
      * @throws IOException if the file cannot be written
      */
     public void write(Path file) throws IOException {
-        write(file, null);
+        write(file, null, List.of());
     }
 
     /**
@@ -131,11 +131,15 @@ public record TileRegistrationSolution(SolutionHeader header, Map<String, double
      * -- but it makes a run self-documenting: anyone inspecting the file later can see exactly which
      * confidence threshold, shift bound, and solver knobs were in effect, without re-deriving them.
      *
+     * <p>{@code notes} are written the same way, one comment line each -- for example the
+     * normalization a projection was solved with, so the solve can be reproduced.
+     *
      * @param file destination
      * @param settings the tuning used, or null to omit the settings line
+     * @param notes extra informational lines, written as comments; may be empty
      * @throws IOException if the file cannot be written
      */
-    public void write(Path file, RegistrationSettings settings) throws IOException {
+    public void write(Path file, RegistrationSettings settings, List<String> notes) throws IOException {
         List<String> lines = new ArrayList<>();
         lines.add(MAGIC);
         lines.add(fmt("# reference: %s", header.reference()));
@@ -163,6 +167,9 @@ public record TileRegistrationSolution(SolutionHeader header, Map<String, double
                     settings.topKPeaks(),
                     settings.fillUnregistered(),
                     settings.threads()));
+        }
+        for (String note : notes) {
+            lines.add("# " + note);
         }
         lines.add("# name; deltaXPx; deltaYPx");
 

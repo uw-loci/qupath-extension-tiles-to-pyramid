@@ -80,13 +80,26 @@ Three modes:
 | Mode | Behaviour |
 |---|---|
 | `Disabled` (default) | place tiles at nominal stage positions |
-| `Solve(out, settings, reference)` | measure the reference subdirectory, solve, write `TileRegistration.txt`, apply |
+| `Solve(out, settings, reference)` | measure the overlaps, solve, write `TileRegistration.txt`, apply |
 | `Apply(in)` | reuse a previous solve |
 
 **Why two active modes.** Polarization angles and fluorescence channels are captured at the *same*
 stage position for a given tile. Solving each independently would give each its own corrections and
 misregister the angles against *each other* -- worse than leaving them all on a shared nominal grid.
-So exactly one subdirectory is solved and every sibling reuses that result. The solution file is
+So the grid is solved once and every sibling reuses that result.
+
+`reference` is a `RegistrationReference`:
+
+- `Single(subdir)` measures one subdirectory.
+- `Projection(subdirs)` measures a normalized mean of several. `ChannelNormalizer` gives each
+  channel one scale for the whole dataset from a bounded sample.
+- `Auto` picks the subdirectory with the most decisive matches on a sample of seams
+  (`TileRegistrationEngine.chooseReference`), then re-measures weak or rejected seams on the other
+  subdirectories and keeps the best (`rescueWeakEdges`).
+
+The engine reads overlap bands through the `RegistrationChannel` list on the `RegistrationRequest`,
+not through `TileNode.file`. `StitchingWorkflow.solveRegistration(config, subdirs)` runs the solve
+alone, with every named subdirectory in view, for callers that stitch subdirectories one at a time. The solution file is
 also durable: a re-stitch can reuse a solve instead of repeating it, and it can be inspected when a
 mosaic looks wrong.
 

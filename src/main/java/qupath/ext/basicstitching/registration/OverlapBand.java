@@ -14,6 +14,38 @@ public record OverlapBand(
         float[][] gray, double median, double robustSpread, double variance, double maxPossibleValue) {
 
     /**
+     * Build a band from its pixels, computing the statistics the gates use.
+     *
+     * @param gray pixels as {@code [y][x]}
+     * @param maxPossibleValue full scale for the saturation check, or 0 when unknown
+     * @return the band
+     */
+    public static OverlapBand of(float[][] gray, double maxPossibleValue) {
+        int h = gray.length;
+        int w = h == 0 ? 0 : gray[0].length;
+        int n = w * h;
+        if (n == 0) {
+            return new OverlapBand(gray, 0, 0, 0, maxPossibleValue);
+        }
+        double[] flat = new double[n];
+        double sum = 0;
+        double sumSq = 0;
+        for (int yy = 0; yy < h; yy++) {
+            float[] row = gray[yy];
+            int base = yy * w;
+            for (int xx = 0; xx < w; xx++) {
+                double v = row[xx];
+                flat[base + xx] = v;
+                sum += v;
+                sumSq += v * v;
+            }
+        }
+        double mean = sum / n;
+        double variance = Math.max(0, sumSq / n - mean * mean);
+        return new OverlapBand(gray, Ncc.medianOf(flat), Ncc.robustSpread(flat), variance, maxPossibleValue);
+    }
+
+    /**
      * How much structure this band has, scale-free: {@code robustSpread / median}.
      *
      * <p>Two deliberate choices here, each fixing a way our data produces confident nonsense.

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Registration on a normalized merge of channels.** The reference can be a projection of several subdirectories. Each is scaled by one factor for the whole dataset (from a bounded sample of at most 64 tile centres), so a dim channel counts as much as a bright one and a feature looks the same in both tiles of a seam. The scales are recorded in `TileRegistration.txt`. In the dialog: "Normalized merge of all folders".
+- **`StitchingWorkflow.solveRegistration(config, subdirs)`** solves across the named subdirectories and writes the solution without stitching, for callers (QPSC) that stitch each channel separately but need the solve to see all of them.
+
+### Changed
+- **Auto reference is chosen by how well seams match, not by texture.** It measures about 24 seams on each subdirectory and solves on the one whose matches are most decisive. The old texture score (spread over median) ranked a clean nuclear stain last on a real three-channel set, because a dark uniform background makes that ratio small.
+- **Auto re-measures weak seams on the other subdirectories.** A seam that is rejected, or whose runner-up peak is within 80% of the winner, is re-measured on every other subdirectory and the most decisive match is kept. Only weak seams are re-read, so the extra cost scales with how many seams are weak.
+- **API:** `RegistrationMode.Solve` takes a `RegistrationReference` (`Auto`, `Single`, `Projection`) instead of a nullable subdirectory name, and `RegistrationRequest` carries the channels to read.
+
 ## [0.6.9] - 2026-09-15
 
 ### Fixed

@@ -199,6 +199,95 @@ final class SyntheticGridFixture {
         return new Grid(nominal, truth, tileW, tileH);
     }
 
+    /**
+     * Write several channels over ONE grid: every channel shares the same true (jittered) tile
+     * positions, as co-captured channels do, but each has its own independent content, brightness
+     * and blank tiles.
+     *
+     * <p>Each channel goes in its own subdirectory of {@code base}, with the same tile filenames, and
+     * each gets a nominal TileConfiguration.txt.
+     *
+     * @param base parent directory
+     * @param names channel subdirectory names
+     * @param gains per-channel multiplier on the content's contrast; a small gain is a dim channel
+     * @param blanks per-channel tile indices to render featureless
+     * @param cols grid columns
+     * @param rows grid rows
+     * @param tileW tile width
+     * @param tileH tile height
+     * @param overlapFrac overlap fraction
+     * @param jitterSigmaPx jitter standard deviation, shared by all channels
+     * @param seed random seed
+     * @return channel name to that channel's grid; the answer keys are identical across channels
+     * @throws IOException if the tiles cannot be written
+     */
+    static Map<String, Grid> writeChannels(
+            Path base,
+            List<String> names,
+            double[] gains,
+            List<List<Integer>> blanks,
+            int cols,
+            int rows,
+            int tileW,
+            int tileH,
+            double overlapFrac,
+            double jitterSigmaPx,
+            long seed)
+            throws IOException {
+        Random rng = new Random(seed);
+        int stepX = (int) Math.round(tileW * (1 - overlapFrac));
+        int stepY = (int) Math.round(tileH * (1 - overlapFrac));
+        int margin = (int) Math.ceil(4 * Math.max(1, jitterSigmaPx)) + 4;
+        int srcW = margin * 2 + (cols - 1) * stepX + tileW;
+        int srcH = margin * 2 + (rows - 1) * stepY + tileH;
+
+        int n = cols * rows;
+        double[] jx = new double[n];
+        double[] jy = new double[n];
+        for (int i = 0; i < n; i++) {
+            jx[i] = rng.nextGaussian() * jitterSigmaPx;
+            jy[i] = rng.nextGaussian() * jitterSigmaPx;
+        }
+        centre(jx);
+        centre(jy);
+
+        Map<String, Grid> out = new LinkedHashMap<>();
+        for (int ch = 0; ch < names.size(); ch++) {
+            Path dir = Files.createDirectories(base.resolve(names.get(ch)));
+            float[][] source = texture(srcW, srcH, rng);
+            // Re-centre the contrast on a fixed offset so the gain changes contrast, not just level.
+            for (float[] row : source) {
+                for (int x = 0; x < row.length; x++) {
+                    row[x] = (float) (1000 + (row[x] - 2000) * gains[ch]);
+                }
+            }
+            List<TileNode> nominal = new ArrayList<>();
+            Map<String, double[]> truth = new LinkedHashMap<>();
+            List<String> configLines = new ArrayList<>();
+            configLines.add("dim = 2");
+            for (int r = 0; r < rows; r++) {
+                for (int c = 0; c < cols; c++) {
+                    int idx = r * cols + c;
+                    String name = (idx + 1) + ".tif";
+                    int nomX = c * stepX;
+                    int nomY = r * stepY;
+                    int trueX = (int) Math.round(margin + nomX + jx[idx]);
+                    int trueY = (int) Math.round(margin + nomY + jy[idx]);
+                    Content content = blanks.get(ch).contains(idx) ? Content.BLANK : Content.TEXTURE;
+                    File file = dir.resolve(name).toFile();
+                    writeTile(file, source, trueX, trueY, tileW, tileH, content);
+                    nominal.add(new TileNode(name, file, nomX, nomY, tileW, tileH));
+                    truth.put(name, new double[] {trueX - margin - nomX, trueY - margin - nomY});
+                    configLines.add(
+                            String.format(Locale.ROOT, "%s; ; (%.3f, %.3f)", name, (double) nomX, (double) nomY));
+                }
+            }
+            Files.write(dir.resolve("TileConfiguration.txt"), configLines, StandardCharsets.US_ASCII);
+            out.put(names.get(ch), new Grid(nominal, truth, tileW, tileH));
+        }
+        return out;
+    }
+
     /** Convenience: jitter only, no coherent drift. */
     static Grid write(
             Path dir,

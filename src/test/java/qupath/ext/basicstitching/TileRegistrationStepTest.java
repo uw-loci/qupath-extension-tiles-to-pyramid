@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import qupath.ext.basicstitching.config.StitchingConfig;
 import qupath.ext.basicstitching.registration.RegistrationMode;
+import qupath.ext.basicstitching.registration.RegistrationReference;
 import qupath.ext.basicstitching.registration.RegistrationSettings;
 import qupath.ext.basicstitching.registration.TileNode;
 import qupath.ext.basicstitching.registration.TileRegistrationSolution;
@@ -94,7 +95,7 @@ class TileRegistrationStepTest {
         config.setRegistrationMode(new RegistrationMode.Solve(
                 tempDir.resolve(TileRegistrationSolution.DEFAULT_FILENAME),
                 RegistrationSettings.defaults().withThreads(1),
-                "angle_0"));
+                new RegistrationReference.Single("angle_0")));
 
         List<TileMapping> after = TileRegistrationStep.applyTo(before, config);
 

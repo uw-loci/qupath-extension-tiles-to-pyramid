@@ -1,7 +1,6 @@
 package qupath.ext.basicstitching.registration;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -64,6 +63,16 @@ public final class TileRegistrationEngine {
      */
     private static final int MAX_FILL_SWEEPS = 10_000;
 
+    /**
+     * An accepted seam whose runner-up peak scores at least this fraction of the winner is re-tried
+     * on the other channels. Below the ambiguity gate (which rejects outright), so it catches matches
+     * that passed but only just.
+     */
+    static final double WEAK_PEAK_RATIO = 0.8;
+
+    /** Seams sampled per candidate channel when choosing the main channel automatically. */
+    static final int REFERENCE_SAMPLE_EDGES = 24;
+
     private TileRegistrationEngine() {}
 
     /**
@@ -125,7 +134,11 @@ public final class TileRegistrationEngine {
             int perEdgeY = perEdgeSearch(overlapYPx, tileH, settings);
 
             List<EdgeMeasurement> measured =
-                    measureAll(nominal, graph.edges(), registrar, settings, perEdgeX, perEdgeY);
+                    measureAll(nominal, graph.edges(), request.primary(), registrar, settings, perEdgeX, perEdgeY);
+            if (!request.alternates().isEmpty()) {
+                measured = rescueWeakEdges(
+                        nominal, graph.edges(), measured, request, registrar, settings, perEdgeX, perEdgeY);
+            }
 
             long accepted = measured.stream().filter(EdgeMeasurement::accepted).count();
             if (accepted == 0) {
@@ -205,10 +218,14 @@ public final class TileRegistrationEngine {
     private static List<EdgeMeasurement> measureAll(
             List<TileNode> nominal,
             List<EdgePair> edges,
+            List<RegistrationChannel> channels,
             PairwiseRegistrar registrar,
             RegistrationSettings settings,
             int searchX,
             int searchY) {
+        if (edges.isEmpty()) {
+            return List.of();
+        }
 
         int threads = Math.max(1, Math.min(settings.threads(), edges.size()));
         int budgetPerWorker = Math.max(4, TOTAL_READER_BUDGET / threads);
@@ -226,7 +243,7 @@ public final class TileRegistrationEngine {
                     List<EdgeMeasurement> out = new ArrayList<>(chunk.size());
                     try (OverlapBandReader reader = new OverlapBandReader(budgetPerWorker)) {
                         for (EdgePair edge : chunk) {
-                            out.add(measureOne(nominal, edge, reader, registrar, settings, searchX, searchY));
+                            out.add(measureOne(nominal, edge, channels, reader, registrar, settings, searchX, searchY));
                         }
                     }
                     return out;
@@ -255,6 +272,7 @@ public final class TileRegistrationEngine {
     private static EdgeMeasurement measureOne(
             List<TileNode> nominal,
             EdgePair edge,
+            List<RegistrationChannel> channels,
             OverlapBandReader reader,
             PairwiseRegistrar registrar,
             RegistrationSettings settings,
@@ -296,14 +314,124 @@ public final class TileRegistrationEngine {
         }
 
         try {
-            OverlapBand bandA = reader.read(ti.file(), ax, ay, ovW, ovH);
-            OverlapBand bandB = reader.read(tj.file(), bx, by, ovW, ovH);
+            OverlapBand bandA = reader.read(channels, ti.filename(), ax, ay, ovW, ovH);
+            OverlapBand bandB = reader.read(channels, tj.filename(), bx, by, ovW, ovH);
             return registrar.measure(edge, bandA, bandB, nominalDx, nominalDy, searchX, searchY, settings);
         } catch (java.io.IOException | RuntimeException e) {
             logger.debug("Could not read overlap for {} / {}: {}", ti.filename(), tj.filename(), e.toString());
             return new EdgeMeasurement(
                     edge.i(), edge.j(), nominalDx, nominalDy, nominalDx, nominalDy, 0, RejectReason.READ_FAILED);
         }
+    }
+
+    /**
+     * Re-measure the seams the primary channel matched weakly on every alternate channel, and keep
+     * the most decisive measurement for each.
+     *
+     * <p>Only weak seams pay for this. On real acquisitions roughly nine seams in ten already match
+     * well on one channel, so re-reading only the rest costs a fraction of measuring every seam on
+     * every channel, and it is exactly the weak seams where another channel can help: different
+     * stains carry the structure in different places.
+     *
+     * <p>Mixing channels between seams is sound because every channel of a tile was captured at the
+     * same stage position. The tile-to-tile offset is the same in all of them, and a constant
+     * chromatic shift between channels is shared by both tiles of a seam, so it cancels.
+     */
+    private static List<EdgeMeasurement> rescueWeakEdges(
+            List<TileNode> nominal,
+            List<EdgePair> edges,
+            List<EdgeMeasurement> measured,
+            RegistrationRequest request,
+            PairwiseRegistrar registrar,
+            RegistrationSettings settings,
+            int searchX,
+            int searchY) {
+        // measureAll returns results in chunk order, not edge order; key them back by tile pair.
+        Map<Long, Integer> indexByPair = new HashMap<>();
+        for (int k = 0; k < measured.size(); k++) {
+            indexByPair.put(pairKey(measured.get(k).i(), measured.get(k).j()), k);
+        }
+        List<EdgePair> weak = new ArrayList<>();
+        for (EdgePair edge : edges) {
+            Integer k = indexByPair.get(pairKey(edge.i(), edge.j()));
+            if (k != null && isWeak(measured.get(k))) {
+                weak.add(edge);
+            }
+        }
+        if (weak.isEmpty()) {
+            logger.info("Weak-seam rescue: every seam matched decisively on '{}'", request.referenceName());
+            return measured;
+        }
+
+        List<EdgeMeasurement> out = new ArrayList<>(measured);
+        for (RegistrationChannel alternate : request.alternates()) {
+            List<EdgeMeasurement> retry =
+                    measureAll(nominal, weak, List.of(alternate), registrar, settings, searchX, searchY);
+            for (EdgeMeasurement candidate : retry) {
+                int k = indexByPair.get(pairKey(candidate.i(), candidate.j()));
+                if (decisiveness(candidate) > decisiveness(out.get(k))) {
+                    out.set(k, candidate);
+                }
+            }
+        }
+        // Counted after every alternate has competed, so a seam improved twice counts once.
+        int rescued = 0;
+        int nowAccepted = 0;
+        for (EdgePair edge : weak) {
+            int k = indexByPair.get(pairKey(edge.i(), edge.j()));
+            EdgeMeasurement before = measured.get(k);
+            EdgeMeasurement after = out.get(k);
+            if (after != before) {
+                rescued++;
+                if (after.accepted() && !before.accepted()) {
+                    nowAccepted++;
+                }
+            }
+        }
+        logger.info(
+                "Weak-seam rescue: re-measured {} of {} seams on {} other channel(s); {} improved, {} of them"
+                        + " previously rejected",
+                weak.size(),
+                measured.size(),
+                request.alternates().size(),
+                rescued,
+                nowAccepted);
+        return out;
+    }
+
+    /**
+     * Whether a measurement is worth re-trying on another channel: rejected for a reason another
+     * channel could fix, or accepted with a runner-up peak close enough to the winner that the match
+     * is not decisive.
+     */
+    static boolean isWeak(EdgeMeasurement e) {
+        if (e.reject() == RejectReason.NO_OVERLAP) {
+            return false; // geometry, not content: no channel can fix it
+        }
+        if (!e.accepted()) {
+            return true;
+        }
+        double ratio = e.diagnostics().secondPeakRatio();
+        return !Double.isNaN(ratio) && ratio >= WEAK_PEAK_RATIO;
+    }
+
+    /**
+     * How decisively a seam matched: the winning peak's lead over the best rival peak. Any accepted
+     * measurement beats any rejected one. A seam whose correlation surface had only one peak has no
+     * rival, so its lead is the full peak.
+     */
+    static double decisiveness(EdgeMeasurement e) {
+        if (!e.accepted()) {
+            return Double.NEGATIVE_INFINITY;
+        }
+        EdgeDiagnostics d = e.diagnostics();
+        double best = Double.isNaN(d.bestNcc()) ? e.ncc() : d.bestNcc();
+        double second = Double.isNaN(d.secondPeakNcc()) ? 0 : Math.max(0, d.secondPeakNcc());
+        return best - second;
+    }
+
+    private static long pairKey(int i, int j) {
+        return ((long) i << 32) | (j & 0xffffffffL);
     }
 
     /**
@@ -617,78 +745,93 @@ public final class TileRegistrationEngine {
     }
 
     /**
-     * Pick the subdirectory most worth solving on.
+     * Pick the channel whose seams match most decisively, by measuring a sample of seams on each.
      *
-     * <p>Registration is only as good as the texture it correlates, and the angles or channels of
-     * one acquisition differ wildly in that respect -- a polarization extinction angle is nearly
-     * black, and a poorly-stained fluorescence channel is nearly empty. Sampling actual content and
-     * picking the busiest subdirectory beats hardcoding a per-modality default, and needs no
-     * knowledge of what the subdirectories mean.
+     * <h2>Why measure seams rather than score texture</h2>
+     *
+     * The question is which channel will register best, so this asks it directly. A texture score
+     * (spread over median of a tile's centre) answers a different question and gets it wrong in a
+     * predictable way: a sparse nuclear stain on a dark background has a low spread-to-median ratio
+     * precisely because its background is clean -- which is what makes it register well. Measured on
+     * a three-channel fluorescence grid, the texture score ranked DAPI last; seam decisiveness ranked
+     * it first, and it was the channel the other two agreed with.
+     *
+     * <h2>Cost</h2>
+     *
+     * {@link #REFERENCE_SAMPLE_EDGES} seams per channel, spread evenly over the grid: a few dozen
+     * overlap reads per channel whatever the size of the acquisition.
      *
      * <h2>Callers that cannot use this, and why it is not therefore redundant</h2>
      *
-     * <p>QPSC never reaches this method, and the duplication with {@code
-     * ModalityHandler.registrationReferenceIndex} on that side is deliberate -- do not resolve it by
-     * deleting either one. The difference is what each caller can see:
+     * <p>QPSC chooses its reference itself (a fixed PPM angle, or the channel the operator picked),
+     * because it knows what its subdirectories mean. This method is for callers that do not.
      *
-     * <ul>
-     *   <li><b>Stitching this library directly</b> passes every subdirectory to one call, so the
-     *       candidates really are comparable side by side. That is this method.
-     *   <li><b>QPSC</b> moves each angle into its own temporary directory before stitching it, so a
-     *       Solve-mode run only ever sees a single subdirectory. There is nothing here to choose
-     *       between, and the choice has to be made upstream while the angles are all still visible.
-     * </ul>
-     *
-     * <p>The upstream rule is also the better one where it applies: PPM knows a priori that the
-     * 90-degree angle is the bright one, whereas sampling measures the same fact with less
-     * confidence and some I/O. This method is the fallback for callers that lack that knowledge, not
-     * a second implementation of it.
-     *
-     * @param candidates subdirectory name to that subdirectory's tiles
-     * @param sampleSize how many tiles to sample per candidate
-     * @return the name of the subdirectory with the most texture, or null if none can be read
+     * @param nominal the grid, at nominal positions; tile filenames key into every candidate
+     * @param candidates the channels to choose between, in order; ties go to the earlier one
+     * @param settings tuning
+     * @return the most decisive channel, or the first when none can be measured
      */
-    public static String chooseReference(Map<String, List<TileNode>> candidates, int sampleSize) {
-        String best = null;
-        double bestScore = -1;
-        try (OverlapBandReader reader = new OverlapBandReader(8)) {
-            for (Map.Entry<String, List<TileNode>> entry : candidates.entrySet()) {
-                double score = medianTexture(entry.getValue(), reader, sampleSize);
-                logger.debug("Reference candidate '{}': median texture score {}", entry.getKey(), score);
-                if (score > bestScore) {
-                    bestScore = score;
-                    best = entry.getKey();
+    public static RegistrationChannel chooseReference(
+            List<TileNode> nominal, List<RegistrationChannel> candidates, RegistrationSettings settings) {
+        if (candidates.size() == 1) {
+            return candidates.get(0);
+        }
+        List<EdgePair> sample;
+        int searchX;
+        int searchY;
+        try {
+            NeighborGraph graph = NeighborGraphBuilder.build(nominal, settings);
+            List<EdgePair> all = graph.edges();
+            if (all.isEmpty()) {
+                return candidates.get(0);
+            }
+            int stride = Math.max(1, all.size() / REFERENCE_SAMPLE_EDGES);
+            sample = new ArrayList<>();
+            for (int k = 0; k < all.size() && sample.size() < REFERENCE_SAMPLE_EDGES; k += stride) {
+                sample.add(all.get(k));
+            }
+            int tileW = nominal.get(0).widthPx();
+            int tileH = nominal.get(0).heightPx();
+            searchX = perEdgeSearch(graph.geometry().overlapXPx(tileW), tileW, settings);
+            searchY = perEdgeSearch(graph.geometry().overlapYPx(tileH), tileH, settings);
+        } catch (RuntimeException e) {
+            logger.warn(
+                    "Could not sample seams to choose a reference ({}); using '{}'",
+                    e,
+                    candidates.get(0).name());
+            return candidates.get(0);
+        }
+
+        PairwiseRegistrar registrar = new CoarseToFineNccRegistrar();
+        RegistrationChannel best = candidates.get(0);
+        double bestScore = Double.NEGATIVE_INFINITY;
+        for (RegistrationChannel candidate : candidates) {
+            List<EdgeMeasurement> measured =
+                    measureAll(nominal, sample, List.of(candidate), registrar, settings, searchX, searchY);
+            double sum = 0;
+            int accepted = 0;
+            for (EdgeMeasurement e : measured) {
+                // A rejected seam contributes nothing: over a sparse slide most sampled seams may be
+                // background on every channel, and a mean (not a median) still ranks the channels by
+                // the seams that do carry content.
+                if (e.accepted()) {
+                    sum += decisiveness(e);
+                    accepted++;
                 }
             }
-        }
-        if (best != null) {
+            double score = measured.isEmpty() ? 0 : sum / measured.size();
             logger.info(
-                    "Registration reference: '{}' (median texture score {})",
-                    best,
-                    String.format(Locale.ROOT, "%.4f", bestScore));
-        }
-        return best;
-    }
-
-    private static double medianTexture(List<TileNode> tiles, OverlapBandReader reader, int sampleSize) {
-        List<Double> scores = new ArrayList<>();
-        int stride = Math.max(1, tiles.size() / Math.max(1, sampleSize));
-        for (int i = 0; i < tiles.size() && scores.size() < sampleSize; i += stride) {
-            TileNode t = tiles.get(i);
-            try {
-                // A centre crop: tile corners are the likeliest place to find only background.
-                int w = Math.max(RegistrationSettings.MIN_BAND_PX, t.widthPx() / 4);
-                int h = Math.max(RegistrationSettings.MIN_BAND_PX, t.heightPx() / 4);
-                OverlapBand band = reader.read(t.file(), (t.widthPx() - w) / 2, (t.heightPx() - h) / 2, w, h);
-                scores.add(band.textureScore());
-            } catch (java.io.IOException | RuntimeException e) {
-                logger.debug("Could not sample {}: {}", t.filename(), e.toString());
+                    "Reference candidate '{}': {} of {} sampled seams matched, mean decisiveness {}",
+                    candidate.name(),
+                    accepted,
+                    measured.size(),
+                    String.format(Locale.ROOT, "%.3f", score));
+            if (score > bestScore) {
+                bestScore = score;
+                best = candidate;
             }
         }
-        if (scores.isEmpty()) {
-            return -1;
-        }
-        Collections.sort(scores);
-        return scores.get(scores.size() / 2);
+        logger.info("Registration reference: '{}' (most decisive on sampled seams)", best.name());
+        return best;
     }
 }

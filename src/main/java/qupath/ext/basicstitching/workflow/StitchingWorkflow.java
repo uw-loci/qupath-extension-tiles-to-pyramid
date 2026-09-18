@@ -265,6 +265,58 @@ public class StitchingWorkflow {
     }
 
     /**
+     * Solve tile registration across several sibling subdirectories and write the solution file,
+     * without stitching.
+     *
+     * <p>For callers that stitch one subdirectory at a time but need all of them visible to the
+     * solve: a normalized projection reads every channel, and the automatic choice compares them.
+     * Point the config at the folder holding the subdirectories, set a
+     * {@link qupath.ext.basicstitching.registration.RegistrationMode.Solve} mode, call this, then
+     * stitch each subdirectory with an {@code Apply} mode on the written file.
+     *
+     * <p>Subdirectories are named exactly rather than by the config's matching string, which is a
+     * substring filter: no single string selects {@code DAPI}, {@code FITC} and {@code TRITC}
+     * together, and a substring could also catch an unrelated folder ({@code DAPI_old}).
+     *
+     * <p>Never throws. On failure no solution is written, and siblings applying it will warn and
+     * stitch at nominal positions -- all of them, so they stay consistent with each other.
+     *
+     * @param config folder, pixel size, downsample and a Solve mode; its matching string is ignored
+     * @param subdirs the sibling subdirectories to solve across, by exact name
+     * @return whether a solution file was written
+     */
+    public static boolean solveRegistration(StitchingConfig config, List<String> subdirs) {
+        try {
+            StitchingStrategy strategy = StitchingStrategyFactory.getStrategy(config);
+            if (strategy == null) {
+                logger.error("No valid stitching strategy for type: {}", config.stitchingType);
+                return false;
+            }
+            List<TileMapping> mappings = new ArrayList<>();
+            for (String subdir : subdirs) {
+                List<TileMapping> found = strategy.prepareStitching(
+                        config.folderPath, config.pixelSizeInMicrons, config.baseDownsample, subdir);
+                if (found == null) {
+                    continue;
+                }
+                for (TileMapping m : found) {
+                    if (subdir.equals(m.subdirName)) {
+                        mappings.add(m);
+                    }
+                }
+            }
+            if (mappings.isEmpty()) {
+                logger.warn("No tiles found in {} under {} to solve registration on", subdirs, config.folderPath);
+                return false;
+            }
+            return TileRegistrationStep.solveOnly(mappings, config);
+        } catch (Exception e) {
+            logger.error("Registration solve failed", e);
+            return false;
+        }
+    }
+
+    /**
      * The user's configured overlap blending, or the hard cut if it cannot be read.
      *
      * <p>Guarded the same way QPSC guards the registration settings: the preferences depend on

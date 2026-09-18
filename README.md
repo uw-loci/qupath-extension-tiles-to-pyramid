@@ -7,7 +7,7 @@ A basic image stitching extension for QuPath that combines multiple image tiles 
 
 ## Features
 
-- **Content-Based Tile Registration**: Optionally position tiles by correlating the image content in their overlap, instead of trusting nominal stage coordinates. Corrects backlash, encoder error, and thermal drift. One solve is measured on a reference subdirectory and reused by every angle/channel, so co-captured images stay registered to each other. Off by default. See [Tile registration](#tile-registration)
+- **Content-Based Tile Registration**: Optionally position tiles by correlating the image content in their overlap, instead of trusting nominal stage coordinates. Corrects backlash, encoder error, and thermal drift. One solve (on a chosen subdirectory, the best-matching one, or a normalized merge of several) is reused by every angle/channel, so co-captured images stay registered to each other. Off by default. See [Tile registration](#tile-registration)
 - **Z-stack and time-series stitching**: Assemble tiles into multi-plane pyramids (XY mosaic with multiple z-slices and timepoints) when planes are stored as separate files in `z{nn}/`/`t{nn}/` directories and read by the TileConfiguration.txt strategy. See [Dimensions and channels](#what-the-extension-can-handle-dimensions-and-channels) for exactly what each input supports
 - **Multiple Stitching Strategies**: Support for filename-based coordinates, TileConfiguration.txt files, Vectra metadata, and MicroManager metadata (MMStack or single-plane TIFF series)
 - **Dual Output Formats**: Choose between traditional OME-TIFF or cloud-native OME-ZARR
@@ -77,7 +77,7 @@ when the selected folder holds two or more matching sub-folders of single-channe
 for RGB tiles, a single tile folder, or MicroManager input. The merged image is written as
 `<folder>_merged` beside the per-channel images (which are kept), with channels named after the
 sub-folders. QPSC and scripts call `ChannelMerger` directly. Co-registration across the
-channels is why registration solves one reference subdirectory and reuses it for the rest (see
+channels is why registration is solved once and reused by every channel (see
 [Tile registration](#tile-registration)).
 
 ### Merging channels in the dialog
@@ -143,8 +143,17 @@ persistent tuning knobs in QuPath's Preferences.
 
 - **Overlap %** -- derive it from the tile grid (default) or set X/Y by hand for an acquisition
   whose overlap you know.
-- **Reference subdirectory** -- which subdirectory to solve on (auto = the one with the most
-  texture), reused by all the others.
+- **Reference subdirectory** -- what to measure the overlaps on. The solution is reused by every
+  subdirectory. Choices:
+  - **Auto (best matching folder, weak seams re-tried)** (default). Measures about 24 seams on every
+    subdirectory and solves on the one whose matches are most decisive. Seams that come out weak or
+    rejected on it are then re-measured on the other subdirectories, and the best match wins. Only
+    the weak seams pay for this.
+  - **Normalized merge of all folders** (shown when there are two or more). Scales each subdirectory
+    by one factor for the whole dataset, then averages them. A dim channel counts as much as a bright
+    one, and a feature looks the same in both tiles of a seam. Every seam reads every subdirectory,
+    so it takes about N times as long to measure as a single one.
+  - **A named subdirectory.** Solve on that one only. No other subdirectory is consulted.
 
 **In QuPath Preferences -> "Tiles-to-pyramid" category** (persistent, shared with QPSC):
 
@@ -201,8 +210,29 @@ overlay, which is worse than leaving everything on a shared nominal grid.
 
 So exactly one subdirectory is solved (the slow part) and every sibling reuses it (effectively
 free). In an acquisition that means: stitch the reference angle first in `Solve` mode, then the
-remaining angles, `.biref`/`.sum` outputs, or channels in `Apply` mode. If no reference is named,
-the subdirectory with the most texture is chosen automatically.
+remaining angles, `.biref`/`.sum` outputs, or channels in `Apply` mode. A caller that stitches
+each subdirectory separately but wants the solve to see all of them (for a normalized merge, or the
+automatic choice) calls `StitchingWorkflow.solveRegistration(config, subdirs)` first, then stitches
+every subdirectory in `Apply` mode.
+
+### Which channel to measure on
+
+Mixing channels is safe because every channel of a tile was captured at the same stage position:
+the tile-to-tile offset is the same in all of them, and a constant chromatic shift between channels
+is shared by both tiles of a seam, so it cancels.
+
+- **Auto** ranks candidates by how decisively the correlation peak beats its nearest rival on a
+  sample of seams. It no longer uses a texture score (spread over median of the tile centre). That
+  score answered a different question and ranked a clean nuclear stain *last*, because a dark,
+  uniform background makes the ratio small even though it registers well.
+- **Normalized merge**: each channel's scale is `1 / (white - black)`, where black and white are
+  the 1st and 99.9th percentiles of up to 64 centre crops (512 px square, every 4th pixel) sampled
+  evenly across the grid. The cost is the same for 40 tiles or 40,000. The black point is not
+  subtracted, because correlation ignores a constant offset. The high white percentile keeps a
+  sparse stain from being mistaken for background. The scales are written into
+  `TileRegistration.txt`.
+- **Channels stored in one file** (multi-band tiles) are still averaged band by band with equal,
+  unscaled weights. Normalization applies only across subdirectories.
 
 The solution file is also durable -- a re-stitch can reuse a solve rather than repeat it, and it
 can be read when a mosaic looks wrong. It records the pixel size, downsample, flip flags and tile

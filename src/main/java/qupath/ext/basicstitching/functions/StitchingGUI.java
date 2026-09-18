@@ -41,6 +41,7 @@ import qupath.ext.basicstitching.assembly.ChannelMerger;
 import qupath.ext.basicstitching.assembly.direct.TileReaderPool;
 import qupath.ext.basicstitching.config.StitchingConfig;
 import qupath.ext.basicstitching.registration.RegistrationMode;
+import qupath.ext.basicstitching.registration.RegistrationReference;
 import qupath.ext.basicstitching.registration.RegistrationSettings;
 import qupath.ext.basicstitching.registration.TileRegistrationSolution;
 import qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy;
@@ -86,7 +87,8 @@ public class StitchingGUI {
     // Shown only when the folder holds 2+ matching single-channel subdirectories (RGB is not channels).
     private final CheckBox mergeChannelsCheckbox = new CheckBox("Merge channels into one multichannel image");
     // Per-run registration controls (the tuning knobs live in Preferences -> Tiles-to-pyramid).
-    private static final String AUTO_REFERENCE = "Auto (most texture)";
+    private static final String AUTO_REFERENCE = "Auto (best matching folder, weak seams re-tried)";
+    private static final String PROJECTION_REFERENCE = "Normalized merge of all folders";
     private final CheckBox overlapAutoCheckbox = new CheckBox("Overlap %: derive from the tile grid");
     private final TextField overlapXField = new TextField("10");
     private final TextField overlapYField = new TextField("10");
@@ -255,9 +257,16 @@ public class StitchingGUI {
                     settings = settings.withExplicitOverlap(ox, oy);
                 }
 
-                String reference = referenceBox.getValue();
-                if (reference == null || AUTO_REFERENCE.equals(reference)) {
-                    reference = null;
+                String choice = referenceBox.getValue();
+                RegistrationReference reference;
+                if (PROJECTION_REFERENCE.equals(choice)) {
+                    reference = new RegistrationReference.Projection(referenceBox.getItems().stream()
+                            .filter(c -> !AUTO_REFERENCE.equals(c) && !PROJECTION_REFERENCE.equals(c))
+                            .toList());
+                } else if (choice == null || AUTO_REFERENCE.equals(choice)) {
+                    reference = RegistrationReference.auto();
+                } else {
+                    reference = new RegistrationReference.Single(choice);
                 }
 
                 Path solutionOut = Paths.get(folderPath).resolve(TileRegistrationSolution.DEFAULT_FILENAME);
@@ -265,7 +274,7 @@ public class StitchingGUI {
                 logger.info(
                         "Content-based overlap resolution enabled (overlap {}, reference {}); solution -> {}",
                         overlapAuto ? "auto" : (overlapXField.getText() + "%/" + overlapYField.getText() + "%"),
-                        reference == null ? "auto" : reference,
+                        choice == null ? AUTO_REFERENCE : choice,
                         solutionOut);
             }
 
@@ -559,9 +568,13 @@ public class StitchingGUI {
         overlapYField.setPrefColumnCount(4);
 
         referenceLabel.setTooltip(
-                new Tooltip("Which subdirectory to solve the registration on. The solution is reused by every other\n"
-                        + "subdirectory (angles/channels are co-captured, so they must share one solve).\n"
-                        + "Auto picks the subdirectory with the most texture."));
+                new Tooltip("What to measure tile overlaps on. The solution is reused by every subdirectory\n"
+                        + "(angles/channels are co-captured, so they must share one solve).\n\n"
+                        + "Auto: tries a sample of seams on every folder, solves on the one that matches most\n"
+                        + "decisively, and re-measures only the weak seams on the other folders.\n"
+                        + "Normalized merge: scales each folder once for the whole dataset, then averages them.\n"
+                        + "Reads every folder at every seam, so it takes longer than a single folder.\n"
+                        + "A named folder: solve on that folder only."));
         referenceBox.setTooltip(referenceLabel.getTooltip());
         refreshReferenceChoices();
         folderField.textProperty().addListener((obs, o, n) -> refreshReferenceChoices());
@@ -606,8 +619,9 @@ public class StitchingGUI {
 
     /**
      * Populate the reference-subdirectory choices from the immediate subdirectories of the selected
-     * folder, keeping {@link #AUTO_REFERENCE} first and preserving the current selection when it
-     * still exists.
+     * folder, keeping {@link #AUTO_REFERENCE} first (and {@link #PROJECTION_REFERENCE} second when
+     * there is more than one subdirectory to merge), preserving the current selection when it still
+     * exists.
      */
     private void refreshReferenceChoices() {
         String previous = referenceBox.getValue();
@@ -619,6 +633,9 @@ public class StitchingGUI {
             File[] children = folder.listFiles(File::isDirectory);
             if (children != null) {
                 java.util.Arrays.sort(children);
+                if (children.length >= 2) {
+                    choices.add(PROJECTION_REFERENCE);
+                }
                 for (File child : children) {
                     choices.add(child.getName());
                 }
