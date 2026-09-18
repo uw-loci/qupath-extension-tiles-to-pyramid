@@ -49,7 +49,10 @@ class StitchInfoFileTest {
         assertTrue(text.contains("note: 5 ?m next"), text);
 
         StitchInfoFile.append(after, List.of(StitchInfoFile.Section.of("acquisition", Map.of("sample", "S"))));
-        assertTrue(Files.readString(StitchInfoFile.pathFor(after)).contains("[acquisition]\nsample: S"));
+        // Lines, not a "\n" substring: the record uses the platform line separator (CRLF on Windows).
+        List<String> lines = Files.readAllLines(StitchInfoFile.pathFor(after), StandardCharsets.US_ASCII);
+        int heading = lines.indexOf("[acquisition]");
+        assertTrue(heading >= 0 && "sample: S".equals(lines.get(heading + 1)), String.join("|", lines));
     }
 
     @Test
