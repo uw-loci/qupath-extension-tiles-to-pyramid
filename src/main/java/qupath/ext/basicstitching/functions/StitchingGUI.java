@@ -311,14 +311,25 @@ public class StitchingGUI {
                                 message.append("\n\nFailed: ").append(result.failedSubdirs());
                             }
                             if (mergeChannels && outputs.size() >= 2) {
-                                String merged = mergeChannelOutputs(outputs, config);
+                                // A size or pixel-type mismatch throws from ChannelMergeImageServer; catch
+                                // it here so the stitched outputs listed above still reach the user.
+                                String merged = null;
+                                String reason = "See the log for details.";
+                                try {
+                                    merged = mergeChannelOutputs(outputs, config);
+                                } catch (Exception e) {
+                                    logger.error("Channel merge failed", e);
+                                    if (e.getMessage() != null) {
+                                        reason = e.getMessage();
+                                    }
+                                }
                                 if (merged != null) {
                                     message.append("\n\nMerged channels into:\n  ")
                                             .append(merged);
                                 } else {
                                     ok = false;
-                                    message.append("\n\nChannel merge failed; the per-channel images were kept. "
-                                            + "See the log for details.");
+                                    message.append("\n\nChannel merge failed; the per-channel images were kept.\n")
+                                            .append(reason);
                                 }
                             }
                         }
@@ -998,8 +1009,10 @@ public class StitchingGUI {
      */
     private void updateComponentsBasedOnSelection(GridPane pane) {
         String selectedValue = stitchingGridBox.getValue();
-        boolean hidePixelSize = "Vectra tiles with metadata".equals(selectedValue)
-                || "Coordinates in TileConfiguration.txt file".equals(selectedValue);
+        // Only Vectra tiles carry pixel positions. TileConfiguration.txt coordinates are micrometers
+        // divided by this pixel size, so hiding the field there made the stitch use an invisible,
+        // stale value.
+        boolean hidePixelSize = "Vectra tiles with metadata".equals(selectedValue);
 
         pixelSizeLabel.setVisible(!hidePixelSize);
         pixelSizeField.setVisible(!hidePixelSize);

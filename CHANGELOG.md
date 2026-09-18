@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.9] - 2026-09-15
+
+### Fixed
+- **The TileConfiguration.txt method stitched with a hidden pixel size.** Its coordinates are micrometers divided by the pixel size, but the dialog hid the pixel-size field for this method, so a stitch used whatever the invisible field held (the last manually entered value, initially 7.2, or one auto-filled from MicroManager metadata) and could place tiles at the wrong spacing with no way to see why. The field is now shown for every method except Vectra, whose tiles carry pixel positions.
+- **A failed channel merge hid the stitched files.** A width, height or pixel-type mismatch between channels threw past the merge's error handling, so the result window read "Stitching failed" and dropped the list of per-channel files that had been written. The window now lists them and says why the merge failed.
+
 ## [0.6.8] - 2026-09-14
 
 ### Changed

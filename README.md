@@ -394,7 +394,7 @@ root/
 **Usage:**
 - Each group must contain a `TileConfiguration.txt` file (at the root for z/t layouts, or in each angle subdirectory for flat/projected)
 - Coordinates in the config are stage positions in micrometers; each is divided by the pixel size and the downsample to place the tile
-- **Dialog limitation:** the pixel-size field is hidden for this method, so a stitch from the dialog uses whatever the hidden field holds: the last manually entered pixel size (initially 7.2), or a value auto-filled from MicroManager metadata found in the folder. QPSC and scripts pass the pixel size explicitly and are not affected
+- In the dialog, check **Pixel size, microns** before stitching. It is locked by default and shows the last manually entered value (initially 7.2), or one auto-filled from MicroManager metadata found in the folder; tick **Manually edit pixel size** to set it. QPSC and scripts pass the pixel size explicitly
 - Tile filenames in the config must match across all z/t planes (the stitcher recursively finds tiles by name, regardless of z/t nesting)
 - Flat / projected layouts (no z/t subdirectories) resolve to z=0, t=0 and produce 2D output, unchanged from prior behavior
 
@@ -479,7 +479,7 @@ Common to both:
 |-----------|-------------|---------|
 | **Stitching Method** | How tile positions are read: "Vectra tiles with metadata", "Filename[x,y] with coordinates in microns", "TileConfiguration.txt file", or "MicroManager metadata (MMStack or TIFF series)". Remembered as soon as it is changed | Last-used (initially TileConfiguration.txt file) |
 | **Folder location** (**Select Folder**) | The folder that holds your tiles. Stitched images are written **into this same folder** | Last-used folder |
-| **Pixel size, microns** | Physical size of each pixel in micrometers. Auto-detected from MMStack `*_metadata.txt` sidecars when available; field is locked by default. Tick "Manually edit pixel size" to override. Hidden for the Vectra and TileConfiguration.txt methods | Detected from metadata; otherwise the last manually entered value (initially 7.2) |
+| **Pixel size, microns** | Physical size of each pixel in micrometers. Auto-detected from MMStack `*_metadata.txt` sidecars when available; field is locked by default. Tick "Manually edit pixel size" to override. Hidden for the Vectra method, whose tiles carry pixel positions | Detected from metadata; otherwise the last manually entered value (initially 7.2) |
 | **Downsample** | Downsampling factor for output | Last-used (initially 1) |
 | **Compression type** | QuPath OME writer compression type (`LZW`, `JPEG`, `J2K`, `J2K_LOSSY`, `ZLIB`, `UNCOMPRESSED`, `DEFAULT`); applies to both output formats (mapped to Blosc codecs for OME-ZARR) | Last-used (initially J2K) |
 | **Output format** | OME-TIFF (single file) or OME-ZARR (directory) | Last-used (initially OME-TIFF) |

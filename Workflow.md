@@ -25,8 +25,8 @@ MenuStartup -> StitchingGUI -> StitchingWorkflow.runDetailed(config)   (backgrou
 ## 2. StitchingGUI (user dialog)
 
 `functions/StitchingGUI.java` collects the folder, output format, compression, pixel size and
-downsample, and builds a `StitchingConfig`. Whenever the pixel-size field is shown (Filename[x,y]
-and MicroManager methods) it offers a "Try calculating pixel size..." button, which measures pixel
+downsample, and builds a `StitchingConfig`. Whenever the pixel-size field is shown (every method except
+Vectra) it offers a "Try calculating pixel size..." button, which measures pixel
 size from tile overlap by normalized cross-correlation rather than trusting the metadata; it reads
 MicroManager stage positions, so it only works on MicroManager datasets.
 
