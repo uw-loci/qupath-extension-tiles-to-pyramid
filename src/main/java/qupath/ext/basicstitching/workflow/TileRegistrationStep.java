@@ -69,8 +69,53 @@ public final class TileRegistrationStep {
             return mappings;
         } catch (RuntimeException e) {
             logger.error("Tile registration step failed; stitching at nominal positions", e);
+            record(config, "failed; tiles at nominal stage positions (" + e + ")", null, null, 0, 0);
             return mappings;
         }
+    }
+
+    /**
+     * Note on the config what registration did, for the stitch record. The solution file's own
+     * header (reference, geometry, edges accepted, settings, normalization) is copied in verbatim,
+     * so the record says exactly what the file says.
+     */
+    private static void record(
+            StitchingConfig config, String mode, Path solution, String reference, int moved, int total) {
+        java.util.Map<String, String> entries = new LinkedHashMap<>();
+        entries.put("mode", mode);
+        if (reference != null) {
+            entries.put("aligned on", reference);
+        }
+        if (solution != null) {
+            entries.put("solution file", solution.toAbsolutePath().toString());
+        }
+        if (total > 0) {
+            entries.put("tile placements moved", moved + " of " + total);
+        }
+        List<String> lines = new ArrayList<>();
+        if (solution != null && java.nio.file.Files.exists(solution)) {
+            try {
+                for (String line :
+                        java.nio.file.Files.readAllLines(solution, java.nio.charset.StandardCharsets.US_ASCII)) {
+                    if (line.startsWith("#") && !line.startsWith("# name;")) {
+                        lines.add(line);
+                    }
+                }
+            } catch (IOException e) {
+                logger.debug("Could not copy solution header from {}: {}", solution, e.toString());
+            }
+        }
+        config.setRegistrationRecord(new StitchInfoFile.Section("registration", entries, lines));
+    }
+
+    private static int countMoved(List<TileMapping> before, List<TileMapping> after) {
+        int moved = 0;
+        for (int i = 0; i < before.size(); i++) {
+            if (before.get(i) != after.get(i)) {
+                moved++;
+            }
+        }
+        return moved;
     }
 
     // ------------------------------------------------------------------ solve
@@ -109,7 +154,13 @@ public final class TileRegistrationStep {
     private static List<TileMapping> solveAndApply(
             List<TileMapping> mappings, StitchingConfig config, RegistrationMode.Solve solve) {
         RegistrationResult result = solve(mappings, config, solve);
-        return result == null ? mappings : applyDeltas(mappings, result.deltaPxByFilename());
+        if (result == null) {
+            record(config, "solve found no usable corrections; tiles at nominal stage positions", null, null, 0, 0);
+            return mappings;
+        }
+        List<TileMapping> out = applyDeltas(mappings, result.deltaPxByFilename());
+        record(config, "solved on this stitch", solve.solutionOut(), null, countMoved(mappings, out), mappings.size());
+        return out;
     }
 
     /** @return the result, or null when nothing usable was solved. */
@@ -260,6 +311,7 @@ public final class TileRegistrationStep {
             solution = TileRegistrationSolution.read(solutionIn);
         } catch (IOException | RuntimeException e) {
             logger.warn("Could not read registration solution {}: {}", solutionIn, e.toString());
+            record(config, "solution missing or unreadable; tiles at nominal stage positions", solutionIn, null, 0, 0);
             return mappings;
         }
 
@@ -275,6 +327,7 @@ public final class TileRegistrationStep {
             // Applying a solution solved for different geometry would displace every tile by a
             // wrong-but-plausible amount -- a silent corruption. Nominal is strictly better.
             logger.warn("Ignoring registration solution {}: {}", solutionIn, why);
+            record(config, "solution refused (" + why + "); tiles at nominal stage positions", solutionIn, null, 0, 0);
             return mappings;
         }
 
@@ -284,7 +337,15 @@ public final class TileRegistrationStep {
                 solution.deltaPxByFilename().size(),
                 solution.header().edgesAccepted(),
                 solution.header().edgesTotal());
-        return applyDeltas(mappings, solution.deltaPxByFilename());
+        List<TileMapping> out = applyDeltas(mappings, solution.deltaPxByFilename());
+        record(
+                config,
+                "reused a solve from a sibling angle/channel",
+                solutionIn,
+                solution.header().reference(),
+                countMoved(mappings, out),
+                mappings.size());
+        return out;
     }
 
     // ---------------------------------------------------------------- helpers

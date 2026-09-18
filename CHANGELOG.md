@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **A stitch record beside every stitched image.** `<image stem>.stitch-info.txt` records how the image was produced: the source tile folder, tile count and size, stitch method, pixel size, downsample, stage-axis negation, overlap blending, format and compression; what registration did (off, solved, reused a sibling's solve, or refused one), with the solution file's header copied in (aligned-on channel, edges accepted, settings, normalization scales); and the tiles-to-pyramid, QuPath, Java and OS versions plus the computer name. A channel merge writes its own record listing the per-channel inputs and embedding each one's record. Plain ASCII `[section]` / `key: value` text. Hosts can append sections (`StitchInfoFile.append`) and must call `StitchInfoFile.moveWith` when they rename the image.
+
 ## [0.7.0] - 2026-09-18
 
 ### Added

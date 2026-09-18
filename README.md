@@ -238,6 +238,10 @@ The solution file is also durable -- a re-stitch can reuse a solve rather than r
 can be read when a mosaic looks wrong. It records the pixel size, downsample, flip flags and tile
 size it was solved for, and refuses to be applied to a run that does not match.
 
+### Stitch record
+
+Every stitched image gets a plain-text `<image stem>.stitch-info.txt` beside it. It records the source tiles, the stitch settings (method, pixel size, downsample, stage-axis negation, blending, format, compression), what registration did, including the solution file's header, and the software versions. A merged multichannel image's record lists its per-channel inputs and includes each one's record. The file is ASCII `[section]` headings followed by `key: value` lines, so a host application such as QPSC can append its own sections.
+
 ### Log output and tuning feedback
 
 During a registration run, the extension logs diagnostic information to help you calibrate the "Max shift per step" preference:

@@ -138,6 +138,7 @@ public class ChannelMerger {
 
             if (outPath != null) {
                 logger.info("ChannelMerger: merge succeeded -> {}", outPath);
+                writeMergeRecord(Paths.get(outPath), inputPaths, channelNames, compression, outputFormat);
             } else {
                 logger.error("ChannelMerger: PyramidImageWriter returned null -- merge failed");
             }
@@ -152,5 +153,44 @@ public class ChannelMerger {
                 }
             }
         }
+    }
+
+    /**
+     * Record beside the merged image: which per-channel images went in, in channel order, followed
+     * by each input's own record verbatim, so the merged file carries how every channel was
+     * stitched.
+     */
+    private static void writeMergeRecord(
+            Path merged,
+            List<String> inputPaths,
+            List<String> channelNames,
+            String compression,
+            StitchingConfig.OutputFormat outputFormat) {
+        java.util.Map<String, String> image = new java.util.LinkedHashMap<>();
+        image.put("file", merged.toString());
+        image.put("written", java.time.OffsetDateTime.now().withNano(0).toString());
+        java.util.Map<String, String> merge = new java.util.LinkedHashMap<>();
+        merge.put("method", "channel merge of separately stitched single-channel images");
+        for (int i = 0; i < inputPaths.size(); i++) {
+            String name = channelNames != null && i < channelNames.size() ? channelNames.get(i) : "channel " + i;
+            merge.put("channel " + i + " (" + name + ")", inputPaths.get(i));
+        }
+        merge.put("output format", String.valueOf(outputFormat));
+        merge.put("compression", compression);
+        List<qupath.ext.basicstitching.workflow.StitchInfoFile.Section> sections = new ArrayList<>();
+        sections.add(qupath.ext.basicstitching.workflow.StitchInfoFile.Section.of("image", image));
+        sections.add(qupath.ext.basicstitching.workflow.StitchInfoFile.Section.of("channel merge", merge));
+        for (int i = 0; i < inputPaths.size(); i++) {
+            List<String> lines = qupath.ext.basicstitching.workflow.StitchInfoFile.read(Paths.get(inputPaths.get(i)));
+            if (!lines.isEmpty()) {
+                // Indented so the source's own [headings] stay readable but are not taken for
+                // this file's sections.
+                sections.add(new qupath.ext.basicstitching.workflow.StitchInfoFile.Section(
+                        "source channel " + i + " record",
+                        java.util.Map.of(),
+                        lines.stream().map(l -> "    " + l).toList()));
+            }
+        }
+        qupath.ext.basicstitching.workflow.StitchInfoFile.write(merged, sections);
     }
 }

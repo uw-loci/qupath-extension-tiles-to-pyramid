@@ -220,6 +220,9 @@ public class StitchingWorkflow {
                                     logger.debug("Direct stitch progress: {}%", String.format("%.1f", progress * 100)));
                     if (written != null) {
                         logger.info("Successfully wrote: {}", written);
+                        StitchInfoFile.write(
+                                java.nio.file.Path.of(written),
+                                stitchRecord(config, strategy, subdirName, subdirMappings, written));
                         outputs.add(written);
                         successCount++;
                     } else {
@@ -314,6 +317,96 @@ public class StitchingWorkflow {
             logger.error("Registration solve failed", e);
             return false;
         }
+    }
+
+    /**
+     * The stitcher's sections of the record written beside each output: what went in, how it was
+     * placed and written, what registration did, and which software did it.
+     */
+    static List<StitchInfoFile.Section> stitchRecord(
+            StitchingConfig config,
+            StitchingStrategy strategy,
+            String subdirName,
+            List<TileMapping> tiles,
+            String written) {
+        Map<String, String> image = new java.util.LinkedHashMap<>();
+        image.put("file", written);
+        image.put("written", java.time.OffsetDateTime.now().withNano(0).toString());
+
+        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE;
+        java.util.Set<String> positions = new java.util.HashSet<>();
+        java.util.Set<Integer> zs = new java.util.TreeSet<>();
+        java.util.Set<Integer> ts = new java.util.TreeSet<>();
+        int tileW = 0, tileH = 0;
+        for (TileMapping m : tiles) {
+            var r = m.region;
+            minX = Math.min(minX, r.getX());
+            minY = Math.min(minY, r.getY());
+            maxX = Math.max(maxX, r.getX() + r.getWidth());
+            maxY = Math.max(maxY, r.getY() + r.getHeight());
+            positions.add(m.file.getName());
+            zs.add(r.getZ());
+            ts.add(r.getT());
+            tileW = r.getWidth();
+            tileH = r.getHeight();
+        }
+        Map<String, String> source = new java.util.LinkedHashMap<>();
+        source.put("tile folder", config.folderPath);
+        source.put("subdirectory", subdirName);
+        source.put("tile positions", String.valueOf(positions.size()));
+        source.put("tile size (px)", tileW + " x " + tileH);
+        if (zs.size() > 1 || ts.size() > 1) {
+            source.put("z planes / timepoints", zs.size() + " / " + ts.size());
+        }
+        if (!tiles.isEmpty()) {
+            source.put("mosaic extent (px, after registration)", (maxX - minX) + " x " + (maxY - minY));
+        }
+
+        boolean flipX;
+        boolean flipY;
+        if (strategy instanceof qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy) {
+            flipX = qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy.flipStitchingX;
+            flipY = qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy.flipStitchingY;
+        } else {
+            flipX = qupath.ext.basicstitching.stitching.TileConfigurationTxtStrategy.flipStitchingX;
+            flipY = qupath.ext.basicstitching.stitching.TileConfigurationTxtStrategy.flipStitchingY;
+        }
+        Map<String, String> stitching = new java.util.LinkedHashMap<>();
+        stitching.put("method", config.stitchingType);
+        stitching.put("strategy", strategy.getClass().getSimpleName());
+        stitching.put(
+                "pixel size (um)",
+                config.pixelSizeInMicrons + (config.isManualPixelSizeOverride() ? " (manual override)" : ""));
+        stitching.put("downsample", String.valueOf(config.baseDownsample));
+        if (zs.size() > 1) {
+            stitching.put("z spacing (um)", String.valueOf(config.zSpacingMicrons));
+        }
+        stitching.put("stage axes negated (X, Y)", flipX + ", " + flipY);
+        stitching.put(
+                "overlap blending",
+                config.getOverlapBlend().label()
+                        + " (a channel declaring a non-combinable resample policy forces last-tile-wins; see log)");
+        stitching.put("output format", String.valueOf(config.outputFormat));
+        stitching.put("compression", config.compressionType);
+
+        Map<String, String> software = new java.util.LinkedHashMap<>();
+        String ext = GeneralTools.getPackageVersion(StitchingWorkflow.class);
+        software.put("tiles-to-pyramid", ext != null ? ext : "dev");
+        software.put("QuPath", String.valueOf(GeneralTools.getVersion()));
+        software.put("Java", System.getProperty("java.version"));
+        software.put("OS", System.getProperty("os.name") + " " + System.getProperty("os.version"));
+        try {
+            software.put("computer", java.net.InetAddress.getLocalHost().getHostName());
+        } catch (Exception e) {
+            software.put("computer", "unknown");
+        }
+
+        return List.of(
+                StitchInfoFile.Section.of("image", image),
+                StitchInfoFile.Section.of("source tiles", source),
+                StitchInfoFile.Section.of("stitching", stitching),
+                config.getRegistrationRecord(),
+                StitchInfoFile.Section.of("software", software));
     }
 
     /**

@@ -67,6 +67,27 @@ public class StitchingConfig {
     }
 
     /**
+     * What registration actually did on this stitch, for the stitch record beside the output. Set
+     * by {@code TileRegistrationStep}; the mode says what was asked, this says what happened (a
+     * solve can find nothing, an Apply can refuse a mismatched solution).
+     */
+    private qupath.ext.basicstitching.workflow.StitchInfoFile.Section registrationRecord =
+            qupath.ext.basicstitching.workflow.StitchInfoFile.Section.of(
+                    "registration", java.util.Map.of("mode", "off (tiles at nominal stage positions)"));
+
+    /** @return what registration did on this stitch; never null. */
+    public qupath.ext.basicstitching.workflow.StitchInfoFile.Section getRegistrationRecord() {
+        return registrationRecord;
+    }
+
+    /** @param record what registration did on this stitch */
+    public void setRegistrationRecord(qupath.ext.basicstitching.workflow.StitchInfoFile.Section record) {
+        if (record != null) {
+            this.registrationRecord = record;
+        }
+    }
+
+    /**
      * How pixels covered by more than one tile are resolved, or null if the caller has not said.
      *
      * <p>Null rather than a default value, so "unset" is distinguishable from "deliberately chose the
