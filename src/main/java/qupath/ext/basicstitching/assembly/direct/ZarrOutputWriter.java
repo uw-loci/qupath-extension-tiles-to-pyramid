@@ -39,6 +39,15 @@ public class ZarrOutputWriter implements AutoCloseable {
     private static final Logger logger = LoggerFactory.getLogger(ZarrOutputWriter.class);
 
     private final Path outputPath;
+    /**
+     * NGFF (OME-Zarr) spec version stamped into {@code .zattrs}. Public so the dialog can name the
+     * version it will write rather than hardcoding its own copy.
+     */
+    public static final String NGFF_VERSION = "0.4";
+
+    /** Zarr array format written: JZarr produces v2 {@code .zarray} arrays. */
+    public static final String ZARR_FORMAT_VERSION = "2";
+
     private final Compressor compressor;
     private ZarrGroup rootGroup;
     private ZarrArray[] levelArrays;
@@ -260,7 +269,7 @@ public class ZarrOutputWriter implements AutoCloseable {
 
         // Build multiscale entry
         Map<String, Object> multiscale = new LinkedHashMap<>();
-        multiscale.put("version", "0.4");
+        multiscale.put("version", NGFF_VERSION);
         multiscale.put("axes", axes);
         multiscale.put("datasets", datasets);
         multiscale.put("name", "");

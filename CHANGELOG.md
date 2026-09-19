@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The stitch dialog names the OME-Zarr versions it writes** -- the Output format list now reads "OME-TIFF (single file)" and "OME-Zarr (NGFF 0.4, Zarr v2)", taken from the writer's own constants so the label cannot drift from the file. Display only: the stored preference and the value QPSC passes are the unchanged enum names.
+- **The Compression type tooltip explains each option** instead of saying "Select the type of image compression": which are lossless, that `JPEG` is 8-bit RGB only, that `J2K_LOSSY` and `JPEG` change pixel values, and how each maps to a Blosc codec when the output is OME-Zarr.
+
 ## [0.7.1] - 2026-09-18
 
 ### Added

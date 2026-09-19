@@ -87,6 +87,13 @@ public class StitchingGUI {
     // Shown only when the folder holds 2+ matching single-channel subdirectories (RGB is not channels).
     private final CheckBox mergeChannelsCheckbox = new CheckBox("Merge channels into one multichannel image");
     // Per-run registration controls (the tuning knobs live in Preferences -> Tiles-to-pyramid).
+    /** Versions the ZARR writer actually stamps, so the dialog cannot name a different one. */
+    private static final String OME_ZARR_NGFF_VERSION =
+            qupath.ext.basicstitching.assembly.direct.ZarrOutputWriter.NGFF_VERSION;
+
+    private static final String ZARR_FORMAT_VERSION =
+            qupath.ext.basicstitching.assembly.direct.ZarrOutputWriter.ZARR_FORMAT_VERSION;
+
     private static final String AUTO_REFERENCE = "Auto (best matching folder, weak seams re-tried)";
     private static final String PROJECTION_REFERENCE = "Normalized merge of all folders";
     private final CheckBox overlapAutoCheckbox = new CheckBox("Overlap %: derive from the tile grid");
@@ -815,7 +822,21 @@ public class StitchingGUI {
             }
         });
 
-        Tooltip compressionTooltip = new Tooltip("Select the type of image compression.");
+        // Named per option: the list comes from QuPath's CompressionType and the names alone say
+        // nothing about which are lossy, which need 8-bit RGB, or what OME-Zarr does with them.
+        Tooltip compressionTooltip = new Tooltip(
+                "How the pixels are compressed in the stitched image. All are lossless except where said.\n\n"
+                        + "DEFAULT: let the writer choose (LZW for OME-TIFF, zstd for OME-Zarr).\n"
+                        + "LZW: lossless, widely readable, modest compression. A safe default for OME-TIFF.\n"
+                        + "ZLIB / deflate: lossless, smaller than LZW, slower to write and read.\n"
+                        + "J2K: JPEG-2000, lossless, small files, slow. Works with 16-bit data.\n"
+                        + "J2K_LOSSY: JPEG-2000, LOSSY. Smallest files; pixel values change, so avoid it for\n"
+                        + "    measurements.\n"
+                        + "JPEG: LOSSY, 8-bit RGB only. Fails on 16-bit or multichannel data.\n"
+                        + "UNCOMPRESSED: no compression. Largest files, fastest to write and read.\n\n"
+                        + "OME-Zarr uses Blosc instead and maps these: LZW/ZLIB -> zlib, UNCOMPRESSED -> none,\n"
+                        + "anything else -> zstd. JPEG and J2K have no Zarr equivalent, so they become zstd\n"
+                        + "(lossless) and the log says so.");
         compressionLabel.setTooltip(compressionTooltip);
         compressionBox.setTooltip(compressionTooltip);
 
@@ -828,6 +849,26 @@ public class StitchingGUI {
     private void addOutputFormatComponents(GridPane pane) {
         outputFormatBox.getItems().clear();
         outputFormatBox.getItems().addAll(StitchingConfig.OutputFormat.values());
+        // Display only. The enum NAME is what the preference stores and what QPSC passes, so the
+        // label can say whatever is clearest without touching either.
+        outputFormatBox.setConverter(new javafx.util.StringConverter<>() {
+            @Override
+            public String toString(StitchingConfig.OutputFormat format) {
+                if (format == null) {
+                    return "";
+                }
+                return format == StitchingConfig.OutputFormat.OME_ZARR
+                        ? "OME-Zarr (NGFF " + OME_ZARR_NGFF_VERSION + ", Zarr v" + ZARR_FORMAT_VERSION + ")"
+                        : "OME-TIFF (single file)";
+            }
+
+            @Override
+            public StitchingConfig.OutputFormat fromString(String label) {
+                return label != null && label.startsWith("OME-Zarr")
+                        ? StitchingConfig.OutputFormat.OME_ZARR
+                        : StitchingConfig.OutputFormat.OME_TIFF;
+            }
+        });
 
         StitchingConfig.OutputFormat saved;
         try {
@@ -842,8 +883,12 @@ public class StitchingGUI {
             }
         });
 
-        Tooltip formatTooltip = new Tooltip("OME-TIFF: Traditional single-file format (widely compatible)\n"
-                + "OME-ZARR: Cloud-native directory format (better compression, parallel writing, cloud storage)");
+        Tooltip formatTooltip =
+                new Tooltip("OME-TIFF: one pyramidal .ome.tif file with OME-XML metadata. Widely readable.\n\n"
+                        + "OME-Zarr: a .ome.zarr DIRECTORY of chunks, written in parallel and suited to cloud\n"
+                        + "storage. Written as NGFF " + OME_ZARR_NGFF_VERSION + " (multiscales + omero metadata)\n"
+                        + "on Zarr format v" + ZARR_FORMAT_VERSION + ", which QuPath's bundled reader opens.\n"
+                        + "Check what your other tools accept before choosing it: NGFF versions are still moving.");
         outputFormatLabel.setTooltip(formatTooltip);
         outputFormatBox.setTooltip(formatTooltip);
 
