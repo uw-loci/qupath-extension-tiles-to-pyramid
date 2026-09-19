@@ -826,7 +826,7 @@ public class StitchingGUI {
         // nothing about which are lossy, which need 8-bit RGB, or what OME-Zarr does with them.
         Tooltip compressionTooltip = new Tooltip(
                 "How the pixels are compressed in the stitched image. All are lossless except where said.\n\n"
-                        + "DEFAULT: let the writer choose (LZW for OME-TIFF, zstd for OME-Zarr).\n"
+                        + "DEFAULT: let the writer choose -- Bio-Formats picks the OME-TIFF codec; OME-Zarr uses zstd.\n"
                         + "LZW: lossless, widely readable, modest compression. A safe default for OME-TIFF.\n"
                         + "ZLIB / deflate: lossless, smaller than LZW, slower to write and read.\n"
                         + "J2K: JPEG-2000, lossless, small files, slow. Works with 16-bit data.\n"
