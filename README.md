@@ -3,117 +3,318 @@
 > **Part of the [QPSC (QuPath Scope Control)](https://github.com/uw-loci/qupath-extension-qpsc) system.**
 > For complete installation and setup instructions, see the [QPSC Installation Guide](https://github.com/uw-loci/qupath-extension-qpsc/blob/main/documentation/INSTALLATION.md).
 
-A basic image stitching extension for QuPath that combines multiple image tiles into seamless pyramidal images. This extension supports multiple stitching strategies, dual output formats (OME-TIFF and OME-ZARR), and is designed for high-throughput microscopy workflows.
+Stitches a folder of microscope image tiles into one pyramidal whole-slide image that QuPath can
+open. Point it at the folder, say how the tile positions are recorded, and it writes an OME-TIFF or
+OME-Zarr beside the tiles.
 
-## Features
+It reads the tile positions from the acquisition's own records -- a `TileConfiguration.txt`,
+coordinates in the filenames, Vectra metadata, or MicroManager metadata -- and can correct those
+positions against the image content so the seams close. Memory use stays around 40 MB no matter how
+many tiles there are, so thousands of tiles stitch on an ordinary machine.
 
-- **Content-Based Tile Registration**: Optionally position tiles by correlating the image content in their overlap, instead of trusting nominal stage coordinates. Corrects backlash, encoder error, and thermal drift. One solve (on a chosen subdirectory, the best-matching one, or a normalized merge of several) is reused by every angle/channel, so co-captured images stay registered to each other. Off by default. See [Tile registration](#tile-registration)
-- **Z-stack and time-series stitching**: Assemble tiles into multi-plane pyramids (XY mosaic with multiple z-slices and timepoints) when planes are stored as separate files in `z{nn}/`/`t{nn}/` directories and read by the TileConfiguration.txt strategy. See [Dimensions and channels](#what-the-extension-can-handle-dimensions-and-channels) for exactly what each input supports
-- **Multiple Stitching Strategies**: Support for filename-based coordinates, TileConfiguration.txt files, Vectra metadata, and MicroManager metadata (MMStack or single-plane TIFF series)
-- **Dual Output Formats**: Choose between traditional OME-TIFF or cloud-native OME-ZARR
-- **Pyramidal Output**: Generates multi-resolution pyramids for efficient viewing at all scales
-- **Flexible Compression**: The compression dropdown offers QuPath's OME writer compression types (e.g. `LZW`, `JPEG`, `J2K`, `J2K_LOSSY`, `ZLIB`, `UNCOMPRESSED`); for OME-ZARR these map internally to Blosc codecs
-- **Cloud-Native ZARR**: Directory-based format optimized for cloud storage and parallel access
-- **Batch Processing**: Process multiple slides simultaneously with matching criteria
-- **Multi-subdirectory Support**: Automatically creates separate outputs for each matched subdirectory
-- **Robust Error Handling**: Comprehensive logging and validation for troubleshooting
-- **Memory Efficient**: Direct tile stitcher uses ~40 MB steady state regardless of tile count (vs 2-4+ GB with legacy SparseImageServer approach)
-- **Large Acquisition Support**: Handles 1600+ tiles without OOM via spatial indexing and bounded reader pool
-- **Multichannel Merge**: Combine N same-shape single-channel pyramids (from per-channel stitching) into one multichannel image, offered in the stitch dialog when there are channels to merge (see [Dimensions and channels](#what-the-extension-can-handle-dimensions-and-channels))
+## What it can stitch
 
-## What the extension can handle: dimensions and channels
+- **Input:** a grid of 2D tile files (TIFF), positioned by `TileConfiguration.txt`, `filename[x,y]`
+  coordinates in microns, Vectra metadata, or MicroManager metadata. One method per run.
+- **Output:** a pyramidal `.ome.tif`, or an `.ome.zarr` directory (NGFF 0.4, Zarr v2), written
+  beside the tiles, with a `.stitch-info.txt` record of how it was made.
+- **Several folders at once:** stitch every sub-folder whose name contains some text, one output
+  each -- one per channel, or one per polarization angle.
+- **Channels:** single-channel folders can be merged into one multichannel image; RGB tiles stay
+  RGB.
+- **Z-stacks and time series:** only from separate files per plane, and only with the
+  TileConfiguration.txt method. See [Z-stacks and time series](#z-stacks-and-time-series).
+- **Closing seams:** optional content-based registration measures where tiles really overlap and
+  corrects their positions. See [Tile registration](#tile-registration).
 
-Stitching operates on a **grid of 2D tile files**. Whether extra dimensions (Z, time, channels)
-survive into the output depends on how the input encodes them and which strategy reads it. A few
-combinations are only partially supported, so read this before planning an acquisition.
+## Requirements
 
-### Z-stacks (3D) and time series
+- **QuPath**: Version 0.7.0 or greater
+- **Java**: Java 21 (the runtime QuPath 0.7 ships with; the extension's bytecode targets Java 21). Java 25 is only needed to *build* from source, not to run
+- **Memory**: Recommended 8GB+ RAM for large image datasets
 
-Z-slices and timepoints are preserved **only when each plane is a separate tile file**, placed in
-`z{nn}/` (and optionally `t{nn}/`) subdirectories and stitched with the **TileConfiguration.txt**
-strategy. That path builds a genuine multi-plane pyramid: each `(z, t)` plane is composited from
-only the tiles at that plane, the Z-spacing is recorded, and both output formats declare the Z/T
-sizes. There is no maximum-intensity projection or flattening -- planes are written through as-is.
+## Installation
 
-| Input layout | Z | T |
-|---|---|---|
-| TileConfiguration.txt + `z{nn}/` directories | preserved | -- |
-| TileConfiguration.txt + `t{nn}/z{nn}/` directories | preserved | preserved |
-| TileConfiguration.txt, flat (no z/t directories) | 2D (z=0) | 2D (t=0) |
-| MicroManager, Filename[x,y], Vectra | 2D only | 2D only |
-| Z/T **inside** a multi-page file (e.g. an MMStack z-stack per position) | **collapsed** | **collapsed** |
+### Option 1: Download Release
+1. Download the latest `.jar` file from the [Releases](../../releases) page
+2. Copy the JAR file to your QuPath extensions directory:
+   - **Windows**: `%USERPROFILE%/QuPath/extensions`
+   - **macOS**: `~/QuPath/extensions`
+   - **Linux**: `~/QuPath/extensions`
+3. Restart QuPath
 
-Two limits worth stating plainly:
+Alternatively, drag and drop the extension into QuPath. 
 
-- **The MicroManager, Filename[x,y], and Vectra strategies are 2D only** -- they read the XY
-  position of each tile and place it at z=0, t=0.
-- **Planes inside a multi-page or multi-series file are not expanded.** The tile reader reads only
-  the *first* image in each file, so an MMStack that stores a z-stack (or a time series, or several
-  stage positions) inside one file is stitched as a single plane. To preserve those dimensions,
-  export the acquisition to the separate-file `z{nn}/` / `t{nn}/` layout and use the
-  TileConfiguration.txt strategy.
-
-Directory names must be exactly `z00`, `z01`, `t00`, ... (a number after `z`/`t`, case-insensitive);
-the two levels are matched independently, so `z{nn}/t{nn}/` nesting works as well as `t{nn}/z{nn}/`.
-
-### Channels and color
-
-A tile's channel layout is detected from the **first tile's** pixel format and carried through on
-every `(z, t)` plane:
-
-| Input tile | Support | Result |
-|---|---|---|
-| **RGB brightfield** -- one 3-band 8-bit file per tile (e.g. H&E) | Full | stitched as RGB (any tile with >=3 bands at 8-bit is treated as RGB) |
-| **Single channel** -- one 1-band file per tile (8- or 16-bit) | Full | stitched as grayscale |
-| **Multichannel in one file** -- one file per tile with >3 bands, or >=3 bands at 16-bit | Not preserved in a single stitch | the compositor builds only a grayscale or RGB plane, so the extra channels are dropped. Split the channels into separate stitches instead (below) |
-| **Highly multiplexed** (e.g. 8-40 channel fluorescence) | Via per-channel stitching + merge | see below |
-
-**The multichannel / multiplex pattern.** Fluorescence and multiplex data are stitched **one channel
-at a time**: each channel is its own input subdirectory, producing one single-channel pyramid per
-channel. Those per-channel pyramids are then combined into a single multichannel OME-TIFF or OME-ZARR
-by a separate **channel-merge** step (`ChannelMerger`), which requires them to share the same width,
-height, and pixel type. In the stitch dialog it appears as a "Merge the N channel stitches..." checkbox
-when the selected folder holds two or more matching sub-folders of single-channel tiles; it stays hidden
-for RGB tiles, a single tile folder, or MicroManager input. The merged image is written as
-`<folder>_merged` beside the per-channel images (which are kept), with channels named after the
-sub-folders. QPSC and scripts call `ChannelMerger` directly. Co-registration across the
-channels is why registration is solved once and reused by every channel (see
-[Tile registration](#tile-registration)).
-
-### Merging channels in the dialog
-
+### Option 2: Build from Source
+```bash
+git clone https://github.com/uw-loci/qupath-extension-tiles-to-pyramid.git
+cd qupath-extension-tiles-to-pyramid
+./gradlew shadowJar
+# Copy build/libs/qupath-extension-tiles-to-pyramid-*-all.jar to your QuPath extensions directory
 ```
-IF_run/                  Stitching Method: TileConfiguration.txt file; sub-folder text: 20x
-+-- DAPI_20x/            TileConfiguration.txt + single-channel 16-bit tiles
-+-- FITC_20x/            TileConfiguration.txt + tiles with the same file names as DAPI_20x
-+-- TRITC_20x/           TileConfiguration.txt + tiles with the same file names
+Developers of qpsc may want to also run the following to enable working with qpsc in IntelliJ.
+```
+./gradlew publishToMavenLocal
 ```
 
-Select `IF_run`, tick **Merge the 3 channel stitches into one multichannel image**, and click
-**Stitch**. Written into `IF_run/`: `DAPI_20x.ome.tif`, `FITC_20x.ome.tif`, `TRITC_20x.ome.tif`, and
-`IF_run_merged.ome.tif` with channels `DAPI_20x`, `FITC_20x`, `TRITC_20x`.
+## Quick start
 
-What to know before relying on the merged image:
+1. Open QuPath
+2. Navigate to **Extensions** -> **Tiles to Pyramid** -> **Tiles-to-pyramid**
+3. The **Tiles to Pyramid** dialog opens.
+4. Under **Stitching Method**, choose how your tile positions are recorded (see "Stitching methods and input layouts" below).
+5. Click **Select Folder** and choose the folder that holds your tiles.
+6. In **Stitch sub-folders with text string**, type text that your tile sub-folder names contain, or
+   leave it empty to stitch the selected folder on its own. On first use this field contains `20x`.
+7. Click **Stitch**. Pressing Enter in a field does not start it.
 
-- **When the option appears.** Only when the folder and sub-folder text select two or more
-  sub-folders, and the first `.tif`/`.tiff` (by name) of the first sub-folder (by name) is not RGB.
-  "N" is the number of matching sub-folders; only that one tile is checked, so keep every matching
-  sub-folder single-channel, with the same tile size and pixel type.
-- **"RGB" means 3 or more bands at 8-bit** (or a packed RGB image type). 8-bit multichannel
-  fluorescence tiles therefore count as RGB and hide the option; save one channel per file to use it.
-- **Channel order and names.** Channels are ordered by the per-channel output file name (plain text
-  order, case-sensitive, so `ch10` sorts before `ch2`; zero-pad numbers) and named after the file
-  stem. With a Downsample other than 1 the stem includes `_<n>x_downsample`, and a re-run into a
-  folder that already holds the outputs writes numbered copies whose suffix also appears in the name.
-- **Colours are not set by the dialog.** Each channel keeps its per-channel file's default; set
-  colours in QuPath afterwards, or call `ChannelMerger.merge(..., channelColors, ...)` from a script.
-- **Width, height and pixel type must match.** If they differ, no merged image is written; the
-  per-channel images remain in the folder.
-- **Partial failures.** If one sub-folder fails to stitch, the rest are still merged, so the merged
-  image lacks that channel. Check the "Failed:" list in the result window before using it.
-- **With Solve tile overlaps.** All channels share one registration solve, applied by tile file
-  name. Tiles must have the same file names in every channel folder; otherwise the non-reference
-  channels stay at their nominal positions and will not line up in the merged image.
+A notification says the stitch has started. QuPath stays usable, but a second stitch cannot start
+until this one finishes. When it does, a **Tiles to Pyramid - Result** window lists the full path of
+each output file, and you can copy the paths from it. Output is written into the folder you selected.
+
+<details>
+<summary><b>Stitching methods and input layouts</b> -- how each method reads tile positions, and how to lay the folders out</summary>
+
+## Stitching methods and input layouts
+
+### 1. Filename[x,y] with coordinates in microns
+For images with coordinates embedded in filenames:
+```
+image_tile[1000,2000].tif
+image_tile[1500,2000].tif
+image_tile[1000,2500].tif
+```
+
+**Usage:**
+- Select the folder containing sub-folders of tiles, or select a single tile folder and leave the sub-folder text empty
+- Coordinates in brackets represent physical positions in microns
+- Extension automatically calculates tile positions and overlaps
+
+### 2. TileConfiguration.txt file
+For ImageJ/Fiji tile configuration format. The XY positions come from `TileConfiguration.txt`; optionally, z-slice and timepoint indices are derived from directory names if tiles are organized in `z{zz}/` or `t{tt}/z{zz}/` subdirectories.
+
+**Basic 2D layout (flat or projected):**
+```
+# Define the number of dimensions we are working on
+dim = 2
+
+# Define the image coordinates
+tile_001.tif; ; (0.0, 0.0)
+tile_002.tif; ; (1024.0, 0.0)
+tile_003.tif; ; (0.0, 1024.0)
+tile_004.tif; ; (1024.0, 1024.0)
+```
+
+**5D layout with preserved Z-stack (single timepoint):**
+Tiles are organized under `z{zz}/` subdirectories; the TileConfiguration.txt file lives in the root and defines the XY mosaic:
+```
+root/
++-- TileConfiguration.txt (defines XY positions)
++-- z00/
+|   +-- tile_001.tif
+|   +-- tile_002.tif
+|   +-- tile_003.tif
+|   +-- tile_004.tif
++-- z01/
+|   +-- tile_001.tif
+|   +-- tile_002.tif
+|   +-- tile_003.tif
+|   +-- tile_004.tif
++-- z02/
+    +-- tile_001.tif
+    +-- tile_002.tif
+    +-- tile_003.tif
+    +-- tile_004.tif
+```
+
+**5D layout with preserved Z-stack and time series:**
+Tiles are organized under `t{tt}/z{zz}/` nested subdirectories; TileConfiguration.txt lives in the root:
+```
+root/
++-- TileConfiguration.txt (defines XY positions)
++-- t00/
+|   +-- z00/
+|   |   +-- tile_001.tif, tile_002.tif, ...
+|   +-- z01/
+|   |   +-- tile_001.tif, tile_002.tif, ...
++-- t01/
+    +-- z00/
+    |   +-- tile_001.tif, tile_002.tif, ...
+    +-- z01/
+        +-- tile_001.tif, tile_002.tif, ...
+```
+
+**Usage:**
+- Each group must contain a `TileConfiguration.txt` file (at the root for z/t layouts, or in each angle subdirectory for flat/projected)
+- Coordinates in the config are stage positions in micrometers; each is divided by the pixel size and the downsample to place the tile
+- In the dialog, check **Pixel size, microns** before stitching. It is locked by default and shows the last manually entered value (initially 7.2), or one auto-filled from MicroManager metadata found in the folder; tick **Manually edit pixel size** to set it. QPSC and scripts pass the pixel size explicitly
+- Tile filenames in the config must match across all z/t planes (the stitcher recursively finds tiles by name, regardless of z/t nesting)
+- Flat / projected layouts (no z/t subdirectories) resolve to z=0, t=0 and produce 2D output, unchanged from prior behavior
+
+**Batch Processing Multiple Subdirectories:**
+When the matching string matches multiple subdirectories, each subdirectory is stitched independently:
+```
+input_folder/bounds/
++-- -5.0/
+|   +-- TileConfiguration.txt
+|   +-- [tile files]
++-- 0.0/
+|   +-- TileConfiguration.txt
+|   +-- [tile files]
++-- 5.0/
+    +-- TileConfiguration.txt
+    +-- [tile files]
+```
+With matching string "." (every folder name here contains a dot) results in:
+- `-5.0.ome.tif`
+- `0.0.ome.tif`  
+- `5.0.ome.tif`
+
+### 3. Vectra tiles with metadata
+For Akoya/PerkinElmer Vectra imaging systems:
+- Reads positioning information directly from TIFF metadata tags
+- Uses `TAG_X_POSITION`, `TAG_Y_POSITION`, and resolution tags
+- No additional configuration files required
+
+### 4. MicroManager metadata (MMStack or TIFF series)
+For MicroManager 2 multi-position acquisitions with sidecar metadata. Both on-disk layouts MicroManager produces are supported.
+
+**When to use this strategy:** choose it whenever you acquired a multi-position
+(XY-tiled) dataset in MicroManager 2 and let MicroManager write the standard
+sidecar metadata. Tile positions come from the recorded **stage coordinates**, so
+you do not need a `TileConfiguration.txt` or coordinates encoded in filenames.
+Point the dialog at the acquisition's root folder and the strategy auto-detects
+which of the two layouts you have:
+
+| You have... | MicroManager "Save" setting that produced it | Files on disk |
+|---|---|---|
+| **Flat MMStack** | "Image stack file" (multi-page `MULTIPAGE_TIFF`) | one `<prefix>_MMStack_<pos>.ome.tif` + `<prefix>_MMStack_<pos>_metadata.txt` per position, all in one folder |
+| **Single-plane TIFF series** | "Separate image files" (`SINGLEPLANE_TIFF_SERIES`) | one subfolder per position (`Pos-...`), each with a single-image `img_...tif` + a `metadata.txt` |
+
+Both come out of the same MicroManager MDA acquisition; the only difference is the
+"Save" radio button chosen at acquisition time. You do not pick the layout in the
+dialog -- the strategy detects it. Detail on each:
+
+**Flat MMStack** (one OME-TIFF + sidecar per position, all in one folder):
+- Reads tile positions from `*_metadata.txt` JSON sidecar files
+- Uses authoritative per-tile stage coordinates (`FrameKey-0-0-0.XPositionUm` / `YPositionUm`)
+- Each OME-TIFF carries every position as a separate series; the per-label series index is recovered from `Summary.StagePositions`
+- Example filenames: `acq_MMStack_Pos-0_000.ome.tif` and `acq_MMStack_Pos-0_000_metadata.txt`
+
+**Single-plane TIFF series** (`SINGLEPLANE_TIFF_SERIES`; one subfolder per position):
+- Each position is its own subfolder (e.g. `Pos-1-000_000/`) containing a single-image TIFF (`img_channelNNN_positionNNN_..._zNNN.tif`) and a `metadata.txt`
+- Reads per-tile stage coordinates from the `Metadata-<relative/path/to.tif>` block (the JSON key encodes the file name)
+- Each TIFF is a genuine single-image file (series 0)
+
+Common to both:
+- Falls back to `Summary.StagePositions` labels if a per-tile block is missing or malformed
+- Auto-detects pixel size from the metadata's `PixelSizeUm`
+- All tiles found under the selected folder stitch into a single output named after that folder
+- No additional configuration files required
+
+**Usage:**
+- Select the acquisition's root folder (the folder containing the sidecars, or the folder containing the per-position subfolders). The strategy scans subfolders, so either layout works.
+- For stage-inverted scopes, use the `flipStitchingX` and `flipStitchingY` flags to negate coordinates
+
+**Pixel Size Auto-fill:**
+- When you open the Tiles to Pyramid dialog or select an input folder, the pixel-size field is automatically filled from the first metadata file's `PixelSizeUm`
+- The field is **locked by default** to prevent accidental edits — a label shows the source (`(from MicroManager metadata)` / `(no MicroManager metadata - tick 'Manually edit' to set)` / `(manual override)`)
+- By default the metadata `PixelSizeUm` is authoritative, so an accidental dialog value cannot silently misalign a stitch when the metadata is correct
+- Tick **"Manually edit pixel size"** to override. When ticked, your value **wins over the metadata** — this is required for scopes whose metadata pixel size is wrong (e.g. laser-scanning microscopes whose zoom factor is not reflected in MicroManager's pixel-size calibration). Symptom of a wrong metadata pixel size: tiles are placed too far apart and overlap regions appear **duplicated** along every seam.
+
+**"Try calculating pixel size..." (measure from overlap):**
+- When the metadata pixel size is untrustworthy, click this button to **measure** the true pixel size directly from the data. It phase-correlates (normalized cross-correlation) the overlapping content of neighbouring tiles, divides the recorded stage step (µm) by the measured pixel shift, and reports the median over several tile pairs.
+- The measured value is written into the field **as a manual override** (so the stitcher uses it) and the source label shows the confidence. If confidence is low (low-texture or low-overlap tiles), verify the result and adjust manually.
+
+### Input directory structure
+
+One run uses one Stitching Method, so every sub-folder it selects must use that method's layout.
+
+```
+input_folder/             Method: Filename[x,y]; sub-folder text: slide
++-- slide001_tumor/
+|   +-- tile_001[0,0].tif
+|   +-- tile_002[1000,0].tif
+|   +-- tile_003[0,1000].tif
++-- slide002_normal/
+|   +-- tile_001[0,0].tif
+|   +-- tile_002[1000,0].tif
++-- slide003_control/
+    +-- tile_001[0,0].tif
+    +-- tile_002[1000,0].tif
+```
+
+</details>
+
+<details>
+<summary><b>The stitch dialog, field by field</b> -- every control, what it does, and what it defaults to</summary>
+
+## The stitch dialog, field by field
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| **Stitching Method** | How tile positions are read: "Vectra tiles with metadata", "Filename[x,y] with coordinates in microns", "TileConfiguration.txt file", or "MicroManager metadata (MMStack or TIFF series)". Remembered as soon as it is changed | Last-used (initially TileConfiguration.txt file) |
+| **Folder location** (**Select Folder**) | The folder that holds your tiles. Stitched images are written **into this same folder** | Last-used folder |
+| **Pixel size, microns** | Physical size of each pixel in micrometers. Auto-detected from MMStack `*_metadata.txt` sidecars when available; field is locked by default. Tick "Manually edit pixel size" to override. Hidden for the Vectra method, whose tiles carry pixel positions | Detected from metadata; otherwise the last manually entered value (initially 7.2) |
+| **Downsample** | Downsampling factor for output | Last-used (initially 1) |
+| **Compression type** | How pixels are compressed. Lossless: `LZW` (widely readable), `ZLIB` (smaller, slower), `J2K` (smallest lossless, slow, handles 16-bit), `UNCOMPRESSED`, `DEFAULT` (LZW for OME-TIFF, zstd for OME-Zarr). Lossy: `J2K_LOSSY`, and `JPEG` which is 8-bit RGB only. For OME-Zarr these map to Blosc codecs: `LZW`/`ZLIB` to zlib, `UNCOMPRESSED` to none, everything else to zstd -- so a JPEG/J2K choice becomes lossless zstd, and the log says so | Last-used (initially J2K) |
+| **Output format** | **OME-TIFF (single file)**: one pyramidal `.ome.tif` with OME-XML metadata, widely readable. **OME-Zarr (NGFF 0.4, Zarr v2)**: an `.ome.zarr` directory of chunks, written in parallel, suited to cloud storage; the versions written are what QuPath's bundled reader opens, so check what your other tools accept | Last-used (initially OME-TIFF) |
+| **Stitch sub-folders with text string** | Stitch each sub-folder whose name contains this text, one output per sub-folder. **Empty stitches the selected folder itself, and only that folder.** Not used by the MicroManager method | Last-used (initially "20x") |
+| **Merge the N channel stitches into one multichannel image** | Shown only when 2+ matching sub-folders of single-channel (non-RGB) tiles will be stitched; not offered for the MicroManager method. Combines the per-channel stitches into one multichannel `<folder>_merged` image; the per-channel images are kept. See [Merging channels in the dialog](#merging-channels-in-the-dialog). Choice is remembered | On |
+| **Z-Spacing (um)** | Scripts only (`StitchingConfig`); the dialog always records 1.0 | 1.0 |
+| **Solve tile overlaps (content-based registration)** | Checkbox to enable overlap measurement and correction. When enabled, measures the real overlap between neighbouring tiles and corrects their positions before stitching, closing seams caused by stage backlash and drift. Writes a `TileRegistration.txt` solution file beside the tiles. Choice is remembered between sessions. See [Tile registration](#tile-registration) for details. | Off (faster, nominal positions) |
+
+### Output format options
+
+#### OME-TIFF (Traditional)
+- **Structure**: Single pyramidal TIFF file
+- **Compatibility**: Widely supported by QuPath, ImageJ, and most imaging software
+- **Use Case**: General purpose, local storage, maximum compatibility
+- **Extension**: `.ome.tif`
+- **Compression**: chosen from QuPath's OME writer types -- `LZW`, `JPEG`, `J2K`, `J2K_LOSSY`, `ZLIB`, `UNCOMPRESSED`, `DEFAULT`
+- **Best For**: Desktop workflows, maximum software compatibility
+
+#### OME-ZARR (Cloud-Native)
+- **Structure**: Directory containing chunked arrays
+- **Compatibility**: QuPath 0.7.0+, napari, Python imaging libraries
+- **Use Case**: Cloud storage, large datasets, parallel processing
+- **Extension**: `.ome.zarr` (directory)
+- **Compression**: the same OME writer type you pick is mapped to a Blosc codec internally (e.g. `LZW`/`ZLIB` -> zlib; `J2K`/`JPEG` -> zstd, since JPEG has no Blosc equivalent; otherwise zstd). You do not choose the Blosc codec directly
+- **Best For**: Cloud storage, collaborative access, very large images (> 10GB)
+
+**Key Advantages of ZARR:**
+1. **Direct chunk writing**: writes each chunk as it is composited, without going through Bio-Formats' single-threaded TIFF writer (note: chunk compositing and writing are currently serial, not multi-threaded)
+2. **Compression**: Blosc codecs (zstd by default) are often smaller than TIFF LZW for scientific data
+3. **Cloud-Optimized**: Native support for S3, Azure Blob, Google Cloud Storage
+4. **Partial Access**: Read specific regions without downloading the entire dataset
+5. **Parallel Reads**: Multiple processes can read different regions simultaneously
+6. **Progress Tracking**: Per-chunk progress callbacks for better user feedback
+
+**About ZARR compression:** you do not select a Blosc codec directly. The OME compression type you
+choose in the dialog is mapped to one when writing OME-ZARR: `LZW`/`ZLIB` -> zlib;
+`UNCOMPRESSED` -> none; `JPEG`/`J2K`/`J2K_LOSSY` are not available for ZARR and are substituted with
+zstd (logged as a warning); anything else -> zstd, a good speed/ratio default. Note this means an
+OME-ZARR is always lossless even if you pick `J2K_LOSSY`; that lossy option only takes effect for
+OME-TIFF output.
+
+**When to Use ZARR:**
+- Stitched images > 5GB in size
+- Cloud storage or collaborative workflows
+- High-throughput batch processing
+- Need for parallel data access
+- Long-term archival with cloud backup
+
+**When to Use OME-TIFF:**
+- Need maximum software compatibility
+- Working with legacy analysis pipelines
+- Smaller images (< 2GB)
+- Desktop-only workflows
+- Sharing with users without ZARR support
+
+</details>
+
+<details>
+<summary><b>Tile registration</b> -- close seams by measuring the real overlap instead of trusting the stage</summary>
 
 ## Tile registration
 
@@ -238,10 +439,6 @@ The solution file is also durable -- a re-stitch can reuse a solve rather than r
 can be read when a mosaic looks wrong. It records the pixel size, downsample, flip flags and tile
 size it was solved for, and refuses to be applied to a run that does not match.
 
-### Stitch record
-
-Every stitched image gets a plain-text `<image stem>.stitch-info.txt` beside it. It records the source tiles, the stitch settings (method, pixel size, downsample, stage-axis negation, blending, format, compression), what registration did, including the solution file's header, and the software versions. A merged multichannel image's record lists its per-channel inputs and includes each one's record. The file is ASCII `[section]` headings followed by `key: value` lines, so a host application such as QPSC can append its own sections.
-
 ### Log output and tuning feedback
 
 During a registration run, the extension logs diagnostic information to help you calibrate the "Max shift per step" preference:
@@ -308,268 +505,119 @@ Per-edge shifts reached 90% of the search allowance -- real corrections may be c
 - `TileConfiguration.txt` is never modified; corrections are applied in memory, so re-running is
   safe.
 
-## Requirements
-
-- **QuPath**: Version 0.7.0 or greater
-- **Java**: Java 21 (the runtime QuPath 0.7 ships with; the extension's bytecode targets Java 21). Java 25 is only needed to *build* from source, not to run
-- **Memory**: Recommended 8GB+ RAM for large image datasets
-
-## Installation
-
-### Option 1: Download Release
-1. Download the latest `.jar` file from the [Releases](../../releases) page
-2. Copy the JAR file to your QuPath extensions directory:
-   - **Windows**: `%USERPROFILE%/QuPath/extensions`
-   - **macOS**: `~/QuPath/extensions`
-   - **Linux**: `~/QuPath/extensions`
-3. Restart QuPath
-
-Alternatively, drag and drop the extension into QuPath. 
-
-### Option 2: Build from Source
-```bash
-git clone https://github.com/uw-loci/qupath-extension-tiles-to-pyramid.git
-cd qupath-extension-tiles-to-pyramid
-./gradlew shadowJar
-# Copy build/libs/qupath-extension-tiles-to-pyramid-*-all.jar to your QuPath extensions directory
-```
-Developers of qpsc may want to also run the following to enable working with qpsc in IntelliJ.
-```
-./gradlew publishToMavenLocal
-```
-
+</details>
 
 <details>
-<summary><h2>Usage</h2></summary>
+<summary><b>Channels and merging</b> -- what happens to colour and to per-channel folders</summary>
 
-### Accessing the Extension
-1. Open QuPath
-2. Navigate to **Extensions** -> **Tiles to Pyramid** -> **Tiles-to-pyramid**
-3. The **Tiles to Pyramid** dialog opens.
-4. Under **Stitching Method**, choose how your tile positions are recorded (see Stitching Strategies below).
-5. Click **Select Folder** and choose the folder that holds your tiles.
-6. In **Stitch sub-folders with text string**, type text that your tile sub-folder names contain, or
-   leave it empty to stitch the selected folder on its own. On first use this field contains `20x`.
-7. Click **Stitch**. Pressing Enter in a field does not start it.
+## Channels and merging
 
-A notification says the stitch has started. QuPath stays usable, but a second stitch cannot start
-until this one finishes. When it does, a **Tiles to Pyramid - Result** window lists the full path of
-each output file, and you can copy the paths from it. Output is written into the folder you selected.
+A tile's channel layout is detected from the **first tile's** pixel format and carried through on
+every `(z, t)` plane:
 
-### Stitching Strategies
-
-#### 1. Filename[x,y] with Coordinates in Microns
-For images with coordinates embedded in filenames:
-```
-image_tile[1000,2000].tif
-image_tile[1500,2000].tif
-image_tile[1000,2500].tif
-```
-
-**Usage:**
-- Select the folder containing sub-folders of tiles, or select a single tile folder and leave the sub-folder text empty
-- Coordinates in brackets represent physical positions in microns
-- Extension automatically calculates tile positions and overlaps
-
-#### 2. TileConfiguration.txt file
-For ImageJ/Fiji tile configuration format. The XY positions come from `TileConfiguration.txt`; optionally, z-slice and timepoint indices are derived from directory names if tiles are organized in `z{zz}/` or `t{tt}/z{zz}/` subdirectories.
-
-**Basic 2D layout (flat or projected):**
-```
-# Define the number of dimensions we are working on
-dim = 2
-
-# Define the image coordinates
-tile_001.tif; ; (0.0, 0.0)
-tile_002.tif; ; (1024.0, 0.0)
-tile_003.tif; ; (0.0, 1024.0)
-tile_004.tif; ; (1024.0, 1024.0)
-```
-
-**5D layout with preserved Z-stack (single timepoint):**
-Tiles are organized under `z{zz}/` subdirectories; the TileConfiguration.txt file lives in the root and defines the XY mosaic:
-```
-root/
-+-- TileConfiguration.txt (defines XY positions)
-+-- z00/
-|   +-- tile_001.tif
-|   +-- tile_002.tif
-|   +-- tile_003.tif
-|   +-- tile_004.tif
-+-- z01/
-|   +-- tile_001.tif
-|   +-- tile_002.tif
-|   +-- tile_003.tif
-|   +-- tile_004.tif
-+-- z02/
-    +-- tile_001.tif
-    +-- tile_002.tif
-    +-- tile_003.tif
-    +-- tile_004.tif
-```
-
-**5D layout with preserved Z-stack and time series:**
-Tiles are organized under `t{tt}/z{zz}/` nested subdirectories; TileConfiguration.txt lives in the root:
-```
-root/
-+-- TileConfiguration.txt (defines XY positions)
-+-- t00/
-|   +-- z00/
-|   |   +-- tile_001.tif, tile_002.tif, ...
-|   +-- z01/
-|   |   +-- tile_001.tif, tile_002.tif, ...
-+-- t01/
-    +-- z00/
-    |   +-- tile_001.tif, tile_002.tif, ...
-    +-- z01/
-        +-- tile_001.tif, tile_002.tif, ...
-```
-
-**Usage:**
-- Each group must contain a `TileConfiguration.txt` file (at the root for z/t layouts, or in each angle subdirectory for flat/projected)
-- Coordinates in the config are stage positions in micrometers; each is divided by the pixel size and the downsample to place the tile
-- In the dialog, check **Pixel size, microns** before stitching. It is locked by default and shows the last manually entered value (initially 7.2), or one auto-filled from MicroManager metadata found in the folder; tick **Manually edit pixel size** to set it. QPSC and scripts pass the pixel size explicitly
-- Tile filenames in the config must match across all z/t planes (the stitcher recursively finds tiles by name, regardless of z/t nesting)
-- Flat / projected layouts (no z/t subdirectories) resolve to z=0, t=0 and produce 2D output, unchanged from prior behavior
-
-**Batch Processing Multiple Subdirectories:**
-When the matching string matches multiple subdirectories, each subdirectory is stitched independently:
-```
-input_folder/bounds/
-+-- -5.0/
-|   +-- TileConfiguration.txt
-|   +-- [tile files]
-+-- 0.0/
-|   +-- TileConfiguration.txt
-|   +-- [tile files]
-+-- 5.0/
-    +-- TileConfiguration.txt
-    +-- [tile files]
-```
-With matching string "." (every folder name here contains a dot) results in:
-- `-5.0.ome.tif`
-- `0.0.ome.tif`  
-- `5.0.ome.tif`
-
-#### 3. Vectra Tiles with Metadata
-For Akoya/PerkinElmer Vectra imaging systems:
-- Reads positioning information directly from TIFF metadata tags
-- Uses `TAG_X_POSITION`, `TAG_Y_POSITION`, and resolution tags
-- No additional configuration files required
-
-#### 4. MicroManager metadata (MMStack or TIFF series)
-For MicroManager 2 multi-position acquisitions with sidecar metadata. Both on-disk layouts MicroManager produces are supported.
-
-**When to use this strategy:** choose it whenever you acquired a multi-position
-(XY-tiled) dataset in MicroManager 2 and let MicroManager write the standard
-sidecar metadata. Tile positions come from the recorded **stage coordinates**, so
-you do not need a `TileConfiguration.txt` or coordinates encoded in filenames.
-Point the dialog at the acquisition's root folder and the strategy auto-detects
-which of the two layouts you have:
-
-| You have... | MicroManager "Save" setting that produced it | Files on disk |
+| Input tile | Support | Result |
 |---|---|---|
-| **Flat MMStack** | "Image stack file" (multi-page `MULTIPAGE_TIFF`) | one `<prefix>_MMStack_<pos>.ome.tif` + `<prefix>_MMStack_<pos>_metadata.txt` per position, all in one folder |
-| **Single-plane TIFF series** | "Separate image files" (`SINGLEPLANE_TIFF_SERIES`) | one subfolder per position (`Pos-...`), each with a single-image `img_...tif` + a `metadata.txt` |
+| **RGB brightfield** -- one 3-band 8-bit file per tile (e.g. H&E) | Full | stitched as RGB (any tile with >=3 bands at 8-bit is treated as RGB) |
+| **Single channel** -- one 1-band file per tile (8- or 16-bit) | Full | stitched as grayscale |
+| **Multichannel in one file** -- one file per tile with >3 bands, or >=3 bands at 16-bit | Not preserved in a single stitch | the compositor builds only a grayscale or RGB plane, so the extra channels are dropped. Split the channels into separate stitches instead (below) |
+| **Highly multiplexed** (e.g. 8-40 channel fluorescence) | Via per-channel stitching + merge | see below |
 
-Both come out of the same MicroManager MDA acquisition; the only difference is the
-"Save" radio button chosen at acquisition time. You do not pick the layout in the
-dialog -- the strategy detects it. Detail on each:
+**The multichannel / multiplex pattern.** Fluorescence and multiplex data are stitched **one channel
+at a time**: each channel is its own input subdirectory, producing one single-channel pyramid per
+channel. Those per-channel pyramids are then combined into a single multichannel OME-TIFF or OME-ZARR
+by a separate **channel-merge** step (`ChannelMerger`), which requires them to share the same width,
+height, and pixel type. In the stitch dialog it appears as a "Merge the N channel stitches..." checkbox
+when the selected folder holds two or more matching sub-folders of single-channel tiles; it stays hidden
+for RGB tiles, a single tile folder, or MicroManager input. The merged image is written as
+`<folder>_merged` beside the per-channel images (which are kept), with channels named after the
+sub-folders. QPSC and scripts call `ChannelMerger` directly. Co-registration across the
+channels is why registration is solved once and reused by every channel (see
+[Tile registration](#tile-registration)).
 
-**Flat MMStack** (one OME-TIFF + sidecar per position, all in one folder):
-- Reads tile positions from `*_metadata.txt` JSON sidecar files
-- Uses authoritative per-tile stage coordinates (`FrameKey-0-0-0.XPositionUm` / `YPositionUm`)
-- Each OME-TIFF carries every position as a separate series; the per-label series index is recovered from `Summary.StagePositions`
-- Example filenames: `acq_MMStack_Pos-0_000.ome.tif` and `acq_MMStack_Pos-0_000_metadata.txt`
+### Merging channels in the dialog
 
-**Single-plane TIFF series** (`SINGLEPLANE_TIFF_SERIES`; one subfolder per position):
-- Each position is its own subfolder (e.g. `Pos-1-000_000/`) containing a single-image TIFF (`img_channelNNN_positionNNN_..._zNNN.tif`) and a `metadata.txt`
-- Reads per-tile stage coordinates from the `Metadata-<relative/path/to.tif>` block (the JSON key encodes the file name)
-- Each TIFF is a genuine single-image file (series 0)
+```
+IF_run/                  Stitching Method: TileConfiguration.txt file; sub-folder text: 20x
++-- DAPI_20x/            TileConfiguration.txt + single-channel 16-bit tiles
++-- FITC_20x/            TileConfiguration.txt + tiles with the same file names as DAPI_20x
++-- TRITC_20x/           TileConfiguration.txt + tiles with the same file names
+```
 
-Common to both:
-- Falls back to `Summary.StagePositions` labels if a per-tile block is missing or malformed
-- Auto-detects pixel size from the metadata's `PixelSizeUm`
-- All tiles found under the selected folder stitch into a single output named after that folder
-- No additional configuration files required
+Select `IF_run`, tick **Merge the 3 channel stitches into one multichannel image**, and click
+**Stitch**. Written into `IF_run/`: `DAPI_20x.ome.tif`, `FITC_20x.ome.tif`, `TRITC_20x.ome.tif`, and
+`IF_run_merged.ome.tif` with channels `DAPI_20x`, `FITC_20x`, `TRITC_20x`.
 
-**Usage:**
-- Select the acquisition's root folder (the folder containing the sidecars, or the folder containing the per-position subfolders). The strategy scans subfolders, so either layout works.
-- For stage-inverted scopes, use the `flipStitchingX` and `flipStitchingY` flags to negate coordinates
+What to know before relying on the merged image:
 
-**Pixel Size Auto-fill:**
-- When you open the Tiles to Pyramid dialog or select an input folder, the pixel-size field is automatically filled from the first metadata file's `PixelSizeUm`
-- The field is **locked by default** to prevent accidental edits — a label shows the source (`(from MicroManager metadata)` / `(no MicroManager metadata - tick 'Manually edit' to set)` / `(manual override)`)
-- By default the metadata `PixelSizeUm` is authoritative, so an accidental dialog value cannot silently misalign a stitch when the metadata is correct
-- Tick **"Manually edit pixel size"** to override. When ticked, your value **wins over the metadata** — this is required for scopes whose metadata pixel size is wrong (e.g. laser-scanning microscopes whose zoom factor is not reflected in MicroManager's pixel-size calibration). Symptom of a wrong metadata pixel size: tiles are placed too far apart and overlap regions appear **duplicated** along every seam.
+- **When the option appears.** Only when the folder and sub-folder text select two or more
+  sub-folders, and the first `.tif`/`.tiff` (by name) of the first sub-folder (by name) is not RGB.
+  "N" is the number of matching sub-folders; only that one tile is checked, so keep every matching
+  sub-folder single-channel, with the same tile size and pixel type.
+- **"RGB" means 3 or more bands at 8-bit** (or a packed RGB image type). 8-bit multichannel
+  fluorescence tiles therefore count as RGB and hide the option; save one channel per file to use it.
+- **Channel order and names.** Channels are ordered by the per-channel output file name (plain text
+  order, case-sensitive, so `ch10` sorts before `ch2`; zero-pad numbers) and named after the file
+  stem. With a Downsample other than 1 the stem includes `_<n>x_downsample`, and a re-run into a
+  folder that already holds the outputs writes numbered copies whose suffix also appears in the name.
+- **Colours are not set by the dialog.** Each channel keeps its per-channel file's default; set
+  colours in QuPath afterwards, or call `ChannelMerger.merge(..., channelColors, ...)` from a script.
+- **Width, height and pixel type must match.** If they differ, no merged image is written; the
+  per-channel images remain in the folder.
+- **Partial failures.** If one sub-folder fails to stitch, the rest are still merged, so the merged
+  image lacks that channel. Check the "Failed:" list in the result window before using it.
+- **With Solve tile overlaps.** All channels share one registration solve, applied by tile file
+  name. Tiles must have the same file names in every channel folder; otherwise the non-reference
+  channels stay at their nominal positions and will not line up in the merged image.
 
-**"Try calculating pixel size..." (measure from overlap):**
-- When the metadata pixel size is untrustworthy, click this button to **measure** the true pixel size directly from the data. It phase-correlates (normalized cross-correlation) the overlapping content of neighbouring tiles, divides the recorded stage step (µm) by the measured pixel shift, and reports the median over several tile pairs.
-- The measured value is written into the field **as a manual override** (so the stitcher uses it) and the source label shows the confidence. If confidence is low (low-texture or low-overlap tiles), verify the result and adjust manually.
+</details>
 
-### Configuration Parameters
+<details>
+<summary><b>Output files and the stitch record</b> -- what is written, where, and how to see how an image was produced</summary>
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| **Stitching Method** | How tile positions are read: "Vectra tiles with metadata", "Filename[x,y] with coordinates in microns", "TileConfiguration.txt file", or "MicroManager metadata (MMStack or TIFF series)". Remembered as soon as it is changed | Last-used (initially TileConfiguration.txt file) |
-| **Folder location** (**Select Folder**) | The folder that holds your tiles. Stitched images are written **into this same folder** | Last-used folder |
-| **Pixel size, microns** | Physical size of each pixel in micrometers. Auto-detected from MMStack `*_metadata.txt` sidecars when available; field is locked by default. Tick "Manually edit pixel size" to override. Hidden for the Vectra method, whose tiles carry pixel positions | Detected from metadata; otherwise the last manually entered value (initially 7.2) |
-| **Downsample** | Downsampling factor for output | Last-used (initially 1) |
-| **Compression type** | How pixels are compressed. Lossless: `LZW` (widely readable), `ZLIB` (smaller, slower), `J2K` (smallest lossless, slow, handles 16-bit), `UNCOMPRESSED`, `DEFAULT` (LZW for OME-TIFF, zstd for OME-Zarr). Lossy: `J2K_LOSSY`, and `JPEG` which is 8-bit RGB only. For OME-Zarr these map to Blosc codecs: `LZW`/`ZLIB` to zlib, `UNCOMPRESSED` to none, everything else to zstd -- so a JPEG/J2K choice becomes lossless zstd, and the log says so | Last-used (initially J2K) |
-| **Output format** | **OME-TIFF (single file)**: one pyramidal `.ome.tif` with OME-XML metadata, widely readable. **OME-Zarr (NGFF 0.4, Zarr v2)**: an `.ome.zarr` directory of chunks, written in parallel, suited to cloud storage; the versions written are what QuPath's bundled reader opens, so check what your other tools accept | Last-used (initially OME-TIFF) |
-| **Stitch sub-folders with text string** | Stitch each sub-folder whose name contains this text, one output per sub-folder. **Empty stitches the selected folder itself, and only that folder.** Not used by the MicroManager method | Last-used (initially "20x") |
-| **Merge the N channel stitches into one multichannel image** | Shown only when 2+ matching sub-folders of single-channel (non-RGB) tiles will be stitched; not offered for the MicroManager method. Combines the per-channel stitches into one multichannel `<folder>_merged` image; the per-channel images are kept. See [Merging channels in the dialog](#merging-channels-in-the-dialog). Choice is remembered | On |
-| **Z-Spacing (um)** | Scripts only (`StitchingConfig`); the dialog always records 1.0 | 1.0 |
-| **Solve tile overlaps (content-based registration)** | Checkbox to enable overlap measurement and correction. When enabled, measures the real overlap between neighbouring tiles and corrects their positions before stitching, closing seams caused by stage backlash and drift. Writes a `TileRegistration.txt` solution file beside the tiles. Choice is remembered between sessions. See [Tile registration](#tile-registration) for details. | Off (faster, nominal positions) |
+## Output files and the stitch record
 
-### Output Format Options
+Output is written into the folder you selected, one file per stitched folder, named after it:
+- When the sub-folder text is empty: the selected folder is stitched on its own and the output is named after it
+- When processing multiple sub-folders: each gets its own output file named after the sub-folder
 
-#### OME-TIFF (Traditional)
-- **Structure**: Single pyramidal TIFF file
-- **Compatibility**: Widely supported by QuPath, ImageJ, and most imaging software
-- **Use Case**: General purpose, local storage, maximum compatibility
-- **Extension**: `.ome.tif`
-- **Compression**: chosen from QuPath's OME writer types -- `LZW`, `JPEG`, `J2K`, `J2K_LOSSY`, `ZLIB`, `UNCOMPRESSED`, `DEFAULT`
-- **Best For**: Desktop workflows, maximum software compatibility
+```
+input_folder/             (the folder you selected)
++-- slide001_tumor/
++-- slide002_normal/
++-- slide003_control/
++-- slide001_tumor.ome.tif
++-- slide002_normal.ome.tif
++-- slide003_control.ome.tif
+```
 
-#### OME-ZARR (Cloud-Native)
-- **Structure**: Directory containing chunked arrays
-- **Compatibility**: QuPath 0.7.0+, napari, Python imaging libraries
-- **Use Case**: Cloud storage, large datasets, parallel processing
-- **Extension**: `.ome.zarr` (directory)
-- **Compression**: the same OME writer type you pick is mapped to a Blosc codec internally (e.g. `LZW`/`ZLIB` -> zlib; `J2K`/`JPEG` -> zstd, since JPEG has no Blosc equivalent; otherwise zstd). You do not choose the Blosc codec directly
-- **Best For**: Cloud storage, collaborative access, very large images (> 10GB)
+A single tile folder, sub-folder text left empty:
+```
+scan_042/                 (select scan_042 itself)
++-- tile[0,0].tif
++-- tile[1000,0].tif
++-- scan_042.ome.tif      (output)
+```
 
-**Key Advantages of ZARR:**
-1. **Direct chunk writing**: writes each chunk as it is composited, without going through Bio-Formats' single-threaded TIFF writer (note: chunk compositing and writing are currently serial, not multi-threaded)
-2. **Compression**: Blosc codecs (zstd by default) are often smaller than TIFF LZW for scientific data
-3. **Cloud-Optimized**: Native support for S3, Azure Blob, Google Cloud Storage
-4. **Partial Access**: Read specific regions without downloading the entire dataset
-5. **Parallel Reads**: Multiple processes can read different regions simultaneously
-6. **Progress Tracking**: Per-chunk progress callbacks for better user feedback
+When processing angle sub-folders with sub-folder text ".":
+```
+bounds/                   (the folder you selected)
++-- -5.0.ome.tif
++-- 0.0.ome.tif
++-- 5.0.ome.tif
+```
 
-**About ZARR compression:** you do not select a Blosc codec directly. The OME compression type you
-choose in the dialog is mapped to one when writing OME-ZARR: `LZW`/`ZLIB` -> zlib;
-`UNCOMPRESSED` -> none; `JPEG`/`J2K`/`J2K_LOSSY` are not available for ZARR and are substituted with
-zstd (logged as a warning); anything else -> zstd, a good speed/ratio default. Note this means an
-OME-ZARR is always lossless even if you pick `J2K_LOSSY`; that lossy option only takes effect for
-OME-TIFF output.
+### Stitch record
 
-**When to Use ZARR:**
-- Stitched images > 5GB in size
-- Cloud storage or collaborative workflows
-- High-throughput batch processing
-- Need for parallel data access
-- Long-term archival with cloud backup
+Every stitched image gets a plain-text `<image stem>.stitch-info.txt` beside it. It records the source tiles, the stitch settings (method, pixel size, downsample, stage-axis negation, blending, format, compression), what registration did, including the solution file's header, and the software versions. A merged multichannel image's record lists its per-channel inputs and includes each one's record. The file is ASCII `[section]` headings followed by `key: value` lines, so a host application such as QPSC can append its own sections.
 
-**When to Use OME-TIFF:**
-- Need maximum software compatibility
-- Working with legacy analysis pipelines
-- Smaller images (< 2GB)
-- Desktop-only workflows
-- Sharing with users without ZARR support
+</details>
 
-### Example Workflows
+<details>
+<summary><b>Examples and special cases</b> -- scripted stitching, batch runs, rotation angles</summary>
+
+## Examples and special cases
+
+### Example workflows
 
 #### Basic Stitching (OME-TIFF)
 ```java
@@ -622,7 +670,7 @@ StitchingConfig config = new StitchingConfig(
 String result = StitchingWorkflow.run(config);
 ```
 
-### Special Use Cases
+### Special use cases
 
 #### Rotation Angle Processing
 For workflows with multiple rotation angles stored in separate folders:
@@ -643,75 +691,57 @@ Using matching string "." will create three separate stitched images, one for ea
 </details>
 
 <details>
-<summary><h2>Directory Structure</h2></summary>
+<summary><b>Z-stacks and time series</b> -- preserved only from separate files per plane, with TileConfiguration.txt</summary>
 
-### Input Directory Structure
-```
-One run uses one Stitching Method, so every sub-folder it selects must use that method's layout.
+## Z-stacks and time series
 
-```
-input_folder/             Method: Filename[x,y]; sub-folder text: slide
-+-- slide001_tumor/
-|   +-- tile_001[0,0].tif
-|   +-- tile_002[1000,0].tif
-|   +-- tile_003[0,1000].tif
-+-- slide002_normal/
-|   +-- tile_001[0,0].tif
-|   +-- tile_002[1000,0].tif
-+-- slide003_control/
-    +-- tile_001[0,0].tif
-    +-- tile_002[1000,0].tif
-```
+Z-slices and timepoints are preserved **only when each plane is a separate tile file**, placed in
+`z{nn}/` (and optionally `t{nn}/`) subdirectories and stitched with the **TileConfiguration.txt**
+strategy. That path builds a genuine multi-plane pyramid: each `(z, t)` plane is composited from
+only the tiles at that plane, the Z-spacing is recorded, and both output formats declare the Z/T
+sizes. There is no maximum-intensity projection or flattening -- planes are written through as-is.
 
-### Output Structure
-Output is written into the folder you selected, one file per stitched folder, named after it:
-- When the sub-folder text is empty: the selected folder is stitched on its own and the output is named after it
-- When processing multiple sub-folders: each gets its own output file named after the sub-folder
+| Input layout | Z | T |
+|---|---|---|
+| TileConfiguration.txt + `z{nn}/` directories | preserved | -- |
+| TileConfiguration.txt + `t{nn}/z{nn}/` directories | preserved | preserved |
+| TileConfiguration.txt, flat (no z/t directories) | 2D (z=0) | 2D (t=0) |
+| MicroManager, Filename[x,y], Vectra | 2D only | 2D only |
+| Z/T **inside** a multi-page file (e.g. an MMStack z-stack per position) | **collapsed** | **collapsed** |
 
-```
-input_folder/             (the folder you selected)
-+-- slide001_tumor/
-+-- slide002_normal/
-+-- slide003_control/
-+-- slide001_tumor.ome.tif
-+-- slide002_normal.ome.tif
-+-- slide003_control.ome.tif
-```
+Two limits worth stating plainly:
 
-A single tile folder, sub-folder text left empty:
-```
-scan_042/                 (select scan_042 itself)
-+-- tile[0,0].tif
-+-- tile[1000,0].tif
-+-- scan_042.ome.tif      (output)
-```
+- **The MicroManager, Filename[x,y], and Vectra strategies are 2D only** -- they read the XY
+  position of each tile and place it at z=0, t=0.
+- **Planes inside a multi-page or multi-series file are not expanded.** The tile reader reads only
+  the *first* image in each file, so an MMStack that stores a z-stack (or a time series, or several
+  stage positions) inside one file is stitched as a single plane. To preserve those dimensions,
+  export the acquisition to the separate-file `z{nn}/` / `t{nn}/` layout and use the
+  TileConfiguration.txt strategy.
 
-When processing angle sub-folders with sub-folder text ".":
-```
-bounds/                   (the folder you selected)
-+-- -5.0.ome.tif
-+-- 0.0.ome.tif
-+-- 5.0.ome.tif
-```
+Directory names must be exactly `z00`, `z01`, `t00`, ... (a number after `z`/`t`, case-insensitive);
+the two levels are matched independently, so `z{nn}/t{nn}/` nesting works as well as `t{nn}/z{nn}/`.
 
 </details>
 
 <details>
-<summary><h2>Performance Optimization</h2></summary>
+<summary><b>Performance and memory</b> -- what it costs, and the tile sizes that suit it</summary>
 
-### Memory Management
+## Performance and memory
+
+### Memory management
 - **Large Datasets**: Use higher downsample values (2x, 4x) for initial processing
 - **RAM Usage**: Monitor memory usage; increase JVM heap size if needed:
   ```bash
   java -Xmx16G -jar QuPath.jar
   ```
 
-### Processing Speed
+### Processing speed
 - **Parallel Processing**: Extension automatically uses multiple CPU cores
 - **SSD Storage**: Use SSD drives for input/output to improve I/O performance
 - **Network Storage**: Avoid network drives for temporary processing
 
-### Tile Size Recommendations
+### Tile size recommendations
 - **Small Tiles** (< 2048px): Fast processing, more metadata overhead
 - **Large Tiles** (> 8192px): Slower processing, less overhead
 - **Optimal Range**: 2048-4096 pixels per tile dimension
@@ -719,9 +749,11 @@ bounds/                   (the folder you selected)
 </details>
 
 <details>
-<summary><h2>Troubleshooting</h2></summary>
+<summary><b>Troubleshooting</b> -- common failures, debug logging, what to check first</summary>
 
-### Common Issues
+## Troubleshooting
+
+### Common issues
 
 #### "No valid tile configurations found"
 - **Cause**: Directory structure doesn't match expected format
@@ -748,14 +780,14 @@ bounds/                   (the folder you selected)
 - **Solution**: Increase JVM heap size if needed, use higher downsample values for initial processing, or reduce the number of concurrent operations. The direct stitcher's bounded memory usage should handle most configurations.
 - **Command**: `java -Xmx16G -jar QuPath.jar`
 
-### Debug Logging
+### Debug logging
 Enable detailed logging by setting log level to DEBUG:
 ```properties
 # In QuPath logging configuration
 logger.qupath.ext.basicstitching=DEBUG
 ```
 
-### Validation Steps
+### Validation steps
 1. **File Integrity**: Verify all input TIFF files open correctly
 2. **Coordinate Extraction**: Check log output for parsed coordinates
 3. **Directory Matching**: Confirm subdirectories match the filtering criteria
@@ -764,9 +796,11 @@ logger.qupath.ext.basicstitching=DEBUG
 </details>
 
 <details>
-<summary><h2>API Documentation</h2></summary>
+<summary><b>API and development</b> -- core classes, extension points, building and contributing</summary>
 
-### Core Classes
+## API and development
+
+### Core classes
 
 #### `StitchingWorkflow`
 Main orchestration class for stitching operations.
@@ -830,7 +864,7 @@ Configuration class for stitching operations.
 - `VectraMetadataStrategy`: Extract Vectra TIFF metadata
 - `MicroManagerMetadataStrategy`: Read MicroManager sidecar metadata (MMStack or single-plane TIFF series)
 
-### Extension Points
+### Extension points
 The extension supports custom stitching strategies by implementing the `StitchingStrategy` interface:
 
 ```java
@@ -848,14 +882,7 @@ Each strategy returns `TileMapping(file, region, subdirName, seriesIndex)`, wher
 `ImageRegion` in output-pixel space (stage microns divided by pixel size, with any
 `flipStitchingX`/`flipStitchingY` already applied).
 
-</details>
-
-<details>
-<summary><h2>Contributing</h2></summary>
-
-We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
-
-### Development Setup
+### Development setup
 ```bash
 git clone https://github.com/uw-loci/qupath-extension-tiles-to-pyramid.git
 cd qupath-extension-tiles-to-pyramid
@@ -863,7 +890,7 @@ cd qupath-extension-tiles-to-pyramid
 ./gradlew test
 ```
 
-### Code Style
+### Code style
 - Follow standard Java conventions
 - Add comprehensive logging for debugging
 - Include unit tests for new functionality
@@ -897,36 +924,6 @@ The pyramidal OME-TIFF writer (`DirectTiffOutputWriter`) is an independent imple
 
 This project was developed with assistance from [Claude](https://claude.ai) (Anthropic). Claude was used as a development tool for code generation, architecture design, debugging, and documentation throughout the project.
 
-<details>
-<summary><h2>Changelog</h2></summary>
+## Changelog
 
-### Version 0.2.0 (Direct Stitcher + ZARR Support)
-- **NEW**: Memory-efficient direct tile stitcher for all acquisitions
-  - Bypasses SparseImageServer entirely -- prevents OOM with 1600+ tiles
-  - TileSpatialIndex: O(1) tile lookup via grid (replaces O(N) linear scan)
-  - TileReaderPool: LRU cache with max 8 open files (vs 1600 open servers)
-  - ChunkCompositor: On-demand pixel compositing from source tiles
-  - ~40 MB steady-state memory regardless of tile count
-- **NEW**: OME-ZARR output format support (cloud-native, directory-based)
-  - Direct JZarr chunk writing with NGFF 0.4 metadata
-  - PyramidLevelGenerator: 2x area-averaged downsampling from written chunks
-  - Blosc compression: zstd, lz4, lz4hc, blosclz, zlib
-- **NEW**: CompositorImageServer -- enables OME-TIFF output for large acquisitions
-  - Read-only ImageServer backed by compositor + spatial index
-  - Feeds existing PyramidImageWriter/OMEPyramidWriter with bounded memory
-- **NEW**: BlendStrategy interface for extensible overlap handling
-- **ENHANCED**: GUI now includes output format selection dropdown
-- **ENHANCED**: Automatic compression mapping (TIFF types to ZARR equivalents)
-
-### Version 0.1.0
-- Initial Java conversion from Groovy implementation
-- Support for QuPath 0.6.0+
-- Three stitching strategies implemented
-- Multi-subdirectory batch processing with separate outputs
-- Comprehensive error handling and logging
-- Performance optimizations for large datasets
-
-</details>
-
----
-
+See [CHANGELOG.md](CHANGELOG.md) for the release history.
