@@ -61,13 +61,29 @@ jobs:
           echo "asset_url=$ASSET_URL" >> "$GITHUB_OUTPUT"
           echo "Resolved: tag=$TAG asset=$ASSET_URL"
 
-      - name: Send release event to catalog
+      - name: Send release event to catalogs
         env:
           GH_TOKEN: ${{ secrets.CATALOG_DISPATCH_TOKEN }}
         run: |
           set -euo pipefail
-          gh api repos/uw-loci/qupath-catalog-qpsc/dispatches \
-            -f event_type=extension-release \
-            -F "client_payload[repo]=${{ github.repository }}" \
-            -F "client_payload[tag]=${{ steps.rel.outputs.tag }}" \
-            -F "client_payload[asset_url]=${{ steps.rel.outputs.asset_url }}"
+          # This extension is listed in BOTH catalogs: the QPSC one (microscopy) and the general
+          # LOCI one. Notifying only QPSC is how the LOCI entry fell five releases behind and
+          # silently pinned its users to 0.6.5, with no update offered. Bump both, every release.
+          # A failure on one must not skip the other, so failures are collected and reported at
+          # the end rather than aborting the loop.
+          failed=""
+          for catalog in uw-loci/qupath-catalog-qpsc uw-loci/qupath-catalog-mikenelson; do
+            echo "Dispatching to $catalog"
+            if ! gh api "repos/$catalog/dispatches" \
+              -f event_type=extension-release \
+              -F "client_payload[repo]=${{ github.repository }}" \
+              -F "client_payload[tag]=${{ steps.rel.outputs.tag }}" \
+              -F "client_payload[asset_url]=${{ steps.rel.outputs.asset_url }}"; then
+              echo "::warning::Dispatch to $catalog failed"
+              failed="$failed $catalog"
+            fi
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::Catalog dispatch failed for:$failed"
+            exit 1
+          fi
