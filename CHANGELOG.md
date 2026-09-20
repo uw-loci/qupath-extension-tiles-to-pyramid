@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **The dialog crashed on open when the folder was a drive root (Windows).** Opening it scans the selected folder for MicroManager metadata; with the folder at its old default of `C:/` that scan reached `C:\$Recycle.Bin`, which Windows lets no ordinary process read, and the dialog died with `AccessDeniedException`. Scans now skip what they cannot read, never scan a filesystem root, and the folder defaults to your home directory. The TileConfiguration.txt tile search had the same fault and no depth limit at all -- it would have failed a stitch, not just a dialog -- and now shares one bounded, fault-tolerant scanner (`FileScanner`).
 - **The Reference subdirectory choice was cut off in the dialog** -- it rendered as "Auto (best matching folder, ..." so the user could not read which option was selected. The entries are now "Auto (best match)" and "Normalized merge of all", and the combo is wide enough for a sub-folder name; the tooltip still explains each.
 
 ### Changed

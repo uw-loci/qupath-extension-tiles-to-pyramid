@@ -7,7 +7,6 @@ import com.google.gson.JsonObject;
 import java.awt.image.BufferedImage;
 import java.awt.image.Raster;
 import java.io.File;
-import java.io.IOException;
 import java.io.Reader;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -17,7 +16,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Stream;
 import javax.imageio.ImageIO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -385,37 +383,27 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
      * artifacts that WSL surfaces as phantom files (names containing ':').
      */
     private static List<Path> findMetadataFiles(Path rootdir) {
-        List<Path> result = new ArrayList<>();
-        try (Stream<Path> walk = Files.walk(rootdir, MAX_SCAN_DEPTH)) {
-            walk.filter(Files::isRegularFile).forEach(p -> {
-                String name = p.getFileName().toString();
-                if (name.contains(":")) return;
-                if (name.equals("metadata.txt") || name.endsWith("_metadata.txt")) {
-                    result.add(p);
-                }
-            });
-        } catch (IOException e) {
-            logger.error("Error scanning for MicroManager metadata files in {}: {}", rootdir, e.getMessage());
-        }
-        return result;
+        return findFiles(rootdir, name -> name.equals("metadata.txt") || name.endsWith("_metadata.txt"));
     }
 
     /** Recursively find {@code *.tif*} files under {@code rootdir}, skipping ':' ADS artifacts. */
     private static List<Path> findTiffFiles(Path rootdir) {
-        List<Path> result = new ArrayList<>();
-        try (Stream<Path> walk = Files.walk(rootdir, MAX_SCAN_DEPTH)) {
-            walk.filter(Files::isRegularFile).forEach(p -> {
-                String name = p.getFileName().toString();
-                if (name.contains(":")) return;
-                String lower = name.toLowerCase();
-                if (lower.endsWith(".tif") || lower.endsWith(".tiff")) {
-                    result.add(p);
-                }
-            });
-        } catch (IOException e) {
-            logger.error("Error listing TIFFs in {}: {}", rootdir, e.getMessage());
-        }
-        return result;
+        return findFiles(rootdir, name -> {
+            String lower = name.toLowerCase(java.util.Locale.ROOT);
+            return lower.endsWith(".tif") || lower.endsWith(".tiff");
+        });
+    }
+
+    /**
+     * Files under {@code rootdir}, at most {@link #MAX_SCAN_DEPTH} deep, whose name the predicate
+     * accepts. Names containing ':' are skipped: those are NTFS alternate-data-stream artifacts
+     * that WSL surfaces as phantom files.
+     */
+    private static List<Path> findFiles(Path rootdir, java.util.function.Predicate<String> nameMatches) {
+        return FileScanner.find(rootdir, MAX_SCAN_DEPTH, p -> {
+            String name = p.getFileName().toString();
+            return !name.contains(":") && nameMatches.test(name);
+        });
     }
 
     /**
@@ -460,6 +448,12 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
     public static Double detectPixelSizeUm(File folder) {
         if (folder == null || !folder.isDirectory()) return null;
         Path rootdir = folder.toPath().toAbsolutePath().normalize();
+        if (rootdir.getParent() == null) {
+            // A filesystem root (C:\, /). Tiles never live directly at a drive root, and scanning
+            // one means walking every top-level folder on the disk before the dialog can open.
+            logger.info("Not scanning {} for MicroManager metadata: choose the tile folder itself", rootdir);
+            return null;
+        }
         for (Path p : findMetadataFiles(rootdir)) {
             try (Reader reader = Files.newBufferedReader(p)) {
                 JsonObject root = GSON.fromJson(reader, JsonObject.class);

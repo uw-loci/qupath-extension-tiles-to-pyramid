@@ -15,7 +15,7 @@ public class QPPreferences {
 
     // Private static properties for persistent storage
     private static final StringProperty folderLocationSaved =
-            PathPrefs.createPersistentPreference("folderLocation", "C:/");
+            PathPrefs.createPersistentPreference("folderLocation", System.getProperty("user.home", "."));
 
     private static final StringProperty imagePixelSizeInMicronsSaved =
             PathPrefs.createPersistentPreference("imagePixelSizeInMicrons", "7.2");

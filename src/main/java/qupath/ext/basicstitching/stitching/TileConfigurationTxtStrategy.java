@@ -4,7 +4,6 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.basicstitching.utilities.UtilityFunctions;
@@ -15,6 +14,10 @@ import qupath.lib.regions.ImageRegion;
  * Only processes subfolders that match the given string and have a TileConfiguration.txt present.
  */
 public class TileConfigurationTxtStrategy implements StitchingStrategy {
+
+    /** Deepest nesting searched for tiles: angle/ then t{nn}/z{nn}/ is three. */
+    private static final int MAX_TILE_SEARCH_DEPTH = 3;
+
     private static final Logger logger = LoggerFactory.getLogger(TileConfigurationTxtStrategy.class);
 
     /**
@@ -145,11 +148,12 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
             // angle-only nesting still resolves to z=0, t=0 (unchanged).
             if (tiffFiles.isEmpty()) {
                 logger.info("No TIFF files at top level of {}, searching subdirectories (angle and/or z/t)", path);
-                try (Stream<Path> walk = Files.walk(path)) {
-                    walk.filter(Files::isRegularFile)
-                            .filter(TileConfigurationTxtStrategy::isTiff)
-                            .forEach(tiffFiles::add);
-                }
+                // Bounded, and skips what it cannot read. An unreadable directory anywhere under
+                // the selected folder makes Files.walk throw UncheckedIOException mid-stream, which
+                // no `catch (IOException)` sees; MAX_TILE_SEARCH_DEPTH also stops a mis-selected
+                // parent folder from walking an entire drive. The layouts this looks for are
+                // angle/, z{nn}/ and t{nn}/z{nn}/, so three levels is already one more than needed.
+                tiffFiles.addAll(FileScanner.find(path, MAX_TILE_SEARCH_DEPTH, TileConfigurationTxtStrategy::isTiff));
             }
 
             // Process all found TIFF files
