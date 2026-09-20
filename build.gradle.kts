@@ -109,7 +109,13 @@ tasks.test {
     }
     // Lower this (e.g. -PstitchBenchHeap=256m) to prove the bounded-memory envelope.
     maxHeapSize = (project.findProperty("stitchBenchHeap") ?: "2g").toString()
-    if (benchEnabled) {
+    // RealTileFigureTest is opt-in the same way: -PrealFig with -PrealFigIn / -PrealFigOut.
+    val realFig = project.hasProperty("realFig")
+    systemProperty("realFig", realFig.toString())
+    for (knob in listOf("realFigIn", "realFigOut")) {
+        project.findProperty(knob)?.let { systemProperty(knob, it.toString()) }
+    }
+    if (benchEnabled || realFig) {
         testLogging { showStandardStreams = true }
         outputs.upToDateWhen { false } // always re-run; a cached benchmark is not a measurement
     }
