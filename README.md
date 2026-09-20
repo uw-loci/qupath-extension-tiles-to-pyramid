@@ -217,7 +217,7 @@ Common to both:
 - For stage-inverted scopes, use the `flipStitchingX` and `flipStitchingY` flags to negate coordinates
 
 **Pixel Size Auto-fill:**
-- When you open the Tiles to Pyramid dialog or select an input folder, the pixel-size field is automatically filled from the first metadata file's `PixelSizeUm`
+- When you select an input folder, the pixel-size field is automatically filled from the first metadata file's `PixelSizeUm`. The dialog does not scan the default folder, so opening it without choosing a folder first will not pre-fill a pixel size
 - The field is **locked by default** to prevent accidental edits — a label shows the source (`(from MicroManager metadata)` / `(no MicroManager metadata - tick 'Manually edit' to set)` / `(manual override)`)
 - By default the metadata `PixelSizeUm` is authoritative, so an accidental dialog value cannot silently misalign a stitch when the metadata is correct
 - Tick **"Manually edit pixel size"** to override. When ticked, your value **wins over the metadata** — this is required for scopes whose metadata pixel size is wrong (e.g. laser-scanning microscopes whose zoom factor is not reflected in MicroManager's pixel-size calibration). Symptom of a wrong metadata pixel size: tiles are placed too far apart and overlap regions appear **duplicated** along every seam.
