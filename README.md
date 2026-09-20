@@ -263,7 +263,7 @@ input_folder/             Method: Filename[x,y]; sub-folder text: slide
 | **Merge the N channel stitches into one multichannel image** | Shown only when 2+ matching sub-folders of single-channel (non-RGB) tiles will be stitched; not offered for the MicroManager method. Combines the per-channel stitches into one multichannel `<folder>_merged` image; the per-channel images are kept. See [Merging channels in the dialog](#merging-channels-in-the-dialog). Choice is remembered | On |
 | **Z-Spacing (um)** | Scripts only (`StitchingConfig`); the dialog always records 1.0 | 1.0 |
 | **Solve tile overlaps (content-based registration)** | Checkbox to enable overlap measurement and correction. When enabled, measures the real overlap between neighbouring tiles and corrects their positions before stitching, closing seams caused by stage backlash and drift. Writes a `TileRegistration.txt` solution file beside the tiles. Choice is remembered between sessions. See [Tile registration](#tile-registration) for details. | Off (faster, nominal positions) |
-| **Reference subdirectory** | Shown when overlap solving is on: what the overlaps are measured on. **Auto (best matching folder, weak seams re-tried)**, a named sub-folder, or **Normalized merge of all folders** when there are two or more. Every sub-folder is then placed with that one result. See [Tile registration](#tile-registration) | Auto |
+| **Reference subdirectory** | Shown when overlap solving is on: what the overlaps are measured on. **Auto (best match)**, a named sub-folder, or **Normalized merge of all** when there are two or more. Every sub-folder is then placed with that one result. See [Tile registration](#tile-registration) | Auto |
 
 ### Output format options
 
@@ -347,11 +347,11 @@ persistent tuning knobs in QuPath's Preferences.
   whose overlap you know.
 - **Reference subdirectory** -- what to measure the overlaps on. The solution is reused by every
   subdirectory. Choices:
-  - **Auto (best matching folder, weak seams re-tried)** (default). Measures about 24 seams on every
+  - **Auto (best match)** (default). Measures about 24 seams on every
     subdirectory and solves on the one whose matches are most decisive. Seams that come out weak or
     rejected on it are then re-measured on the other subdirectories, and the best match wins. Only
     the weak seams pay for this.
-  - **Normalized merge of all folders** (shown when there are two or more). Scales each subdirectory
+  - **Normalized merge of all** (shown when there are two or more sub-folders). Scales each subdirectory
     by one factor for the whole dataset, then averages them. A dim channel counts as much as a bright
     one, and a feature looks the same in both tiles of a seam. Every seam reads every subdirectory,
     so it takes about N times as long to measure as a single one.

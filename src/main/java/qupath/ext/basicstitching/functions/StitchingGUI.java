@@ -94,8 +94,10 @@ public class StitchingGUI {
     private static final String ZARR_FORMAT_VERSION =
             qupath.ext.basicstitching.assembly.direct.ZarrOutputWriter.ZARR_FORMAT_VERSION;
 
-    private static final String AUTO_REFERENCE = "Auto (best matching folder, weak seams re-tried)";
-    private static final String PROJECTION_REFERENCE = "Normalized merge of all folders";
+    // Short enough to read in the combo at its dialog width; the tooltip carries the detail.
+    // The long form used to render as "Auto (best matching folder, ..." with the answer cut off.
+    private static final String AUTO_REFERENCE = "Auto (best match)";
+    private static final String PROJECTION_REFERENCE = "Normalized merge of all";
     private final CheckBox overlapAutoCheckbox = new CheckBox("Overlap %: derive from the tile grid");
     private final TextField overlapXField = new TextField("10");
     private final TextField overlapYField = new TextField("10");
@@ -577,9 +579,10 @@ public class StitchingGUI {
         referenceLabel.setTooltip(
                 new Tooltip("What to measure tile overlaps on. The solution is reused by every subdirectory\n"
                         + "(angles/channels are co-captured, so they must share one solve).\n\n"
-                        + "Auto: tries a sample of seams on every folder, solves on the one that matches most\n"
-                        + "decisively, and re-measures only the weak seams on the other folders.\n"
-                        + "Normalized merge: scales each folder once for the whole dataset, then averages them.\n"
+                        + "Auto (best match): tries a sample of seams on every folder, solves on the one that\n"
+                        + "matches most decisively, and re-measures only the weak seams on the other folders.\n"
+                        + "Normalized merge of all: scales each folder once for the whole dataset, then averages\n"
+                        + "them.\n"
                         + "Reads every folder at every seam, so it takes longer than a single folder.\n"
                         + "A named folder: solve on that folder only."));
         referenceBox.setTooltip(referenceLabel.getTooltip());
@@ -609,6 +612,9 @@ public class StitchingGUI {
         registrationOptionsPane.add(overlapYLabel, 2, 1);
         registrationOptionsPane.add(overlapYField, 3, 1);
         registrationOptionsPane.add(referenceLabel, 0, 2);
+        // Wide enough for the longest entry plus a sub-folder name; without it the combo takes its
+        // width from the column and truncates the choice the user just made.
+        referenceBox.setPrefWidth(240);
         registrationOptionsPane.add(referenceBox, 1, 2, 3, 1);
         registrationOptionsPane.add(registrationHintLabel, 0, 3, 4, 1);
 
