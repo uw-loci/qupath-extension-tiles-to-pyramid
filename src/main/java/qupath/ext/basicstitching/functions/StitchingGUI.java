@@ -78,7 +78,9 @@ public class StitchingGUI {
     private final TextField pixelSizeField = new TextField(QPPreferences.getImagePixelSizeInMicronsSaved());
     private final CheckBox pixelSizeOverrideCheckbox = new CheckBox("Manually edit pixel size");
     private final Label pixelSizeSourceLabel = new Label("");
-    private final Button estimatePixelSizeButton = new Button("Try calculating pixel size...");
+    // Short enough not to be clipped at the dialog's width; it used to read "Try calculating
+    // pixel si...". The tooltip says what it measures and how.
+    private final Button estimatePixelSizeButton = new Button("Measure from tiles...");
     private final TextField downsampleField = new TextField(QPPreferences.getDownsampleSaved());
     private final TextField matchStringField = new TextField(QPPreferences.getSearchStringSaved());
     private final ComboBox<String> stitchingGridBox = new ComboBox<>();
@@ -495,10 +497,13 @@ public class StitchingGUI {
         addRegistrationComponent(pane);
         addGitHubLinkComponent(pane);
 
-        // Initial autofill from the restored folder preference. The textProperty
-        // listener only fires on later changes; this seeds the pixel size +
-        // source label from whatever folder is already in the field.
-        autoFillPixelSizeFromFolder();
+        // Initial autofill from the restored folder preference -- but ONLY when a person chose
+        // that folder. The default is the user's home directory, and reading a pixel size out of
+        // whatever acquisition happens to sit under it would pre-fill a value from unrelated data
+        // and stitch at the wrong scale. The textProperty listener handles every later change.
+        if (QPPreferences.isFolderChosen()) {
+            autoFillPixelSizeFromFolder();
+        }
 
         // Update the components' visibility based on the current selection
         updateComponentsBasedOnSelection(pane);
@@ -786,6 +791,7 @@ public class StitchingGUI {
                 if (selectedDir != null) {
                     folderField.setText(selectedDir.getAbsolutePath());
                     QPPreferences.setFolderLocationSaved(selectedDir.getAbsolutePath());
+                    QPPreferences.setFolderChosen(true);
                     logger.info("Selected folder path: {}", selectedDir.getAbsolutePath());
                 }
             } catch (Exception ex) {
@@ -797,7 +803,12 @@ public class StitchingGUI {
         // values we can read from the folder's MMStack metadata. The autofill
         // helper is a no-op when the manual-override checkbox is ticked, so
         // user edits to the pixel size are preserved while overriding.
-        folderField.textProperty().addListener((obs, oldVal, newVal) -> autoFillPixelSizeFromFolder());
+        // A change here is always a person browsing, typing or pasting: the field is seeded from
+        // the preference before this listener exists, so the default never trips it.
+        folderField.textProperty().addListener((obs, oldVal, newVal) -> {
+            QPPreferences.setFolderChosen(true);
+            autoFillPixelSizeFromFolder();
+        });
 
         Tooltip folderTooltip = new Tooltip("Root folder containing the tile images to stitch.");
         folderLabel.setTooltip(folderTooltip);
@@ -941,7 +952,7 @@ public class StitchingGUI {
                 + "and cannot be edited. Tick this box to type a value manually.");
         pixelSizeOverrideCheckbox.setTooltip(overrideTooltip);
 
-        // "Try calculating pixel size..." estimates the true pixel size from the
+        // "Measure from tiles..." estimates the true pixel size from the
         // actual tile overlap (phase correlation of neighbouring tiles), for
         // scopes whose metadata PixelSizeUm is wrong. The result is written into
         // the field as a manual override so the stitcher actually uses it.

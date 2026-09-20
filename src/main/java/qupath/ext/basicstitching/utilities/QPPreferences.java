@@ -17,6 +17,27 @@ public class QPPreferences {
     private static final StringProperty folderLocationSaved =
             PathPrefs.createPersistentPreference("folderLocation", System.getProperty("user.home", "."));
 
+    /**
+     * Whether the saved folder was put there by a person, rather than being the default.
+     *
+     * <p>Opening the dialog reads the folder's MicroManager metadata to pre-fill the pixel size.
+     * That is helpful for a folder the user chose and wrong for one they did not: the default is
+     * their home directory, and a scan of it finds some unrelated acquisition's metadata and
+     * silently pre-fills ITS pixel size, which stitches at the wrong scale.
+     */
+    private static final javafx.beans.property.BooleanProperty folderChosenSaved =
+            PathPrefs.createPersistentPreference("basicstitching.dialog.folderChosen", false);
+
+    /** @return whether the saved folder was chosen by the user. */
+    public static boolean isFolderChosen() {
+        return folderChosenSaved.get();
+    }
+
+    /** @param chosen whether the folder now in the dialog was put there by the user */
+    public static void setFolderChosen(boolean chosen) {
+        folderChosenSaved.set(chosen);
+    }
+
     private static final StringProperty imagePixelSizeInMicronsSaved =
             PathPrefs.createPersistentPreference("imagePixelSizeInMicrons", "7.2");
 

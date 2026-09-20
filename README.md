@@ -222,7 +222,7 @@ Common to both:
 - By default the metadata `PixelSizeUm` is authoritative, so an accidental dialog value cannot silently misalign a stitch when the metadata is correct
 - Tick **"Manually edit pixel size"** to override. When ticked, your value **wins over the metadata** — this is required for scopes whose metadata pixel size is wrong (e.g. laser-scanning microscopes whose zoom factor is not reflected in MicroManager's pixel-size calibration). Symptom of a wrong metadata pixel size: tiles are placed too far apart and overlap regions appear **duplicated** along every seam.
 
-**"Try calculating pixel size..." (measure from overlap):**
+**"Measure from tiles..." (measure the pixel size from the overlap):**
 - When the metadata pixel size is untrustworthy, click this button to **measure** the true pixel size directly from the data. It phase-correlates (normalized cross-correlation) the overlapping content of neighbouring tiles, divides the recorded stage step (µm) by the measured pixel shift, and reports the median over several tile pairs.
 - The measured value is written into the field **as a manual override** (so the stitcher uses it) and the source label shows the confidence. If confidence is low (low-texture or low-overlap tiles), verify the result and adjust manually.
 

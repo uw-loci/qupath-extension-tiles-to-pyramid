@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The dialog pre-filled a pixel size from a folder you never chose.** With the folder at its default (your home directory), opening the dialog scanned it, found some unrelated acquisition's MicroManager metadata and pre-filled that pixel size, labelled "(from MicroManager metadata)" -- which would stitch at the wrong scale. The pixel size is now read only from a folder you actually chose; the scan itself is unchanged once you pick one.
+- **The "Try calculating pixel size..." button was clipped** to "Try calculating pixel si...". It now reads "Measure from tiles...", with the explanation in its tooltip.
+
 ## [0.7.2] - 2026-09-19
 
 ### Fixed

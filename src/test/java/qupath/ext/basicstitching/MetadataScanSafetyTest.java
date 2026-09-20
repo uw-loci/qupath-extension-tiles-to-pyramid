@@ -58,6 +58,25 @@ class MetadataScanSafetyTest {
     }
 
     @Test
+    void metadataAnywhereUnderTheFolderIsFound() throws IOException {
+        // The flip side of not scanning by default: once a folder IS chosen, metadata nested in
+        // the MicroManager layouts must still be picked up. This is what makes the auto-fill worth
+        // gating rather than deleting -- and what makes an unchosen home directory dangerous, since
+        // any acquisition sitting under it answers too.
+        Path nested = Files.createDirectories(tempDir.resolve("run_1").resolve("Pos0"));
+        Files.writeString(
+                nested.resolve("run_1_metadata.txt"),
+                "{\"FrameKey-0-0-0\": {\"PixelSizeUm\": 0.2271}}",
+                StandardCharsets.UTF_8);
+
+        assertEquals(
+                0.2271,
+                MicroManagerMetadataStrategy.detectPixelSizeUm(tempDir.toFile()),
+                1e-9,
+                "metadata two levels down must still be found");
+    }
+
+    @Test
     void aFilesystemRootIsNotScanned() {
         // Scanning C:\ or / means walking every top-level folder on the disk before the dialog can
         // open, and tiles never sit at a drive root.
