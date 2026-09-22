@@ -44,7 +44,7 @@ five times smaller still needs 96 MB. Thousands of tiles stitch on an ordinary m
    - **Linux**: `~/QuPath/extensions`
 3. Restart QuPath
 
-Alternatively, drag and drop the extension into QuPath. 
+Alternatively, drag and drop the extension into QuPath.
 
 ### Option 2: Build from Source
 ```bash
@@ -168,7 +168,7 @@ input_folder/bounds/
 ```
 With matching string "." (every folder name here contains a dot) results in:
 - `-5.0.ome.tif`
-- `0.0.ome.tif`  
+- `0.0.ome.tif`
 - `5.0.ome.tif`
 
 ### 3. Vectra tiles with metadata
@@ -199,18 +199,19 @@ dialog -- the strategy detects it. Detail on each:
 **Flat MMStack** (one OME-TIFF + sidecar per position, all in one folder):
 - Reads tile positions from `*_metadata.txt` JSON sidecar files
 - Uses authoritative per-tile stage coordinates (`FrameKey-0-0-0.XPositionUm` / `YPositionUm`)
-- Each OME-TIFF carries every position as a separate series; the per-label series index is recovered from `Summary.StagePositions`
+- Each OME-TIFF carries every position as a separate series; the pages of each file are its CHANNELS
 - Example filenames: `acq_MMStack_Pos-0_000.ome.tif` and `acq_MMStack_Pos-0_000_metadata.txt`
 
 **Single-plane TIFF series** (`SINGLEPLANE_TIFF_SERIES`; one subfolder per position):
 - Each position is its own subfolder (e.g. `Pos-1-000_000/`) containing a single-image TIFF (`img_channelNNN_positionNNN_..._zNNN.tif`) and a `metadata.txt`
 - Reads per-tile stage coordinates from the `Metadata-<relative/path/to.tif>` block (the JSON key encodes the file name)
-- Each TIFF is a genuine single-image file (series 0)
+- Each TIFF is a genuine single-image file
 
 Common to both:
 - Falls back to `Summary.StagePositions` labels if a per-tile block is missing or malformed
 - Auto-detects pixel size from the metadata's `PixelSizeUm`
-- All tiles found under the selected folder stitch into a single output named after that folder
+- **Channels:** A single-channel acquisition stitches into one output named after the folder. A multi-channel acquisition emits one tile per channel, each named after its channel (from `Summary.ChNames`), so the workflow's existing per-channel-folder stitching combines them with the channel merger. Splitting only happens when the file's page count equals the channel count; a z-stack or time series interleaves those axes into the same pages and reads the first page only.
+- **Registration limit:** Seam measurement on MicroManager input is always performed on the first channel only, because all channels in a position come from the same file. The dialog's "Align-on" choice has no effect for MicroManager input. See [Tile registration](#tile-registration).
 - No additional configuration files required
 
 **Usage:**
@@ -219,9 +220,9 @@ Common to both:
 
 **Pixel Size Auto-fill:**
 - When you select an input folder, the pixel-size field is automatically filled from the first metadata file's `PixelSizeUm`. The dialog does not scan the default folder, so opening it without choosing a folder first will not pre-fill a pixel size
-- The field is **locked by default** to prevent accidental edits — a label shows the source (`(from MicroManager metadata)` / `(no MicroManager metadata - tick 'Manually edit' to set)` / `(manual override)`)
+- The field is **locked by default** to prevent accidental edits -- a label shows the source (`(from MicroManager metadata)` / `(no MicroManager metadata - tick 'Manually edit' to set)` / `(manual override)`)
 - By default the metadata `PixelSizeUm` is authoritative, so an accidental dialog value cannot silently misalign a stitch when the metadata is correct
-- Tick **"Manually edit pixel size"** to override. When ticked, your value **wins over the metadata** — this is required for scopes whose metadata pixel size is wrong (e.g. laser-scanning microscopes whose zoom factor is not reflected in MicroManager's pixel-size calibration). Symptom of a wrong metadata pixel size: tiles are placed too far apart and overlap regions appear **duplicated** along every seam.
+- Tick **"Manually edit pixel size"** to override. When ticked, your value **wins over the metadata** -- this is required for scopes whose metadata pixel size is wrong (e.g. laser-scanning microscopes whose zoom factor is not reflected in MicroManager's pixel-size calibration). Symptom of a wrong metadata pixel size: tiles are placed too far apart and overlap regions appear **duplicated** along every seam.
 
 **"Measure from tiles..." (measure the pixel size from the overlap):**
 - When the metadata pixel size is untrustworthy, click this button to **measure** the true pixel size directly from the data. It phase-correlates (normalized cross-correlation) the overlapping content of neighbouring tiles, divides the recorded stage step (µm) by the measured pixel shift, and reports the median over several tile pairs.
@@ -261,7 +262,7 @@ input_folder/             Method: Filename[x,y]; sub-folder text: slide
 | **Compression type** | How pixels are compressed. Lossless: `LZW` (widely readable), `ZLIB` (smaller, slower), `J2K` (smallest lossless, slow, handles 16-bit), `UNCOMPRESSED`, `DEFAULT` (the writer chooses: Bio-Formats picks the OME-TIFF codec, OME-Zarr uses zstd). Lossy: `J2K_LOSSY`, and `JPEG` which is 8-bit RGB only. For OME-Zarr these map to Blosc codecs: `LZW`/`ZLIB` to zlib, `UNCOMPRESSED` to none, everything else to zstd -- so choosing a lossy codec with OME-Zarr silently gives you a lossless one, and the log says so | Last-used (initially J2K) |
 | **Output format** | **OME-TIFF (single file)**: one pyramidal `.ome.tif` with OME-XML metadata, widely readable. **OME-Zarr (NGFF 0.4, Zarr v2)**: an `.ome.zarr` directory of chunks, written in parallel, suited to cloud storage; the versions written are what QuPath's bundled reader opens, so check what your other tools accept | Last-used (initially OME-TIFF) |
 | **Stitch sub-folders with text string** | Stitch each sub-folder whose name contains this text, one output per sub-folder. **Empty stitches the selected folder itself, and only that folder.** Not used by the MicroManager method | Last-used (initially "20x") |
-| **Merge the N channel stitches into one multichannel image** | Shown only when 2+ matching sub-folders of single-channel (non-RGB) tiles will be stitched; not offered for the MicroManager method. Combines the per-channel stitches into one multichannel `<folder>_merged` image; the per-channel images are kept. See [Merging channels in the dialog](#merging-channels-in-the-dialog). Choice is remembered | On |
+| **Merge the N channel stitches into one multichannel image** | Shown only when 2+ matching sub-folders of single-channel (non-RGB) tiles will be stitched, or when a MicroManager acquisition has multiple channels. Combines the per-channel stitches into one multichannel `<folder>_merged` image; the per-channel images are kept. See [Merging channels in the dialog](#merging-channels-in-the-dialog). Choice is remembered | On |
 | **Z-Spacing (um)** | Scripts only (`StitchingConfig`); the dialog always records 1.0 | 1.0 |
 | **Solve tile overlaps (content-based registration)** | Checkbox to enable overlap measurement and correction. When enabled, measures the real overlap between neighbouring tiles and corrects their positions before stitching, closing seams caused by stage backlash and drift. Writes a `TileRegistration.txt` solution file beside the tiles. Choice is remembered between sessions. See [Tile registration](#tile-registration) for details. | Off (faster, nominal positions) |
 | **Reference subdirectory** | Shown when overlap solving is on: what the overlaps are measured on. **Auto (best match)**, a named sub-folder, or **Normalized merge of all** when there are two or more. Every sub-folder is then placed with that one result. See [Tile registration](#tile-registration) | Auto |
@@ -529,10 +530,12 @@ at a time**: each channel is its own input subdirectory, producing one single-ch
 channel. Those per-channel pyramids are then combined into a single multichannel OME-TIFF or OME-ZARR
 by a separate **channel-merge** step (`ChannelMerger`), which requires them to share the same width,
 height, and pixel type. In the stitch dialog it appears as a "Merge the N channel stitches..." checkbox
-when the selected folder holds two or more matching sub-folders of single-channel tiles; it stays hidden
-for RGB tiles, a single tile folder, or MicroManager input. The merged image is written as
-`<folder>_merged` beside the per-channel images (which are kept), with channels named after the
-sub-folders. QPSC and scripts call `ChannelMerger` directly. Co-registration across the
+when the selected folder holds two or more matching sub-folders of single-channel tiles (or when a
+MicroManager acquisition has multiple channels); it stays hidden for RGB tiles or a single tile folder.
+For MicroManager, channels are automatically split from the pages of each file and merged if more than
+one is found. The merged image is written as `<folder>_merged` beside the per-channel images (which are
+kept), with channels named after the sub-folders (or after the channel names from `Summary.ChNames` for
+MicroManager). QPSC and scripts call `ChannelMerger` directly. Co-registration across the
 channels is why registration is solved once and reused by every channel (see
 [Tile registration](#tile-registration)).
 

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Multi-channel MicroManager acquisitions only stitched the first channel.** MicroManager packs a position's channels into consecutive pages of one TIFF file. The stitcher was always reading page 0 (the first channel) and silently dropping the rest, so a 4-channel acquisition stitched to a single channel with correct geometry but incorrect content. Now each channel becomes its own tile, named after the channel from `Summary.ChNames`, and the workflow's per-channel-folder merging combines them into one multichannel output. Splitting only happens when page count equals channel count; z-stacks or time series interleave those axes and read the first page only with a warning. The dialog now shows channel merging options for multi-channel MicroManager acquisitions.
+- **Registration limit on MicroManager input:** Seam measurement (the "Align-on" choice in the dialog) is now always performed on the first channel only, because all channels in a position come from the same file and the registration path identifies the same grid position across channels by finding the same file name in sibling folders -- a structure MicroManager does not provide. The limitation is documented in the README and in the code.
+
 ## [0.7.3] - 2026-09-20
 
 ### Fixed
