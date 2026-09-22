@@ -48,21 +48,46 @@ import qupath.lib.regions.RegionRequest;
  *   <li>{@code -PstitchBenchQuPathCacheMb=0} -- size of the QuPath tile cache to
  *       install, mimicking the one QuPath's GUI installs at startup. See
  *       {@link #installTileCache(int)}.</li>
- *   <li>{@code -PstitchBenchHeap=2g} -- max heap for the test JVM. Lower this to
- *       prove the bounded-memory envelope: if the stitch still completes at
- *       {@code -PstitchBenchHeap=256m}, steady-state memory really is bounded and
- *       independent of tile count.</li>
+ *   <li>{@code -PstitchBenchHeap=2g} -- max heap for the test JVM. This does NOT
+ *       prove the bounded-memory envelope; see "Measuring memory" below before
+ *       drawing any conclusion from lowering it.</li>
  * </ul>
  *
  * <p>Two memory numbers are reported, and they mean different things:
  * <ul>
- *   <li><b>peak live</b> -- heap still reachable after a collection. This is the
- *       real steady-state footprint, and the number the ~40 MB envelope claim in
- *       {@link DirectTileStitcher} is about.</li>
+ *   <li><b>peak live</b> -- heap still reachable after a collection. Useful for
+ *       comparing two code paths under identical settings (it is how the
+ *       decoded-tile cache below was shown to be a loss).</li>
  *   <li><b>peak used</b> -- includes not-yet-collected garbage, so it tracks the
  *       heap ceiling and allocation churn rather than the footprint. A large value
  *       here is not by itself a leak; a large <i>live</i> value is.</li>
  * </ul>
+ *
+ * <h2>Measuring memory -- what this harness CANNOT tell you</h2>
+ *
+ * <p><b>Neither number is a footprint, and this harness cannot measure the bounded-memory
+ * envelope at all.</b> Two independent reasons, both of which produce confident wrong
+ * answers (learned the hard way, 2026-09-21):
+ *
+ * <ol>
+ *   <li><b>The fixture dominates the heap.</b> {@link SyntheticGridFixture#write} builds the
+ *       mosaic as {@code double[h][w]} plus {@code float[h][w]} BEFORE the stitch starts --
+ *       about 2 GB at 196 tiles. So every {@code -PstitchBenchHeap} floor measured here is
+ *       the FIXTURE's floor. Under this harness a 196-tile stitch "fails" at
+ *       {@code 1024m}; the same stitch, isolated, completes in {@code 128m}. A floor that
+ *       climbs with grid size therefore looks exactly like a stitcher that scales with the
+ *       mosaic, and is not one.</li>
+ *   <li><b>"Peak live" moves with the heap you grant it.</b> It is sampled from
+ *       {@code getCollectionUsage()}, i.e. after a collection, and a roomy heap collects
+ *       lazily. The same 36-tile ZARR stitch reported 28.6 MB at {@code -PstitchBenchHeap=384m}
+ *       and 84.9 MB at {@code 2g}. Peak used is worse: it simply tracks the cap.</li>
+ * </ol>
+ *
+ * <p>To measure the envelope, use the metric that survives both: the <b>smallest heap in which
+ * the stitch completes</b>, bracketed by the largest at which it dies. That needs a driver
+ * that generates tiles one at a time (O(one tile) of heap) and then stitches in a fresh JVM
+ * under {@code -Xmx}, so the generator is never resident alongside the stitcher. Results from
+ * such a run are quoted in {@link DirectTileStitcher}.
  *
  * <h2>What this harness has already established</h2>
  *

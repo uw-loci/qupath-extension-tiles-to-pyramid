@@ -167,8 +167,8 @@ class ChunkCompositorBlendTest {
     void blendedCompositingStaysWithinTheChunkMemoryEnvelope() throws IOException {
         // The accumulator is the one part of blending that can break the streaming design: it is
         // float, so it costs four times the chunk it describes, plus a weight plane. A full-size RGB
-        // chunk is the worst case at 12 MB + 4 MB, and the whole direct path exists to hold ~40 MB
-        // regardless of how many tiles there are.
+        // chunk is the worst case at 12 MB + 4 MB, and the whole direct path exists to keep the
+        // footprint tied to the chunk rather than to how many tiles there are.
         //
         // This measures RETAINED memory, like memoryStaysBounded: what must not happen is the
         // accumulator being hoisted to a field or otherwise outliving the chunk, since a pyramid

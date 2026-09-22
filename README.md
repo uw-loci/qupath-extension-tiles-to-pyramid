@@ -9,8 +9,9 @@ OME-Zarr beside the tiles.
 
 It reads the tile positions from the acquisition's own records -- a `TileConfiguration.txt`,
 coordinates in the filenames, Vectra metadata, or MicroManager metadata -- and can correct those
-positions against the image content so the seams close. Memory use stays around 40 MB no matter how
-many tiles there are, so thousands of tiles stitch on an ordinary machine.
+positions against the image content so the seams close. Memory is set by the chunk being written
+rather than by the size of the mosaic: a 169-megapixel mosaic stitches in a 128 MB heap, and one
+five times smaller still needs 96 MB. Thousands of tiles stitch on an ordinary machine.
 
 ## What it can stitch
 
@@ -777,7 +778,7 @@ the two levels are matched independently, so `z{nn}/t{nn}/` nesting works as wel
 - **Example**: "5.0" matches both "5.0" and "-5.0"
 
 #### Out of Memory Errors
-- **Cause**: All acquisitions now use the memory-efficient direct stitcher, which uses ~40 MB steady state regardless of tile count. If memory issues occur, it may indicate a problem with the system environment or JVM configuration.
+- **Cause**: All acquisitions use the memory-efficient direct stitcher, whose footprint is set by the chunk being written rather than by the tile count. Measured on 1024 px 16-bit tiles at 10% overlap, a 169-megapixel mosaic completes in a 128 MB heap and a 32-megapixel one in 96 MB, so running out of memory here usually points at the JVM configuration or at something else in the same JVM rather than at the mosaic being too large.
 - **Solution**: Increase JVM heap size if needed, use higher downsample values for initial processing, or reduce the number of concurrent operations. The direct stitcher's bounded memory usage should handle most configurations.
 - **Command**: `java -Xmx16G -jar QuPath.jar`
 

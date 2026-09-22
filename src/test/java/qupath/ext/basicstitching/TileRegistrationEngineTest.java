@@ -249,7 +249,8 @@ class TileRegistrationEngineTest {
 
     @Test
     void memoryStaysBounded() throws IOException {
-        // The whole stitcher exists to hold ~40 MB regardless of tile count; registration must not be
+        // The whole stitcher exists to hold a footprint set by the chunk rather than the tile
+        // count; registration must not be
         // the thing that breaks that. What is checked here is that nothing scaling with tile count is
         // RETAINED once the solve returns -- specifically that overlap bands are not cached across
         // edges, which is the one design decision that would quietly reintroduce unbounded growth.

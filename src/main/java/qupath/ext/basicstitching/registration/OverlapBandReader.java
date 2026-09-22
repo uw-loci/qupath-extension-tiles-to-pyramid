@@ -25,9 +25,10 @@ import qupath.ext.basicstitching.assembly.direct.TileReaderPool;
  * count matches what a single stitch already uses.
  *
  * <p>Bands are deliberately <b>not</b> cached across edges. Holding four bands per tile for a 100-tile
- * grid is roughly 170 MB, which would blow the ~40 MB envelope this whole architecture exists to
- * protect. Re-reading a band for each of a tile's edges costs a few extra decodes and keeps peak
- * memory at a couple of bands per worker.
+ * grid is roughly 170 MB, and it grows with the tile count -- which is exactly the dependence this
+ * architecture exists to remove (a 100-tile stitch otherwise completes in a 128 MB heap). Re-reading
+ * a band for each of a tile's edges costs a few extra decodes and keeps peak memory at a couple of
+ * bands per worker.
  */
 public final class OverlapBandReader implements AutoCloseable {
 

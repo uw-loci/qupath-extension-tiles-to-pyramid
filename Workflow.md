@@ -116,8 +116,11 @@ header refuses to be applied to a run it was not solved for).
 
 `assembly/direct/DirectTileStitcher.java`. Every tile count routes through here.
 
-The design constraint is **bounded memory: roughly 40 MB regardless of tile count**, against the
-2-4+ GB the retired `SparseImageServer` path needed. Three mechanisms hold that:
+The design constraint is **bounded memory: the footprint follows the chunk, not the mosaic**,
+against the 2-4+ GB the retired `SparseImageServer` path needed. Measured on 1024 px 16-bit tiles
+at 10% overlap (OME-TIFF, LZW), the smallest heap that completes is 96 MB at 36 tiles (32 MP) and
+128 MB at both 100 tiles (87 MP) and 196 tiles (169 MP) -- 5.3x the mosaic for 1.33x the heap.
+Three mechanisms hold that:
 
 - **`TileSpatialIndex`** holds only `TileMapping` references -- a file handle and a rectangle. No
   pixels. Tiles are bucketed into chunk-sized cells and translated so the image starts at (0, 0).

@@ -36,7 +36,14 @@ import qupath.ext.basicstitching.stitching.TileMapping;
  *   <li>Writes to the target format</li>
  * </ol>
  * <p>
- * Memory usage: ~40 MB steady state vs 2-4+ GB for the SparseImageServer path.
+ * Memory usage is set by the chunk being written, not by the tile count, against the 2-4+ GB the
+ * SparseImageServer path needed. Measured as the smallest heap in which the stitch completes
+ * (1024 px 16-bit tiles, 10% overlap, OME-TIFF/LZW): 96 MB at 36 tiles (32 MP), 128 MB at 100 tiles
+ * (87 MP), 128 MB at 196 tiles (169 MP) -- 5.3x the mosaic for 1.33x the heap.
+ * <p>
+ * Do NOT measure this through {@code StitchBenchmarkTest}: its fixture allocates the whole mosaic
+ * before the stitch begins, so a heap floor taken there is the fixture's, not this class's. See
+ * that class's "Measuring memory" note.
  */
 public class DirectTileStitcher {
 
