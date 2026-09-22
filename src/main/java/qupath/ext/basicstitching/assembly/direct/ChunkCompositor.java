@@ -132,7 +132,7 @@ public class ChunkCompositor {
 
             try {
                 // Read the relevant region from the tile
-                BufferedImage tileData = readerPool.readRegion(tile.file, srcX, srcY, isectW, isectH);
+                BufferedImage tileData = readerPool.readRegion(tile.file, tile.ifdIndex, srcX, srcY, isectW, isectH);
 
                 if (tileData.getType() == output.getType() || tileData.getType() == BufferedImage.TYPE_CUSTOM) {
                     // Raw raster transfer -- matches QuPath's SparseImageServer approach.
@@ -219,7 +219,7 @@ public class ChunkCompositor {
 
             BufferedImage tileData;
             try {
-                tileData = readerPool.readRegion(tile.file, srcX, srcY, isectW, isectH);
+                tileData = readerPool.readRegion(tile.file, tile.ifdIndex, srcX, srcY, isectW, isectH);
             } catch (IOException e) {
                 logger.warn("Failed to read tile region from {}: {}", tile.file.getName(), e.getMessage());
                 continue;

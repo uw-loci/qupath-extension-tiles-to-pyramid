@@ -375,7 +375,7 @@ public final class TileRegistrationStep {
                     r.getHeight(),
                     r.getZ(),
                     r.getT());
-            out.add(new TileMapping(m.file, moved, m.subdirName, m.seriesIndex));
+            out.add(new TileMapping(m.file, moved, m.subdirName, m.ifdIndex));
             shifted++;
         }
         logger.info("Registration moved {} of {} tile placements", shifted, mappings.size());

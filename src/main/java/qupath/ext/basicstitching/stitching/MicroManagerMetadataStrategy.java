@@ -7,6 +7,7 @@ import com.google.gson.JsonObject;
 import java.awt.image.BufferedImage;
 import java.awt.image.Raster;
 import java.io.File;
+import java.io.IOException;
 import java.io.Reader;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -19,6 +20,7 @@ import java.util.Map;
 import javax.imageio.ImageIO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.basicstitching.assembly.direct.TileReaderPool;
 import qupath.ext.basicstitching.registration.Ncc;
 import qupath.ext.basicstitching.utilities.UtilityFunctions;
 import qupath.lib.regions.ImageRegion;
@@ -33,9 +35,11 @@ import qupath.lib.regions.ImageRegion;
  *       position"): one {@code <prefix>_MMStack_<label>.ome.tif} per position
  *       plus a co-located {@code <prefix>_MMStack_<label>_metadata.txt} sidecar,
  *       all directly in the selected folder. The per-tile stage position lives
- *       in a {@code FrameKey-0-0-0} block, and each OME-TIFF carries OME-XML
- *       describing every position as a separate <em>series</em>, so a per-label
- *       series index is needed to read the right plane.</li>
+ *       in a {@code FrameKey-0-0-0} block. Each OME-TIFF also carries OME-XML
+ *       describing every position as a separate <em>series</em>, but that is not
+ *       what the read path uses: tiles are read with {@code javax.imageio},
+ *       which addresses PAGES, and the pages of a per-position file are its
+ *       CHANNELS.</li>
  *   <li><b>Single-plane TIFF series</b> ({@code SINGLEPLANE_TIFF_SERIES}): each
  *       position is its own subfolder (e.g. {@code Pos-1-000_000/}) containing a
  *       single-image TIFF ({@code img_channelNNN_positionNNN_..._zNNN.tif}) and
@@ -50,9 +54,20 @@ import qupath.lib.regions.ImageRegion;
  * per-tile block is missing/malformed, and (for the flat MMStack layout) to
  * recover the series index for each label.
  *
- * <p>All tiles found under the selected folder are grouped into a single
- * stitched output named after the selected folder. The {@code matchingString}
- * argument is unused (MicroManager folders are not multi-angle).
+ * <p><b>Channels.</b> A single-channel acquisition stitches into one output named
+ * after the selected folder. A multi-channel one emits <em>one tile per channel</em>,
+ * each carrying the page it lives on and a sub-folder name taken from
+ * {@code Summary.ChNames}, so the workflow's existing per-sub-folder grouping stitches
+ * each channel and the channel merger combines them. Splitting only happens when the
+ * file's page count equals the channel count; a z-stack or time series interleaves
+ * those axes into the same pages, so those read the first page and log why. The
+ * {@code matchingString} argument is unused (MicroManager folders are not multi-angle).
+ *
+ * <p><b>Registration limit.</b> Seam measurement identifies the same grid position
+ * across channels by finding the same file name in sibling sub-folders, which
+ * MicroManager's one-file-per-position layout does not provide. Seams are therefore
+ * always measured on the first channel, and the dialog's Align-on choice has no effect
+ * for MicroManager input.
  *
  * <p><b>Pixel size.</b> The metadata's {@code PixelSizeUm} is used by default,
  * but some scopes (notably laser-scanning microscopes whose zoom factor is not
@@ -135,6 +150,16 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
         final Map<String, double[]> labelToPosUm = new HashMap<>();
         /** Summary.StagePositions label -> series index (flat-MMStack only). */
         final Map<String, Integer> labelToSeriesIndex = new HashMap<>();
+
+        /** Summary.ChNames, in acquisition order; empty when the acquisition names none. */
+        final List<String> channelNames = new ArrayList<>();
+
+        /** Summary.Channels / Slices / Frames, for deciding whether pages are channels. */
+        int nChannels = 1;
+
+        int nSlices = 1;
+
+        int nFrames = 1;
         /** First usable PixelSizeUm found, or {@code null}. */
         Double detectedPixelSizeUm = null;
         /** Whether any flat-MMStack (multi-series) tile was seen. */
@@ -230,11 +255,9 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
             }
 
             double[] posUm;
-            int seriesIndex;
             TileRecord record = pm.pathToRecord.get(tif);
             if (record != null) {
                 posUm = new double[] {record.xUm, record.yUm};
-                seriesIndex = record.multiSeries ? pm.labelToSeriesIndex.getOrDefault(label, 0) : 0;
             } else {
                 posUm = label != null ? pm.labelToPosUm.get(label) : null;
                 if (posUm == null) {
@@ -242,10 +265,6 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
                     continue;
                 }
                 logger.debug("Tile {} resolved via Summary.StagePositions label '{}'", filename, label);
-                // Without a per-tile block we cannot tell single- from
-                // multi-series, so only apply the StagePositions series index
-                // when the acquisition is known to use multi-series OME-TIFFs.
-                seriesIndex = pm.sawMultiSeries ? pm.labelToSeriesIndex.getOrDefault(label, 0) : 0;
             }
 
             Map<String, Integer> dims = UtilityFunctions.getTiffDimensions(tif.toFile());
@@ -267,19 +286,96 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
             ImageRegion region = ImageRegion.createInstance(
                     (int) Math.round(x), (int) Math.round(y), dims.get("width"), dims.get("height"), 0, 0);
 
-            mappings.add(new TileMapping(tif.toFile(), region, subdirName, seriesIndex));
+            // One mapping per CHANNEL, not per file. MicroManager packs a position's
+            // channels into consecutive pages of one TIFF, so a single mapping per file
+            // reads page 0 and silently discards every other channel -- which is what a
+            // 4-channel acquisition used to stitch down to.
+            List<ChannelPage> pages = channelPages(tif, pm, filename);
+            for (ChannelPage page : pages) {
+                mappings.add(new TileMapping(tif.toFile(), region, page.subdir(subdirName), page.ifd));
+            }
             logger.debug(
-                    "Mapped {} at stage ({}, {}) um -> pixel ({}, {}) series {}",
+                    "Mapped {} at stage ({}, {}) um -> pixel ({}, {}) as {} channel(s)",
                     filename,
                     posUm[0],
                     posUm[1],
                     x,
                     y,
-                    seriesIndex);
+                    pages.size());
         }
 
         logger.info("Total tiles mapped from MicroManager metadata: {}", mappings.size());
         return mappings;
+    }
+
+    /**
+     * One page of a tile file, and the sub-folder name its output should carry.
+     *
+     * @param ifd page index within the file, as {@code javax.imageio} counts them
+     * @param channelName channel name from {@code Summary.ChNames}, or null when the
+     *     file holds a single plane and the acquisition has no channel to name
+     */
+    private record ChannelPage(int ifd, String channelName) {
+        /**
+         * Single-channel acquisitions keep stitching into one output named after the
+         * folder, exactly as before. Multi-channel ones split per channel, because the
+         * workflow groups by this name and merges the results.
+         */
+        String subdir(String folderName) {
+            return channelName == null ? folderName : channelName;
+        }
+    }
+
+    /**
+     * Work out which pages of {@code tif} to stitch, and what to call each one.
+     *
+     * <p>MicroManager writes a position's planes as consecutive pages of one TIFF. With
+     * a single channel that is one page and nothing changes. With several it is one page
+     * per channel, and each has to become its own tile so the per-channel stitches can be
+     * merged afterwards.
+     *
+     * <p>Deliberately conservative: it only splits when the page count is exactly the
+     * channel count. A z-stack or time series interleaves those axes into the same pages,
+     * and guessing the order would silently mis-assign planes -- so those fall back to
+     * one page with a warning that names what was seen, rather than producing a
+     * confidently wrong mosaic.
+     */
+    private static List<ChannelPage> channelPages(Path tif, ParsedMetadata pm, String filename) {
+        List<String> names = pm.channelNames;
+        int nChannels = names.isEmpty() ? pm.nChannels : names.size();
+        if (nChannels <= 1) {
+            return List.of(new ChannelPage(0, null));
+        }
+
+        int pages;
+        try {
+            pages = TileReaderPool.countPages(tif.toFile());
+        } catch (IOException | RuntimeException e) {
+            // A reader that cannot count pages must cost one channel, not the whole run.
+            logger.warn("Could not count pages in {} ({}) -- reading its first page only", filename, e.toString());
+            return List.of(new ChannelPage(0, null));
+        }
+
+        if (pages != nChannels) {
+            logger.warn(
+                    "{} has {} page(s) but the acquisition reports {} channel(s)"
+                            + " ({} z-slice(s), {} timepoint(s)); stitching its first page only."
+                            + " Per-channel stitching supports one plane per channel.",
+                    filename,
+                    pages,
+                    nChannels,
+                    pm.nSlices,
+                    pm.nFrames);
+            return List.of(new ChannelPage(0, null));
+        }
+
+        List<ChannelPage> out = new ArrayList<>(nChannels);
+        for (int c = 0; c < nChannels; c++) {
+            String name =
+                    c < names.size() && names.get(c) != null && !names.get(c).isBlank() ? names.get(c) : "channel_" + c;
+            out.add(new ChannelPage(c, name));
+        }
+        return out;
     }
 
     /**
@@ -301,6 +397,29 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
                 if (root == null) {
                     logger.warn("Empty or unparseable metadata file: {}", metaPath);
                     continue;
+                }
+
+                // Cache the acquisition's channel/z/t shape (once). Every sidecar in one
+                // acquisition carries the same Summary, so the first readable one wins.
+                JsonObject summaryDims = optObject(root, "Summary");
+                if (summaryDims != null && pm.channelNames.isEmpty()) {
+                    JsonArray chNames = optArray(summaryDims, "ChNames");
+                    if (chNames != null) {
+                        for (JsonElement el : chNames) {
+                            pm.channelNames.add(el.isJsonPrimitive() ? el.getAsString() : null);
+                        }
+                    }
+                    pm.nChannels = optInt(summaryDims, "Channels", pm.channelNames.size());
+                    pm.nSlices = optInt(summaryDims, "Slices", 1);
+                    pm.nFrames = optInt(summaryDims, "Frames", 1);
+                    if (pm.nChannels > 1) {
+                        logger.info(
+                                "MicroManager acquisition reports {} channel(s) {}, {} z-slice(s), {} timepoint(s)",
+                                pm.nChannels,
+                                pm.channelNames,
+                                pm.nSlices,
+                                pm.nFrames);
+                    }
                 }
 
                 // Cache Summary.StagePositions for label-based fallback (once).
@@ -445,6 +564,37 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
      * @return detected pixel size in microns ({@code > 0}), or {@code null}
      *         if no metadata reports a usable value
      */
+    /**
+     * How many channels a MicroManager acquisition in {@code folder} will stitch to.
+     *
+     * <p>For the dialog, which needs to know whether to offer channel merging before
+     * anything has been stitched. Reads {@code Summary} from the first sidecar it finds
+     * and stops -- every sidecar in one acquisition carries the same Summary, and this
+     * runs on every keystroke in the folder field, so it must not walk the whole set.
+     *
+     * @return the channel count, or 0 when the folder holds no readable MicroManager
+     *     metadata or the acquisition has a single channel (nothing to merge)
+     */
+    public static int countChannels(File folder) {
+        if (folder == null || !folder.isDirectory()) return 0;
+        Path rootdir = folder.toPath().toAbsolutePath().normalize();
+        if (rootdir.getParent() == null) return 0;
+        for (Path p : findMetadataFiles(rootdir)) {
+            try (Reader reader = Files.newBufferedReader(p)) {
+                JsonObject root = GSON.fromJson(reader, JsonObject.class);
+                if (root == null) continue;
+                JsonObject summary = optObject(root, "Summary");
+                if (summary == null) continue;
+                JsonArray names = optArray(summary, "ChNames");
+                int n = optInt(summary, "Channels", names == null ? 0 : names.size());
+                return n > 1 ? n : 0;
+            } catch (Exception e) {
+                logger.debug("Could not read channel count from {}: {}", p, e.toString());
+            }
+        }
+        return 0;
+    }
+
     public static Double detectPixelSizeUm(File folder) {
         if (folder == null || !folder.isDirectory()) return null;
         Path rootdir = folder.toPath().toAbsolutePath().normalize();
@@ -783,6 +933,17 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
     private static JsonArray optArray(JsonObject parent, String key) {
         JsonElement e = parent.get(key);
         return (e != null && e.isJsonArray()) ? e.getAsJsonArray() : null;
+    }
+
+    /** Integer field, or {@code fallback} when absent, null, or not a number. */
+    private static int optInt(JsonObject parent, String key, int fallback) {
+        JsonElement e = parent.get(key);
+        if (e == null || e.isJsonNull()) return fallback;
+        try {
+            return e.getAsInt();
+        } catch (Exception ex) {
+            return fallback;
+        }
     }
 
     private static String optString(JsonObject parent, String key) {

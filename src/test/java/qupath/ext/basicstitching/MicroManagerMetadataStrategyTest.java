@@ -6,6 +6,8 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import javax.imageio.ImageIO;
 import org.junit.jupiter.api.Test;
@@ -198,9 +200,9 @@ class MicroManagerMetadataStrategyTest {
         assertEquals(0, a.region.getY());
         assertEquals(16, b.region.getX());
         assertEquals(8, b.region.getY());
-        // Single-image TIFFs -> series 0 regardless of StagePositions order.
-        assertEquals(0, a.seriesIndex);
-        assertEquals(0, b.seriesIndex);
+        // Single-image TIFFs -> page 0 regardless of StagePositions order.
+        assertEquals(0, a.ifdIndex);
+        assertEquals(0, b.ifdIndex);
         // All single-plane tiles group into one output named after the folder.
         assertEquals(tmp.getFileName().toString(), a.subdirName);
         assertEquals(tmp.getFileName().toString(), b.subdirName);
@@ -393,6 +395,140 @@ class MicroManagerMetadataStrategyTest {
         sb.append("    \"YPositionUm\": ").append(yUm).append("\n");
         sb.append("  }\n");
         sb.append("}\n");
+        Files.writeString(path, sb.toString());
+    }
+
+    // ---------------------------------------------------------------------
+    // Multi-channel MMStack: channels are PAGES of one file, not sibling files
+    // ---------------------------------------------------------------------
+
+    /**
+     * A MicroManager acquisition packs a position's channels into consecutive pages of
+     * one TIFF. Before this was handled, every tile was read from page 0 and a 4-channel
+     * acquisition stitched to a single channel -- silently, because the geometry, the
+     * pixel size and the tile count were all still correct.
+     */
+    @Test
+    void multiChannelMmStackYieldsOneTilePerChannel(@TempDir Path tmp) throws IOException {
+        int channels = 3;
+        List<String> chNames = List.of("DAPI", "FITC", "TRITC");
+        writeMultiPageTile(tmp.resolve("acq_MMStack_Pos0.ome.tif"), channels);
+        writeMultiChannelSidecar(
+                tmp.resolve("acq_MMStack_Pos0_metadata.txt"), "acq_MMStack_Pos0.ome.tif", 0, 0, chNames);
+
+        List<TileMapping> mappings = new MicroManagerMetadataStrategy().prepareStitching(tmp.toString(), 1.0, 1.0, "");
+
+        assertEquals(channels, mappings.size(), "one mapping per channel, not one per file");
+
+        List<TileMapping> sorted = new ArrayList<>(mappings);
+        sorted.sort(Comparator.comparingInt(m -> m.ifdIndex));
+        for (int c = 0; c < channels; c++) {
+            assertEquals(c, sorted.get(c).ifdIndex, "channel " + c + " must read its own page");
+            assertEquals(
+                    chNames.get(c),
+                    sorted.get(c).subdirName,
+                    "the channel name becomes the sub-folder the workflow groups and merges by");
+        }
+        // Every channel is the same position, so they share one region.
+        assertEquals(
+                1,
+                mappings.stream()
+                        .map(m -> m.region.getX() + "," + m.region.getY())
+                        .distinct()
+                        .count());
+    }
+
+    /**
+     * The split only happens when pages and channels agree exactly. A z-stack or time
+     * series interleaves those axes into the same pages, and guessing the order would
+     * mis-assign planes -- so the strategy reads page 0 and says so, rather than
+     * producing a confidently wrong mosaic.
+     */
+    @Test
+    void pageCountDisagreeingWithChannelCountFallsBackToOnePage(@TempDir Path tmp) throws IOException {
+        // Metadata claims 3 channels; the file carries 2 pages.
+        writeMultiPageTile(tmp.resolve("acq_MMStack_Pos0.ome.tif"), 2);
+        writeMultiChannelSidecar(
+                tmp.resolve("acq_MMStack_Pos0_metadata.txt"),
+                "acq_MMStack_Pos0.ome.tif",
+                0,
+                0,
+                List.of("DAPI", "FITC", "TRITC"));
+
+        List<TileMapping> mappings = new MicroManagerMetadataStrategy().prepareStitching(tmp.toString(), 1.0, 1.0, "");
+
+        assertEquals(1, mappings.size(), "ambiguous page layout must not be split");
+        assertEquals(0, mappings.get(0).ifdIndex);
+    }
+
+    /** A single-channel acquisition keeps stitching into one output named after the folder. */
+    @Test
+    void singleChannelMmStackIsUnchanged(@TempDir Path tmp) throws IOException {
+        writeMultiPageTile(tmp.resolve("acq_MMStack_Pos0.ome.tif"), 1);
+        writeMultiChannelSidecar(
+                tmp.resolve("acq_MMStack_Pos0_metadata.txt"), "acq_MMStack_Pos0.ome.tif", 0, 0, List.of("DAPI"));
+
+        List<TileMapping> mappings = new MicroManagerMetadataStrategy().prepareStitching(tmp.toString(), 1.0, 1.0, "");
+
+        assertEquals(1, mappings.size());
+        assertEquals(0, mappings.get(0).ifdIndex);
+        assertEquals(tmp.getFileName().toString(), mappings.get(0).subdirName);
+    }
+
+    /** Write a TIFF with {@code pages} pages, each a distinct constant grey. */
+    private static void writeMultiPageTile(Path path, int pages) throws IOException {
+        var writers = ImageIO.getImageWritersByFormatName("TIFF");
+        if (!writers.hasNext()) {
+            throw new IOException("No TIFF writer available");
+        }
+        var writer = writers.next();
+        try (var out = ImageIO.createImageOutputStream(path.toFile())) {
+            writer.setOutput(out);
+            writer.prepareWriteSequence(null);
+            for (int c = 0; c < pages; c++) {
+                BufferedImage img = new BufferedImage(TILE_W, TILE_H, BufferedImage.TYPE_BYTE_GRAY);
+                var g = img.createGraphics();
+                g.setColor(new java.awt.Color(40 * (c + 1), 40 * (c + 1), 40 * (c + 1)));
+                g.fillRect(0, 0, TILE_W, TILE_H);
+                g.dispose();
+                writer.writeToSequence(new javax.imageio.IIOImage(img, null, null), null);
+            }
+            writer.endWriteSequence();
+        } finally {
+            writer.dispose();
+        }
+    }
+
+    /** Sidecar carrying Summary.ChNames/Channels alongside the usual position block. */
+    private static void writeMultiChannelSidecar(
+            Path path, String tileFilename, double xUm, double yUm, List<String> chNames) throws IOException {
+        StringBuilder sb = new StringBuilder();
+        sb.append("{\n  \"Summary\": {\n");
+        sb.append("    \"Channels\": ").append(chNames.size()).append(",\n");
+        sb.append("    \"Slices\": 1,\n    \"Frames\": 1,\n");
+        sb.append("    \"ChNames\": [");
+        for (int i = 0; i < chNames.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append('"').append(chNames.get(i)).append('"');
+        }
+        sb.append("],\n");
+        sb.append("    \"StagePositions\": [{\n");
+        sb.append("      \"Label\": \"Pos0\",\n");
+        sb.append("      \"DefaultXYStage\": \"XYStage\",\n");
+        sb.append("      \"DevicePositions\": [{\n");
+        sb.append("        \"Device\": \"XYStage\",\n");
+        sb.append("        \"Position_um\": [")
+                .append(xUm)
+                .append(", ")
+                .append(yUm)
+                .append("]\n");
+        sb.append("      }]\n    }]\n  },\n");
+        sb.append("  \"FrameKey-0-0-0\": {\n");
+        sb.append("    \"FileName\": \"").append(tileFilename).append("\",\n");
+        sb.append("    \"XPositionUm\": ").append(xUm).append(",\n");
+        sb.append("    \"YPositionUm\": ").append(yUm).append(",\n");
+        sb.append("    \"PixelSizeUm\": ").append(PIXEL_SIZE_UM).append("\n");
+        sb.append("  }\n}\n");
         Files.writeString(path, sb.toString());
     }
 }

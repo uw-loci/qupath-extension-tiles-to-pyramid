@@ -132,7 +132,16 @@ public final class OverlapBandReader implements AutoCloseable {
     }
 
     private BufferedImage readImage(File file, int x, int y, int width, int height) throws IOException {
-        BufferedImage img = pool.readRegion(file, x, y, width, height);
+        // Page 0. Registration identifies the same grid position across channels by
+        // finding the same FILE NAME in sibling sub-folders (see TileNode), which is how
+        // QPSC and the folder-based strategies lay channels out. MicroManager instead
+        // packs a position's channels into pages of one file, so there are no siblings to
+        // compare and every channel resolves to the same file: seams are always measured
+        // on its first channel. That is a real limit, not a silent one -- it means the
+        // Align-on choice has no effect for MicroManager input. Lifting it means carrying
+        // a page index on TileNode and through the solve, which is a larger change than
+        // the one that made channels stitch at all.
+        BufferedImage img = pool.readRegion(file, 0, x, y, width, height);
         if (img == null) {
             throw new IOException("Null region read from " + file);
         }

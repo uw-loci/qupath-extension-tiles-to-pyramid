@@ -415,12 +415,14 @@ public class StitchingGUI {
     /** Number of tile folders that will stitch to separate single-channel images; 0 if merging does not apply. */
     private int countChannelFolders() {
         String method = stitchingGridBox.getValue();
-        if (method != null && method.startsWith("MicroManager")) {
-            return 0; // one stitched output per run
-        }
         String path = folderField.getText();
         if (path == null || path.isBlank()) {
             return 0;
+        }
+        if (method != null && method.startsWith("MicroManager")) {
+            // MicroManager packs a position's channels into pages of one file rather
+            // than one folder per channel, so the count comes from the metadata.
+            return MicroManagerMetadataStrategy.countChannels(new File(path.trim()));
         }
         try {
             List<Path> dirs = TileDirectories.resolve(Paths.get(path.trim()), matchStringField.getText());

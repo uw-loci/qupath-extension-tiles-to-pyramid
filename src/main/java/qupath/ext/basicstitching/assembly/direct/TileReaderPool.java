@@ -108,18 +108,21 @@ public class TileReaderPool implements AutoCloseable {
      * Read a sub-region from a tile file.
      *
      * @param file Source tile file
+     * @param ifdIndex Page within the file, as {@code javax.imageio} counts them. For a
+     *     MicroManager per-position file this selects the CHANNEL; see
+     *     {@link qupath.ext.basicstitching.stitching.TileMapping#ifdIndex}.
      * @param srcX X offset within the tile
      * @param srcY Y offset within the tile
      * @param width Region width to read
      * @param height Region height to read
      * @return BufferedImage containing the requested region
      */
-    public synchronized BufferedImage readRegion(File file, int srcX, int srcY, int width, int height)
+    public synchronized BufferedImage readRegion(File file, int ifdIndex, int srcX, int srcY, int width, int height)
             throws IOException {
         ReaderEntry entry = getOrCreateReader(file);
         ImageReadParam param = entry.reader.getDefaultReadParam();
         param.setSourceRegion(new Rectangle(srcX, srcY, width, height));
-        return entry.reader.read(0, param);
+        return entry.reader.read(ifdIndex, param);
     }
 
     /**
@@ -128,9 +131,38 @@ public class TileReaderPool implements AutoCloseable {
      * @param file Source tile file
      * @return Full BufferedImage
      */
-    public synchronized BufferedImage readFull(File file) throws IOException {
+    public synchronized BufferedImage readFull(File file, int ifdIndex) throws IOException {
         ReaderEntry entry = getOrCreateReader(file);
-        return entry.reader.read(0);
+        return entry.reader.read(ifdIndex);
+    }
+
+    /**
+     * Number of pages (IFDs) in a tile file.
+     *
+     * <p>Used to check a computed page index before it is handed to the reader: an
+     * out-of-range index throws deep inside ImageIO, where the message says nothing
+     * about channels.
+     */
+    public static int countPages(File file) throws IOException {
+        try (ImageInputStream iis = ImageIO.createImageInputStream(file)) {
+            if (iis == null) {
+                throw new IOException("Cannot create ImageInputStream for: " + file);
+            }
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(iis);
+            if (!readers.hasNext()) {
+                throw new IOException("No ImageReader found for: " + file);
+            }
+            ImageReader reader = readers.next();
+            // seekForwardOnly MUST be false here: getNumImages(true) searches the file,
+            // and the two together throw "seekForwardOnly and allowSearch can't both be
+            // true". getDimensions above can seek forward only because it reads page 0.
+            reader.setInput(iis, false, true);
+            try {
+                return reader.getNumImages(true);
+            } finally {
+                reader.dispose();
+            }
+        }
     }
 
     @Override
