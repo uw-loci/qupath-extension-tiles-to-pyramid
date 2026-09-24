@@ -37,6 +37,7 @@ import javafx.stage.Window;
 import javafx.util.StringConverter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.basicstitching.DialogOwner;
 import qupath.ext.basicstitching.assembly.ChannelMerger;
 import qupath.ext.basicstitching.assembly.direct.TileReaderPool;
 import qupath.ext.basicstitching.config.StitchingConfig;
@@ -1149,6 +1150,7 @@ public class StitchingGUI {
         text.setPrefRowCount((int) Math.min(12, message.lines().count() + 2));
         alert.getDialogPane().setContent(text);
         alert.setResizable(true);
+        DialogOwner.own(alert);
         alert.showAndWait();
     }
 
@@ -1158,6 +1160,7 @@ public class StitchingGUI {
         alert.setHeaderText(null);
         alert.setContentText(message);
         alert.initModality(Modality.APPLICATION_MODAL);
+        DialogOwner.own(alert);
         alert.showAndWait();
     }
 
