@@ -12,12 +12,12 @@ package qupath.ext.basicstitching.assembly.direct;
  * the choice defaults to the sharp one.
  *
  * <p>What blending can fix that registration cannot is an intensity <i>step</i>: uneven
- * illumination, or exposure that drifted across a long acquisition, leaves neighbouring tiles at
+ * illumination, or exposure that drifted across a long acquisition, leaves neighboring tiles at
  * different brightness, and no amount of correct positioning removes the line between them. That is
  * the case worth reaching for a feather.
  *
  * <p>Both feathers weight a pixel by how far it sits from its own tile's edge, so a tile contributes
- * almost nothing at its border and fully at its centre, and the weights are normalised per pixel.
+ * almost nothing at its border and fully at its center, and the weights are normalized per pixel.
  * The taper is separable: the X and Y weights are computed independently and multiplied, which is
  * what makes a tile corner fade in both directions at once.
  */
@@ -25,7 +25,7 @@ public enum OverlapBlend implements BlendStrategy {
 
     /**
      * Last tile written wins -- a hard cut at the tile boundary. Sharp everywhere, but shows a step
-     * wherever two tiles differ in brightness. The historical behaviour and the default.
+     * wherever two tiles differ in brightness. The historical behavior and the default.
      */
     LAST_WINS("Last tile wins (sharp, default)") {
         @Override
@@ -80,7 +80,7 @@ public enum OverlapBlend implements BlendStrategy {
      *
      * <p>A tile's outermost row has essentially zero distance from its edge, so an unfloored weight
      * would be zero there. At the outer border of the whole mosaic that pixel has no second
-     * contributor, and dividing by a zero weight sum would punch a background-coloured line around
+     * contributor, and dividing by a zero weight sum would punch a background-colored line around
      * the entire image. The floor keeps such a pixel normalising to exactly its own tile's value,
      * while remaining small enough not to disturb the taper anywhere two tiles genuinely meet.
      */

@@ -615,15 +615,15 @@ public class StitchingGUI {
     /**
      * Adds the content-based overlap-resolution (tile registration) toggle to the GridPane.
      *
-     * <p>When ticked, the stitch measures the true overlap between neighbouring tiles and corrects
+     * <p>When ticked, the stitch measures the true overlap between neighboring tiles and corrects
      * their positions before compositing, closing seams left by stage backlash and drift, and writes
      * a {@code TileRegistration.txt} solution beside the tiles. When unticked, tiles are placed at
-     * their nominal stage positions -- the historical behaviour and the faster path.
+     * their nominal stage positions -- the historical behavior and the faster path.
      */
     private void addRegistrationComponent(GridPane pane) {
         resolveOverlapsCheckbox.setSelected(QPPreferences.getResolveOverlapsSaved());
         resolveOverlapsCheckbox.setTooltip(
-                new Tooltip("Measure the real overlap between neighbouring tiles and correct their positions before\n"
+                new Tooltip("Measure the real overlap between neighboring tiles and correct their positions before\n"
                         + "stitching, closing seams caused by stage backlash and drift.\n"
                         + "Off: tiles are placed at their nominal stage positions (faster).\n"
                         + "Writes a TileRegistration.txt solution file beside the tiles."));
@@ -1031,11 +1031,11 @@ public class StitchingGUI {
         pixelSizeOverrideCheckbox.setTooltip(overrideTooltip);
 
         // "Measure from tiles..." estimates the true pixel size from the
-        // actual tile overlap (phase correlation of neighbouring tiles), for
+        // actual tile overlap (phase correlation of neighboring tiles), for
         // scopes whose metadata PixelSizeUm is wrong. The result is written into
         // the field as a manual override so the stitcher actually uses it.
         estimatePixelSizeButton.setTooltip(new Tooltip(
-                "Measure the pixel size from the overlap between neighbouring tiles in the selected folder.\n"
+                "Measure the pixel size from the overlap between neighboring tiles in the selected folder.\n"
                         + "Use this when the metadata pixel size produces duplicated/misaligned tiles.\n"
                         + "The measured value is applied as a manual override."));
         estimatePixelSizeButton.setOnAction(e -> estimatePixelSizeFromFolder());

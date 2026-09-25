@@ -100,7 +100,7 @@ public final class RegistrationPreferences {
         items.add(new PropertyItemBuilder<>(maxShiftPercent, Double.class)
                 .name("Registration: max shift per step, as % of tile")
                 .category(CATEGORY)
-                .description("Largest correction, as a percent of tile size, looked for between two neighbouring"
+                .description("Largest correction, as a percent of tile size, looked for between two neighboring"
                         + " tiles (one stage step). Bounds the per-EDGE search so a low-texture band cannot lock"
                         + " onto a distant wrong peak; the cumulative per-tile correction can still be larger."
                         + " Default 2.0.")
@@ -115,10 +115,10 @@ public final class RegistrationPreferences {
                         + "the percentage is always larger. Default 24.")
                 .build());
         items.add(new PropertyItemBuilder<>(fillUnregistered, Boolean.class)
-                .name("Registration: fill unregisterable tiles from neighbours")
+                .name("Registration: fill unregisterable tiles from neighbors")
                 .category(CATEGORY)
                 .description("When a tile is too low-texture to register, take the correction its registered"
-                        + " neighbours imply instead of leaving it at its raw stage position (which can strand it"
+                        + " neighbors imply instead of leaving it at its raw stage position (which can strand it"
                         + " tens of pixels away inside a corrected grid). Default on.")
                 .build());
         items.add(new PropertyItemBuilder<>(lambda, Double.class)

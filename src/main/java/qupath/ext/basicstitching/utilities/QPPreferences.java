@@ -52,7 +52,7 @@ public class QPPreferences {
             PathPrefs.createPersistentPreference("stitchingMethod", "Coordinates in TileConfiguration.txt file");
 
     // Content-based overlap resolution (tile registration). Off by default: nominal stage placement
-    // is the historical behaviour and the faster path.
+    // is the historical behavior and the faster path.
     private static final BooleanProperty resolveOverlapsSaved =
             PathPrefs.createPersistentPreference("resolveOverlaps", false);
 

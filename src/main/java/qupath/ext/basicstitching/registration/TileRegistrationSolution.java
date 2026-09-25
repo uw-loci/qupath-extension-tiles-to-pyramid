@@ -59,7 +59,7 @@ public record TileRegistrationSolution(SolutionHeader header, Map<String, double
      * @param overlapFracX X overlap fraction used for the search bound
      * @param overlapFracY Y overlap fraction used for the search bound
      * @param edgesAccepted edges that survived the gates
-     * @param edgesTotal edges in the neighbour graph
+     * @param edgesTotal edges in the neighbor graph
      * @param tilesClamped tiles whose correction hit the overlap clamp
      */
     public record SolutionHeader(
@@ -127,7 +127,7 @@ public record TileRegistrationSolution(SolutionHeader header, Map<String, double
     /**
      * Write this solution, additionally recording the tuning that produced it as a comment.
      *
-     * <p>The settings line is informational only -- {@link #read} ignores unrecognised comment lines
+     * <p>The settings line is informational only -- {@link #read} ignores unrecognized comment lines
      * -- but it makes a run self-documenting: anyone inspecting the file later can see exactly which
      * confidence threshold, shift bound, and solver knobs were in effect, without re-deriving them.
      *

@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.7.3] - 2026-09-20
 
 ### Fixed
-- **The dialog pre-filled a pixel size from a folder you never chose.** With the folder at its default (your home directory), opening the dialog scanned it, found some unrelated acquisition's MicroManager metadata and pre-filled that pixel size, labelled "(from MicroManager metadata)" -- which would stitch at the wrong scale. The pixel size is now read only from a folder you actually chose; the scan itself is unchanged once you pick one.
+- **The dialog pre-filled a pixel size from a folder you never chose.** With the folder at its default (your home directory), opening the dialog scanned it, found some unrelated acquisition's MicroManager metadata and pre-filled that pixel size, labeled "(from MicroManager metadata)" -- which would stitch at the wrong scale. The pixel size is now read only from a folder you actually chose; the scan itself is unchanged once you pick one.
 - **The "Try calculating pixel size..." button was clipped** to "Try calculating pixel si...". It now reads "Measure from tiles...", with the explanation in its tooltip.
 
 ## [0.7.2] - 2026-09-19
@@ -38,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.7.0] - 2026-09-18
 
 ### Added
-- **Registration on a normalized merge of channels.** The reference can be a projection of several subdirectories. Each is scaled by one factor for the whole dataset (from a bounded sample of at most 64 tile centres), so a dim channel counts as much as a bright one and a feature looks the same in both tiles of a seam. The scales are recorded in `TileRegistration.txt`. In the dialog: "Normalized merge of all folders".
+- **Registration on a normalized merge of channels.** The reference can be a projection of several subdirectories. Each is scaled by one factor for the whole dataset (from a bounded sample of at most 64 tile centers), so a dim channel counts as much as a bright one and a feature looks the same in both tiles of a seam. The scales are recorded in `TileRegistration.txt`. In the dialog: "Normalized merge of all folders".
 - **`StitchingWorkflow.solveRegistration(config, subdirs)`** solves across the named subdirectories and writes the solution without stitching, for callers (QPSC) that stitch each channel separately but need the solve to see all of them.
 
 ### Changed
@@ -75,17 +75,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The feature is fail-safe: unrecognized policies are treated as non-combinable, preserving data rather than silently destroying it.
 - **Overlap blending options: last tile wins (default), linear feather, cosine feather.** Chosen in QuPath Preferences under "Tiles-to-pyramid", and shared with QPSC like every other setting there. Until now every overlap was a hard cut: `BlendStrategy` and its one implementation were constructed and handed to the compositor, but neither of the interface's methods was ever called, so the whole mechanism had never run.
   - The default remains the hard cut, and deliberately so. Feathering averages two views of the same feature, so wherever the tiles disagree -- and after registration they still disagree by a pixel or two -- the average is a soft double image. It is a trade, not an improvement.
-  - What a feather does fix is an intensity *step*: uneven illumination or exposure drift leaves neighbouring tiles at different brightness, and correct positioning cannot remove the line between them.
+  - What a feather does fix is an intensity *step*: uneven illumination or exposure drift leaves neighboring tiles at different brightness, and correct positioning cannot remove the line between them.
   - The overlap width the feather spans is measured from where tiles actually ended up, so it follows any registration corrections instead of assuming the acquisition-time overlap percentage.
   - The default path is untouched and byte-identical: last-tile-wins reports that it needs no overlap detection, so the compositor keeps its direct raster-copy path and allocates no accumulator. The feathers add a float accumulator plus a weight plane per chunk (about 16 MB on a full-size RGB chunk), released with the chunk; a test asserts nothing outlives it.
 
 ### Changed
 - **An empty sub-folder text now stitches the selected folder itself, and only that folder.** It used to match every sub-folder. Applies to the filename-coordinate, TileConfiguration.txt and Vectra methods (`TileDirectories`). Non-empty text is unchanged, including QPSC's `"."`, which still selects sub-folders whose names contain a dot.
 - **Stitching runs in the background.** The dialog closes and QuPath stays responsive; a dialog reports the outputs (and the merged image) when it finishes. A second stitch cannot be started while one is running.
-- **The start button is labelled "Stitch", and Enter no longer triggers it.** Pressing Enter in a text field used to start a stitch.
+- **The start button is labeled "Stitch", and Enter no longer triggers it.** Pressing Enter in a text field used to start a stitch.
 - The extension description now reflects what it does (registration, OME-ZARR, channel merge), and the dialog's GitHub link points at `uw-loci/qupath-extension-tiles-to-pyramid` instead of the retired BasicStitching repo.
 - **`memoryStaysBounded` now measures retained memory instead of live heap.** It compared heap usage before and after the solve without collecting first, so it counted transient garbage, including garbage left by other tests sharing the JVM. The same code read anywhere from 9 MB to 101 MB against a 100 MB bound. It now takes both readings after a settled collection and asserts that nothing scaling with tile count survives the solve, which is the property that actually matters (overlap bands must not be cached across edges). Peak transient use is no longer asserted, because this fixture's tiles total under 10 MB -- a bound it could pass while reading every tile whole proved nothing.
-- **Clarified registration preference labels and descriptions.** Text only; solver behaviour is unchanged from 0.6.5.
+- **Clarified registration preference labels and descriptions.** Text only; solver behavior is unchanged from 0.6.5.
   - "Min shift search (px)" renamed to "Max shift per step, floor (px)". The two settings define one search window -- half-width = max(floor px, percent x tile size) -- and the old pair of names read as two independent knobs.
   - "Nominal pull (lambda)" now describes a gauge pin that fixes where a connected piece sits as a whole, rather than a pull that shrinks real measured corrections. Lambda stopped doing the latter in 0.6.5.
   - "Outlier rejection passes" now says edges are down-weighted, never cut. Cutting an edge un-ties its seam, which then drifts open by the whole accumulated error -- that was the 0.6.3 bug, so the text must not describe it.
@@ -93,7 +93,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **The stitch dialog could not be opened a second time.** Its controls were static and reused, so the second open threw "Children: duplicate children added" and nothing appeared. Each open now builds its own controls.
 - **The Stitch/Cancel buttons could be pushed off-screen.** The form sits in a scroll pane capped at 70% of the screen height, hidden rows no longer reserve space, and the dialog is resizable.
-- **A run of unregisterable tiles between two tissue regions was placed as a staircase rather than interpolated across.** Tiles with no measurable overlap content (blank slide) inherit their position from the tiles around them. That diffusion used to freeze each tile the first time it was reached from a registered neighbour, so it only ever saw the side it was reached from: a span of blank tiles took the left boundary's correction on its left half and the right boundary's on its right half, with a step in the middle. It now relaxes to convergence (Laplace's equation, registered tiles as fixed boundary), which places each tile at the average of everything around it and turns that step into a smooth ramp. A single isolated blank tile is unaffected -- both approaches already gave it its neighbours' mean -- and a tile with no path to any registered tile still stays at nominal, since there is nothing to interpolate from. Registration logs now report how many tiles were placed this way and the largest such correction.
+- **A run of unregisterable tiles between two tissue regions was placed as a staircase rather than interpolated across.** Tiles with no measurable overlap content (blank slide) inherit their position from the tiles around them. That diffusion used to freeze each tile the first time it was reached from a registered neighbor, so it only ever saw the side it was reached from: a span of blank tiles took the left boundary's correction on its left half and the right boundary's on its right half, with a step in the middle. It now relaxes to convergence (Laplace's equation, registered tiles as fixed boundary), which places each tile at the average of everything around it and turns that step into a smooth ramp. A single isolated blank tile is unaffected -- both approaches already gave it its neighbors' mean -- and a tile with no path to any registered tile still stays at nominal, since there is nothing to interpolate from. Registration logs now report how many tiles were placed this way and the largest such correction.
 
 ### Removed
 - **`OverwriteBlendStrategy`.** Folded into `OverlapBlend.LAST_WINS` alongside the two feathers, so all three modes live in one place rather than one being a separate class.
@@ -117,7 +117,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **A weak-but-correct match was worth 1/56th of a strong one, so its seam was positioned by its
-  neighbours instead of by its own overlap.** Edge weight was `(ncc - minNcc)^2`, which collapses to
+  neighbors instead of by its own overlap.** Edge weight was `(ncc - minNcc)^2`, which collapses to
   zero exactly at the acceptance threshold: at the default `minNcc = 0.30`, an edge at `ncc = 0.34`
   scored 0.0016 against 0.09 for a typical 0.60 edge and 0.28 for a strong 0.83 one. Measured on a
   real acquisition, one such edge correctly measured a `(-2, -10)` px correction while the solve
@@ -192,7 +192,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multi-threaded; `StitchingStrategy.prepareStitching` returns `List<TileMapping>`; removed the
   nonexistent `StitchingImplementations` class from the API section and added
   `MicroManagerMetadataStrategy` to the strategy list; refreshed the registration limits to match
-  the 0.6.1 neighbour-field fill and bounded per-edge search.
+  the 0.6.1 neighbor-field fill and bounded per-edge search.
 
 ## [0.6.1] - 2026-08-02
 
@@ -211,8 +211,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     tile -- was pinned to its nominal stage position. But real acquisitions carry a smooth
     systematic error (a ~0.5% pixel-size/stage-step mismatch accumulates to tens of pixels across a
     wide grid), so the rest of the grid was corrected by ~20 px while the unmeasurable tile stayed
-    at nominal -- stranding it a doubled ~20 px from its neighbours. Such a tile now inherits the
-    correction field its registered neighbours define (a diffusion fill over the grid); a wholly
+    at nominal -- stranding it a doubled ~20 px from its neighbors. Such a tile now inherits the
+    correction field its registered neighbors define (a diffusion fill over the grid); a wholly
     disconnected region still falls back to nominal.
   - The pairwise NCC search covered the full overlap (hundreds of pixels), but a *per-edge* offset
     -- one stage step of backlash and drift -- is small, ~15 px p90 on real data. That over-wide
@@ -269,7 +269,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Single-plane TIFF series support for MicroManager**: The MicroManager metadata strategy now handles both on-disk layouts MicroManager produces: flat MMStack (one OME-TIFF per position with multi-series OME-XML) and single-plane TIFF series (one subfolder per position, each containing a single-image TIFF and `metadata.txt`). Per-tile stage coordinates are read from `FrameKey-*` blocks (flat MMStack) or `Metadata-<relpath>` blocks (single-plane series) in the sidecar JSON.
-- **Manual pixel size override for MicroManager stitching**: When the metadata pixel size is untrustworthy (e.g. laser-scanning microscopes whose zoom is not reflected in MicroManager's calibration), tick "Manually edit pixel size" in the dialog to force your value over the metadata. A new "Try calculating pixel size..." button uses normalized cross-correlation of neighbouring tile overlap to measure the true pixel size directly from the data, independent of metadata.
+- **Manual pixel size override for MicroManager stitching**: When the metadata pixel size is untrustworthy (e.g. laser-scanning microscopes whose zoom is not reflected in MicroManager's calibration), tick "Manually edit pixel size" in the dialog to force your value over the metadata. A new "Try calculating pixel size..." button uses normalized cross-correlation of neighboring tile overlap to measure the true pixel size directly from the data, independent of metadata.
 - **5D Tiled Stitching (XY-mosaic × channel × Z × T)**: Full support for multi-dimensional image stitching. Tiles can now be tagged with z-slice and timepoint indices; the stitcher assembles them into complete 5D pyramids in both OME-TIFF and OME-ZARR formats. Each (z, t) plane is stitched independently and written in XYCZT dimension order. `DirectStitcher5DTest` provides comprehensive test coverage across grayscale, RGB, single-axis, and merged-multichannel cases.
 - **Directory-encoded z/t for the TileConfiguration strategy**: `TileConfigurationTxtStrategy` now derives each tile's z-slice and timepoint from `z{zz}/` and `t{tt}/z{zz}/` subdirectory names (XY still comes from a 2D `TileConfiguration.txt`). This lets an acquisition preserve a Z-stack and/or time series into a single stitched file by laying preserved planes out in those directories. Flat / projected layouts have no such directories and resolve to z=0, t=0, so existing 2D output is unchanged. Covered by `TileConfigZTStrategyTest` (z-only, z+t, flat, and legacy dim=3 cases).
 

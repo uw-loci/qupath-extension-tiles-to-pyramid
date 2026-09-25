@@ -203,15 +203,15 @@ public class TileSpatialIndex {
     }
 
     /**
-     * Measure the overlap between neighbouring tiles from where they are actually placed.
+     * Measure the overlap between neighboring tiles from where they are actually placed.
      *
      * <p>Measured rather than assumed, because the positions reaching this index may already carry
      * registration corrections: the overlap a feather has to span is the one in the output, not the
      * nominal percentage the operator typed at acquisition time. Taking the median makes it immune to
      * the tiles at the mosaic edge and to any single badly-corrected tile.
      *
-     * <p>Only pairs that are genuine grid neighbours count -- offset along the axis by less than a
-     * tile, and aligned across it by more than half a tile. Diagonal neighbours share a corner rather
+     * <p>Only pairs that are genuine grid neighbors count -- offset along the axis by less than a
+     * tile, and aligned across it by more than half a tile. Diagonal neighbors share a corner rather
      * than a band, and including them would report an overlap far narrower than the real one.
      *
      * <p>Pairs are drawn from within index cells rather than from the whole tile list. Two tiles that
@@ -219,7 +219,7 @@ public class TileSpatialIndex {
      * cost stays linear in tile count instead of quadratic.
      *
      * @param axisX true to measure the horizontal overlap, false for the vertical
-     * @return the median overlap in pixels, or 0 if no neighbouring pair could be found
+     * @return the median overlap in pixels, or 0 if no neighboring pair could be found
      */
     private int measureOverlap(boolean axisX) {
         List<Integer> overlaps = new ArrayList<>();
@@ -236,7 +236,7 @@ public class TileSpatialIndex {
                         if (!seen.add(key)) {
                             continue;
                         }
-                        int overlap = neighbourOverlap(ma.region, mb.region, axisX);
+                        int overlap = neighborOverlap(ma.region, mb.region, axisX);
                         if (overlap > 0) {
                             overlaps.add(overlap);
                         }
@@ -252,13 +252,13 @@ public class TileSpatialIndex {
     }
 
     /**
-     * The overlap between two tiles along one axis, or 0 if they are not grid neighbours on it.
+     * The overlap between two tiles along one axis, or 0 if they are not grid neighbors on it.
      *
-     * <p>Neighbours are offset along the axis by less than a tile and aligned across it by more than
-     * half a tile. Diagonal neighbours share only a corner; counting them would report an overlap far
+     * <p>Neighbors are offset along the axis by less than a tile and aligned across it by more than
+     * half a tile. Diagonal neighbors share only a corner; counting them would report an overlap far
      * narrower than the band a feather actually has to span.
      */
-    private static int neighbourOverlap(ImageRegion a, ImageRegion b, boolean axisX) {
+    private static int neighborOverlap(ImageRegion a, ImageRegion b, boolean axisX) {
         if (a.getZ() != b.getZ() || a.getT() != b.getT()) {
             return 0;
         }

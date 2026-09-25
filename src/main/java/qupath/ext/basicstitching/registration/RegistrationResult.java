@@ -15,7 +15,7 @@ import java.util.Map;
  * @param edges every edge considered, accepted or not; the audit trail
  * @param overlapFracX the X overlap fraction actually used, whether derived or explicit
  * @param overlapFracY the Y overlap fraction actually used
- * @param edgesTotal edges in the neighbour graph
+ * @param edgesTotal edges in the neighbor graph
  * @param edgesAccepted edges that survived the gates and the outlier pass
  * @param tilesClamped tiles whose solved correction hit the overlap clamp
  * @param degenerate when true the grid could not be registered (0% overlap, single tile, all edges

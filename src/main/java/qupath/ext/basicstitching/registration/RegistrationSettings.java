@@ -32,14 +32,14 @@ package qupath.ext.basicstitching.registration;
  *     grid for free.
  * @param overlapPercentY explicit Y overlap percent, or {@link Double#NaN} to derive it.
  * @param maxStepErrorFrac per-edge search half-width as a fraction of the tile, i.e. the largest
- *     single-step stage error looked for between two neighbours. Small: real per-step error is a
+ *     single-step stage error looked for between two neighbors. Small: real per-step error is a
  *     handful of pixels, and a wide window lets a low-texture band lock onto a distant wrong peak.
  *     The cumulative per-tile correction can still be much larger; only the per-edge measurement is
  *     bounded by this.
  * @param minStepErrorPx absolute floor, in pixels, on the per-edge search half-width, so the
  *     fractional bound stays usable on small tiles. Never binds on large acquisition tiles.
  * @param fillUnregistered when true, a tile whose edges were all rejected inherits the correction
- *     its registered neighbours imply (a diffusion fill over the grid) instead of snapping to its
+ *     its registered neighbors imply (a diffusion fill over the grid) instead of snapping to its
  *     nominal position. Off reverts to the plain nominal fallback.
  */
 public record RegistrationSettings(

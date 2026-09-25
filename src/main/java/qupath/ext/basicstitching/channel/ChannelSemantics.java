@@ -72,7 +72,7 @@ public final class ChannelSemantics {
         ResamplePolicy policy = ResamplePolicy.fromDeclared(m.group(1));
         if (policy == ResamplePolicy.UNKNOWN) {
             logger.warn(
-                    "Tile {} declares resample policy '{}', which this build does not recognise. "
+                    "Tile {} declares resample policy '{}', which this build does not recognize. "
                             + "Treating it as non-combinable so the data is preserved rather than averaged.",
                     file.getName(),
                     m.group(1).trim());
@@ -90,7 +90,7 @@ public final class ChannelSemantics {
             logger.warn(
                     "Tile {} declares angular policy '{}' but no usable period, so its angles "
                             + "cannot be recovered from the stored counts. Falling back to "
-                            + "nearest-neighbour, which is safe but loses the correct averaging.",
+                            + "nearest-neighbor, which is safe but loses the correct averaging.",
                     file.getName(),
                     policy);
         }

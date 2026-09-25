@@ -15,7 +15,7 @@ import qupath.ext.basicstitching.registration.TileRegistrationEngine;
 /**
  * End-to-end tests for the registration engine against real TIFF tiles on disk.
  *
- * <p>These exercise the whole chain -- neighbour graph, region reads, correlation, gates, global
+ * <p>These exercise the whole chain -- neighbor graph, region reads, correlation, gates, global
  * solve, clamp -- against a grid whose true displacements are known.
  */
 class TileRegistrationEngineTest {
@@ -61,7 +61,7 @@ class TileRegistrationEngineTest {
         // tiles sit exactly where TileConfiguration.txt says, so zero correction is the only correct
         // answer.
         //
-        // Regression: the overlap band for a horizontal edge was read at ay = 0 (and the neighbour
+        // Regression: the overlap band for a horizontal edge was read at ay = 0 (and the neighbor
         // at bx = 0), silently assuming the perpendicular offset was zero. On a rotated grid the two
         // bands then covered DIFFERENT world regions, NCC reported the drift itself as the measured
         // offset, and since measured = nominal + offset the drift was counted twice -- applying a
@@ -122,13 +122,13 @@ class TileRegistrationEngineTest {
     }
 
     @Test
-    void blankIsland_inheritsNeighbourField_notNominal() throws IOException {
+    void blankIsland_inheritsNeighborField_notNominal() throws IOException {
         // The failure this fixes: a blank tile whose edges are all rejected used to be pinned to
         // nominal (0, 0). That is only right when nominal is right. Under a real, smooth correction
         // field -- here a scale-like drift of 6 px/tile -- nominal strands the tile a dozen pixels
-        // from where its neighbours put the shared content, which is the worst seam in the mosaic
+        // from where its neighbors put the shared content, which is the worst seam in the mosaic
         // (the on-scope symptom: a doubled edge with a white gap). The tile must instead inherit the
-        // field its registered neighbours define.
+        // field its registered neighbors define.
         SyntheticGridFixture.Grid grid =
                 SyntheticGridFixture.write(tempDir, 5, 5, TILE_W, TILE_H, 0.15, 2.0, 6.0, List.of(0), 5);
 
@@ -137,13 +137,13 @@ class TileRegistrationEngineTest {
         assertFalse(result.degenerate(), "the textured majority must still solve: " + result.summary());
 
         // The blank corner (index 0 -> 1.tif) inherits the mean of its two registered grid
-        // neighbours: the tile to its right (index 1 -> 2.tif) and below it (index 5 -> 6.tif).
+        // neighbors: the tile to its right (index 1 -> 2.tif) and below it (index 5 -> 6.tif).
         double[] blank = result.deltaFor("1.tif");
         double[] right = result.deltaFor("2.tif");
         double[] below = result.deltaFor("6.tif");
         assertEquals(
-                (right[0] + below[0]) / 2, blank[0], 1e-6, "blank island X must be its neighbours' mean, not nominal");
-        assertEquals((right[1] + below[1]) / 2, blank[1], 1e-6, "blank island Y must be its neighbours' mean");
+                (right[0] + below[0]) / 2, blank[0], 1e-6, "blank island X must be its neighbors' mean, not nominal");
+        assertEquals((right[1] + below[1]) / 2, blank[1], 1e-6, "blank island Y must be its neighbors' mean");
         assertTrue(
                 Math.hypot(blank[0], blank[1]) > 3.0,
                 "the field is large here, so nominal would strand the tile; got " + java.util.Arrays.toString(blank));

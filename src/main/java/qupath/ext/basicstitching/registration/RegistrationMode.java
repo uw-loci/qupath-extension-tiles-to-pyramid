@@ -20,7 +20,7 @@ import java.nio.file.Path;
  */
 public sealed interface RegistrationMode {
 
-    /** Place tiles at their nominal stage positions. The historical behaviour, and the default. */
+    /** Place tiles at their nominal stage positions. The historical behavior, and the default. */
     record Disabled() implements RegistrationMode {}
 
     /**

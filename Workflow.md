@@ -72,12 +72,12 @@ the config. The dialog sets `Solve` when **Solve tile overlaps** is ticked; QPSC
 `Apply`. Corrections are keyed by tile file name, so co-captured channels must share file names.
 
 Stage coordinates are nominal: real stages have backlash, finite encoder resolution, and thermal
-drift across a long acquisition. Registration measures where neighbouring tiles actually line up,
+drift across a long acquisition. Registration measures where neighboring tiles actually line up,
 by correlating the content in their overlap, and solves for globally consistent corrections.
 
 Three modes:
 
-| Mode | Behaviour |
+| Mode | Behavior |
 |---|---|
 | `Disabled` (default) | place tiles at nominal stage positions |
 | `Solve(out, settings, reference)` | measure the overlaps, solve, write `TileRegistration.txt`, apply |
@@ -140,7 +140,7 @@ Overlaps resolve according to `OverlapBlend`, taken from the shared preferences 
 - **`LAST_WINS`** answers `false` to `requiresOverlapDetection()` and takes the direct raster
   transfer described above. No accumulator, byte-identical to what it has always produced.
 - **The feathers** answer `true` and route to `compositeBlended`, which accumulates
-  `weight * sample` into a float plane per band plus a weight plane, then normalises. Weights are
+  `weight * sample` into a float plane per band plus a weight plane, then normalizes. Weights are
   separable, so they cost one strategy call per row and per column rather than one per pixel. The
   overlap width they taper across comes from `TileSpatialIndex.getOverlapPxX/Y`, measured from the
   tiles' final positions so registration corrections are included.
@@ -164,7 +164,7 @@ holds a global semaphore around OME-TIFF writes.
 `ChannelMerger.merge` combines separately-stitched single-channel outputs into one multichannel
 image via `ChannelMergeImageServer`. The stitch dialog calls it after the stitch when its "Merge the
 N channel stitches..." box is ticked (`StitchingGUI.mergeChannelOutputs`: outputs sorted by path,
-channels named by file stem, no colours passed, written as `<folder>_merged` with the dialog's
+channels named by file stem, no colors passed, written as `<folder>_merged` with the dialog's
 compression and format). QPSC and scripts call it directly. Validation lives in
 `ChannelMergeImageServer.validateSourceCompatibility`: width, height and pixel type must match
 (otherwise it throws), and a level-count mismatch only warns.

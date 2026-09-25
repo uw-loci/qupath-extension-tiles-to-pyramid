@@ -8,7 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Builds the 4-connected neighbour graph over a nominal tile grid, and derives the grid's step and
+ * Builds the 4-connected neighbor graph over a nominal tile grid, and derives the grid's step and
  * overlap from the positions themselves.
  *
  * <p>Deriving rather than being told the overlap is deliberate. The acquisition's overlap
@@ -41,8 +41,8 @@ public final class NeighborGraphBuilder {
      *
      * @param stepXPx median column-to-column step
      * @param stepYPx median row-to-row step
-     * @param overlapFracX fraction of tile width shared with the horizontal neighbour
-     * @param overlapFracY fraction of tile height shared with the vertical neighbour
+     * @param overlapFracX fraction of tile width shared with the horizontal neighbor
+     * @param overlapFracY fraction of tile height shared with the vertical neighbor
      */
     public record GridGeometry(double stepXPx, double stepYPx, double overlapFracX, double overlapFracY) {
 
@@ -71,7 +71,7 @@ public final class NeighborGraphBuilder {
     public record NeighborGraph(List<EdgePair> edges, GridGeometry geometry) {}
 
     /**
-     * Build the neighbour graph for a nominal grid.
+     * Build the neighbor graph for a nominal grid.
      *
      * @param nominal tiles at their nominal positions
      * @param settings tuning; supplies the optional explicit overlap override
@@ -148,7 +148,7 @@ public final class NeighborGraphBuilder {
             }
         }
 
-        logger.info("Neighbour graph: {} tiles, {} candidate edges", nominal.size(), edges.size());
+        logger.info("Neighbor graph: {} tiles, {} candidate edges", nominal.size(), edges.size());
         return new NeighborGraph(edges, geometry);
     }
 

@@ -28,7 +28,7 @@ import org.slf4j.LoggerFactory;
  *
  * <h2>Cost</h2>
  *
- * Bounded regardless of dataset size: at most {@link #SAMPLE_TILES} centre crops of at most
+ * Bounded regardless of dataset size: at most {@link #SAMPLE_TILES} center crops of at most
  * {@link #CROP_PX} square per channel, subsampled every {@link #PIXEL_STRIDE} pixels. That is well
  * under a million values per channel, sorted once, whether the acquisition is 40 tiles or 40,000.
  */
@@ -39,7 +39,7 @@ public final class ChannelNormalizer {
     /** Tiles sampled per channel, spread evenly across the grid. */
     static final int SAMPLE_TILES = 64;
 
-    /** Side of the centre crop read from each sampled tile. */
+    /** Side of the center crop read from each sampled tile. */
     static final int CROP_PX = 512;
 
     /** Keep every Nth pixel in each direction of a crop. */

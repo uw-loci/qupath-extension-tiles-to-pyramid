@@ -41,7 +41,7 @@ public class GlobalPositionSolverTest {
      * Perfect measurements of a jittered grid: the solve should land back on the truth. Anything
      * that mixes up a sign in the normal equations fails here first.
      *
-     * <p>The jitter is centred, because a whole-mosaic translation is deliberately not recoverable
+     * <p>The jitter is centered, because a whole-mosaic translation is deliberately not recoverable
      * -- see {@link #globalTranslation_isPinnedToNominal()}. Removing the mean here is not the test
      * being let off; it is the test asking only for what the formulation claims to answer. With the
      * mean left in, this same seed lands 0.68px away, and all 0.68px of it is the global offset.
@@ -51,8 +51,8 @@ public class GlobalPositionSolverTest {
         int cols = 10;
         int rows = 10;
         List<TileNode> nominal = grid(cols, rows);
-        double[][] truth = centredJitter(nominal, 3.0, new Random(42));
-        List<EdgeMeasurement> edges = exactEdges(nominal, truth, neighbours(cols, rows));
+        double[][] truth = centeredJitter(nominal, 3.0, new Random(42));
+        List<EdgeMeasurement> edges = exactEdges(nominal, truth, neighbors(cols, rows));
 
         GlobalPositionSolver.SolveOutcome outcome =
                 GlobalPositionSolver.solve(nominal, edges, RegistrationSettings.defaults(), NO_CLAMP, NO_CLAMP);
@@ -89,7 +89,7 @@ public class GlobalPositionSolverTest {
             t[0] += 5.0;
             t[1] -= 3.0;
         }
-        List<EdgeMeasurement> edges = exactEdges(nominal, truth, neighbours(cols, rows));
+        List<EdgeMeasurement> edges = exactEdges(nominal, truth, neighbors(cols, rows));
 
         GlobalPositionSolver.SolveOutcome outcome =
                 GlobalPositionSolver.solve(nominal, edges, RegistrationSettings.defaults(), NO_CLAMP, NO_CLAMP);
@@ -106,7 +106,7 @@ public class GlobalPositionSolverTest {
     /**
      * The accumulated-drift guard, and the reason this is a solve and not a spanning-tree walk.
      *
-     * <p>A 10x10 grid has 180 neighbour edges; a spanning tree keeps 99 and discards 81. Those 81
+     * <p>A 10x10 grid has 180 neighbor edges; a spanning tree keeps 99 and discards 81. Those 81
      * are precisely the ones that close loops, so a tree never has to make them agree -- error walks
      * along tree paths and two tiles adjacent in space but far apart in the tree drift apart. That
      * is what "large areas suddenly touching" is. So this test checks EVERY spatially adjacent pair,
@@ -132,8 +132,8 @@ public class GlobalPositionSolverTest {
 
         List<TileNode> nominal = grid(cols, rows);
         double[][] truth = jitter(nominal, 3.0, rng);
-        List<int[]> pairs = neighbours(cols, rows);
-        assertEquals(180, pairs.size(), "10x10 grid should have 180 neighbour edges");
+        List<int[]> pairs = neighbors(cols, rows);
+        assertEquals(180, pairs.size(), "10x10 grid should have 180 neighbor edges");
         assertEquals(99, cols * rows - 1, "a spanning tree would keep only 99 of them");
 
         List<EdgeMeasurement> edges = new ArrayList<>();
@@ -172,7 +172,7 @@ public class GlobalPositionSolverTest {
         nominal.add(new TileNode("lonely.tif", new File("lonely.tif"), 9999, 9999, TILE, TILE));
 
         double[][] truth = jitter(nominal, 3.0, new Random(42));
-        List<EdgeMeasurement> edges = exactEdges(nominal, truth, neighbours(cols, rows));
+        List<EdgeMeasurement> edges = exactEdges(nominal, truth, neighbors(cols, rows));
 
         GlobalPositionSolver.SolveOutcome outcome =
                 GlobalPositionSolver.solve(nominal, edges, RegistrationSettings.defaults(), NO_CLAMP, NO_CLAMP);
@@ -197,8 +197,8 @@ public class GlobalPositionSolverTest {
 
         double[][] truth = jitter(nominal, 3.0, new Random(42));
         List<int[]> pairs = new ArrayList<>();
-        pairs.addAll(neighbours(3, 3));
-        for (int[] pair : neighbours(3, 3)) {
+        pairs.addAll(neighbors(3, 3));
+        for (int[] pair : neighbors(3, 3)) {
             pairs.add(new int[] {pair[0] + 9, pair[1] + 9});
         }
         List<EdgeMeasurement> edges = exactEdges(nominal, truth, pairs);
@@ -222,7 +222,7 @@ public class GlobalPositionSolverTest {
             assertEquals(0.0, meanDy, 1e-6, "block " + block + " drifted on y");
 
             // ...and each block still satisfies its own edges.
-            for (int[] pair : neighbours(3, 3)) {
+            for (int[] pair : neighbors(3, 3)) {
                 int i = base + pair[0];
                 int j = base + pair[1];
                 GlobalPositionSolver.SolvedPosition a = outcome.positions().get(i);
@@ -245,7 +245,7 @@ public class GlobalPositionSolverTest {
         int cols = 4;
         int rows = 4;
         List<TileNode> nominal = grid(cols, rows);
-        List<int[]> pairs = neighbours(cols, rows);
+        List<int[]> pairs = neighbors(cols, rows);
         double[][] truth = copyOfNominal(nominal);
 
         List<EdgeMeasurement> edges = new ArrayList<>(exactEdges(nominal, truth, pairs));
@@ -299,7 +299,7 @@ public class GlobalPositionSolverTest {
         double driftPerStep = 6.0;
         List<TileNode> nominal = grid(cols, rows);
         List<EdgeMeasurement> edges = new ArrayList<>();
-        for (int[] pair : neighbours(cols, rows)) {
+        for (int[] pair : neighbors(cols, rows)) {
             TileNode a = nominal.get(pair[0]);
             TileNode b = nominal.get(pair[1]);
             double nomDx = b.xPx() - a.xPx();
@@ -337,7 +337,7 @@ public class GlobalPositionSolverTest {
 
         List<TileNode> nominal = grid(cols, rows);
         double[][] truth = copyOfNominal(nominal);
-        List<int[]> pairs = neighbours(cols, rows);
+        List<int[]> pairs = neighbors(cols, rows);
 
         List<EdgeMeasurement> edges = new ArrayList<>();
         for (int[] pair : pairs) {
@@ -385,7 +385,7 @@ public class GlobalPositionSolverTest {
         int cols = 100;
         int rows = 100;
         List<TileNode> nominal = grid(cols, rows);
-        List<int[]> pairs = neighbours(cols, rows);
+        List<int[]> pairs = neighbors(cols, rows);
         assertEquals(10000, nominal.size());
         assertEquals(19800, pairs.size());
         double[][] truth = jitter(nominal, 3.0, new Random(42));
@@ -408,7 +408,7 @@ public class GlobalPositionSolverTest {
         double[][] truth = jitter(nominal, 3.0, new Random(1));
         GlobalPositionSolver.solve(
                 nominal,
-                exactEdges(nominal, truth, neighbours(cols, rows)),
+                exactEdges(nominal, truth, neighbors(cols, rows)),
                 RegistrationSettings.defaults(),
                 NO_CLAMP,
                 NO_CLAMP);
@@ -432,8 +432,8 @@ public class GlobalPositionSolverTest {
         return tiles;
     }
 
-    /** Right and down neighbours, row-major -- the pairs a stitcher would actually try to match. */
-    private static List<int[]> neighbours(int cols, int rows) {
+    /** Right and down neighbors, row-major -- the pairs a stitcher would actually try to match. */
+    private static List<int[]> neighbors(int cols, int rows) {
         List<int[]> pairs = new ArrayList<>();
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
@@ -472,7 +472,7 @@ public class GlobalPositionSolverTest {
      * The same, with the mean offset removed, so the truth carries no whole-mosaic translation for
      * the solver to be unable to see.
      */
-    private static double[][] centredJitter(List<TileNode> nominal, double sigma, Random rng) {
+    private static double[][] centeredJitter(List<TileNode> nominal, double sigma, Random rng) {
         double[][] truth = jitter(nominal, sigma, rng);
         double meanX = 0;
         double meanY = 0;

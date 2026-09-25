@@ -353,12 +353,12 @@ public final class CoarseToFineNccRegistrar implements PairwiseRegistrar {
 
     /** Best shift within a small window around a parent level's estimate. */
     private static Peak refineAround(
-            float[][] a, float[][] b, int w, int h, int centreX, int centreY, int limitX, int limitY) {
+            float[][] a, float[][] b, int w, int h, int centerX, int centerY, int limitX, int limitY) {
         double bestNcc = Ncc.NO_MATCH;
-        int bestX = centreX;
-        int bestY = centreY;
-        for (int oy = centreY - REFINE_RADIUS; oy <= centreY + REFINE_RADIUS; oy++) {
-            for (int ox = centreX - REFINE_RADIUS; ox <= centreX + REFINE_RADIUS; ox++) {
+        int bestX = centerX;
+        int bestY = centerY;
+        for (int oy = centerY - REFINE_RADIUS; oy <= centerY + REFINE_RADIUS; oy++) {
+            for (int ox = centerX - REFINE_RADIUS; ox <= centerX + REFINE_RADIUS; ox++) {
                 if (Math.abs(ox) > Math.max(1, limitX) || Math.abs(oy) > Math.max(1, limitY)) {
                     continue;
                 }

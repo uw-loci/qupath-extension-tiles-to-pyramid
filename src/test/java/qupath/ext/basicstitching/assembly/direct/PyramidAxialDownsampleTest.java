@@ -10,7 +10,7 @@ import qupath.ext.basicstitching.channel.ChannelSemantics;
 import qupath.ext.basicstitching.channel.ResamplePolicy;
 
 /**
- * Downsampling behaviour per declared resample policy.
+ * Downsampling behavior per declared resample policy.
  *
  * <p>Orientation counts here use the convention the acquisition writes: 0..18000 spanning
  * 0..180 degrees, so one count is a hundredth of a degree.
@@ -72,7 +72,7 @@ class PyramidAxialDownsampleTest {
     }
 
     @Test
-    @DisplayName("an unrecognised policy decimates rather than averaging")
+    @DisplayName("an unrecognized policy decimates rather than averaging")
     void unknownPolicyDecimates() {
         ChannelSemantics.Declaration unknown = new ChannelSemantics.Declaration(ResamplePolicy.UNKNOWN, 0);
         short[] src = new short[] {3, 7, 7, 3};

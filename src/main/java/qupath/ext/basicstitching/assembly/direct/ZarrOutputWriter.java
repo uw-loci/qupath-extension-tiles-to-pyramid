@@ -289,7 +289,7 @@ public class ZarrOutputWriter implements AutoCloseable {
         Map<String, Object> rdefs = new LinkedHashMap<>();
         rdefs.put("defaultT", 0);
         rdefs.put("defaultZ", 0);
-        rdefs.put("model", isRGB ? "color" : "greyscale");
+        rdefs.put("model", isRGB ? "color" : "grayscale");
 
         Map<String, Object> omero = new LinkedHashMap<>();
         omero.put("channels", channels);

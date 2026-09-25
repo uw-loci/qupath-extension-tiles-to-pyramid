@@ -259,7 +259,7 @@ public class ChunkCompositor {
             }
         }
 
-        writeNormalised(outRaster, accum, weights, chunkW, chunkH);
+        writeNormalized(outRaster, accum, weights, chunkW, chunkH);
         return output;
     }
 
@@ -290,7 +290,7 @@ public class ChunkCompositor {
      * <p>Pixels no tile covered keep the background the buffer was created with, which is how the
      * blended path reproduces the overwrite path's treatment of gaps.
      */
-    private static void writeNormalised(
+    private static void writeNormalized(
             WritableRaster raster, float[][] accum, float[] weights, int chunkW, int chunkH) {
         int bands = raster.getNumBands();
         int[] out = new int[chunkW * chunkH];

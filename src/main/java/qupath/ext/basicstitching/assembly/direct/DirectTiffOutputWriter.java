@@ -350,7 +350,7 @@ public final class DirectTiffOutputWriter {
      * through Bio-Formats' own {@link MetadataTools#populateMetadata} helper, so
      * they follow the OME data model / Bio-Formats conventions rather than being
      * hand-rolled. The fields the helper does not cover -- channel interleaving,
-     * channel colours and names, physical pixel size, and pyramid resolution sizes
+     * channel colors and names, physical pixel size, and pyramid resolution sizes
      * -- are set explicitly afterwards.
      */
     private static void initializeMetadata(
@@ -396,7 +396,7 @@ public final class DirectTiffOutputWriter {
         // internal default.
         meta.setPixelsBigEndian(Boolean.TRUE, series);
 
-        // Fields populateMetadata does not set: interleaving, channel colours and
+        // Fields populateMetadata does not set: interleaving, channel colors and
         // names. (Channel IDs and samples-per-pixel are already set by the helper.)
         meta.setPixelsInterleaved(exportRGB ? Boolean.TRUE : Boolean.FALSE, series);
         if (!exportRGB) {
@@ -405,7 +405,7 @@ public final class DirectTiffOutputWriter {
                 Integer color = channel.getColor();
                 if (color != null) {
                     // OME Color packs RGBA; an alpha of 0 is the OME-TIFF convention
-                    // used by Bio-Formats readers for opaque channel colours.
+                    // used by Bio-Formats readers for opaque channel colors.
                     meta.setChannelColor(
                             new Color((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF, 0), series, c);
                 }

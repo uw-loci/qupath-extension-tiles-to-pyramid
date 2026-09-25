@@ -290,6 +290,6 @@ class ChannelRegistrationTest {
         assertEquals("sparse", read.header().reference());
         assertTrue(
                 read.header().edgesAccepted() < read.header().edgesTotal(),
-                "the blank centre tile's seams must stay rejected when only 'sparse' is allowed");
+                "the blank center tile's seams must stay rejected when only 'sparse' is allowed");
     }
 }

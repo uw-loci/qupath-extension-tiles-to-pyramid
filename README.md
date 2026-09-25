@@ -259,7 +259,7 @@ Filename[x,y], whose positions are image-space by construction.
 - Tick **"Manually edit pixel size"** to override. When ticked, your value **wins over the metadata** -- this is required for scopes whose metadata pixel size is wrong (e.g. laser-scanning microscopes whose zoom factor is not reflected in MicroManager's pixel-size calibration). Symptom of a wrong metadata pixel size: tiles are placed too far apart and overlap regions appear **duplicated** along every seam.
 
 **"Measure from tiles..." (measure the pixel size from the overlap):**
-- When the metadata pixel size is untrustworthy, click this button to **measure** the true pixel size directly from the data. It phase-correlates (normalized cross-correlation) the overlapping content of neighbouring tiles, divides the recorded stage step (µm) by the measured pixel shift, and reports the median over several tile pairs.
+- When the metadata pixel size is untrustworthy, click this button to **measure** the true pixel size directly from the data. It phase-correlates (normalized cross-correlation) the overlapping content of neighboring tiles, divides the recorded stage step (µm) by the measured pixel shift, and reports the median over several tile pairs.
 - The measured value is written into the field **as a manual override** (so the stitcher uses it) and the source label shows the confidence. If confidence is low (low-texture or low-overlap tiles), verify the result and adjust manually.
 
 ### Input directory structure
@@ -299,7 +299,7 @@ input_folder/             Method: Filename[x,y]; sub-folder text: slide
 | **Stage axes: Invert X axis / Invert Y axis** | Shown for the two methods whose tile positions are stage coordinates -- MicroManager and TileConfiguration.txt. Negates stage X and/or Y before converting to pixels, for a scope whose stage runs opposite to its camera on that axis. Leave both clear for a Fiji-written TileConfiguration.txt, which is already in image space. See [If the mosaic comes out mirrored](#if-the-mosaic-comes-out-mirrored). Remembered, since it describes the microscope | Off, off |
 | **Merge the N channel stitches into one multichannel image** | Shown only when 2+ matching sub-folders of single-channel (non-RGB) tiles will be stitched, or when a MicroManager acquisition has multiple channels. Combines the per-channel stitches into one multichannel `<folder>_merged` image; the per-channel images are kept. See [Merging channels in the dialog](#merging-channels-in-the-dialog). Choice is remembered | On |
 | **Z-Spacing (um)** | Scripts only (`StitchingConfig`); the dialog always records 1.0 | 1.0 |
-| **Solve tile overlaps (content-based registration)** | Checkbox to enable overlap measurement and correction. When enabled, measures the real overlap between neighbouring tiles and corrects their positions before stitching, closing seams caused by stage backlash and drift. Writes a `TileRegistration.txt` solution file beside the tiles. Choice is remembered between sessions. See [Tile registration](#tile-registration) for details. | Off (faster, nominal positions) |
+| **Solve tile overlaps (content-based registration)** | Checkbox to enable overlap measurement and correction. When enabled, measures the real overlap between neighboring tiles and corrects their positions before stitching, closing seams caused by stage backlash and drift. Writes a `TileRegistration.txt` solution file beside the tiles. Choice is remembered between sessions. See [Tile registration](#tile-registration) for details. | Off (faster, nominal positions) |
 | **Reference subdirectory** | Shown when overlap solving is on: what the overlaps are measured on. **Auto (best match)**, a named sub-folder, or **Normalized merge of all** when there are two or more. Every sub-folder is then placed with that one result. See [Tile registration](#tile-registration) | Auto |
 
 ### Output format options
@@ -358,7 +358,7 @@ OME-TIFF output.
 
 Stage coordinates are *nominal*. Real stages have backlash, finite encoder resolution, and thermal
 drift across a long acquisition, so tiles placed purely from reported coordinates can leave visible
-seams or soft double images inside the overlap band. Registration measures where neighbouring tiles
+seams or soft double images inside the overlap band. Registration measures where neighboring tiles
 actually line up and corrects the positions before compositing.
 
 Registration is **off by default**. Enable it by setting a mode on the config:
@@ -399,9 +399,9 @@ persistent tuning knobs in QuPath's Preferences.
 | Preference | Default | Meaning |
 |---|---|---|
 | Minimum match confidence | 0.30 | NCC below which a tile-pair match is not trusted |
-| Max shift per step, as % of tile | 2.0 | largest per-neighbour correction searched for |
+| Max shift per step, as % of tile | 2.0 | largest per-neighbor correction searched for |
 | Max shift per step, floor (px) | 24 | floor on the above so small tiles keep a usable window |
-| Fill unregisterable tiles from neighbours | on | inherit neighbours' correction instead of nominal |
+| Fill unregisterable tiles from neighbors | on | inherit neighbors' correction instead of nominal |
 | Nominal pull (lambda) | 0.01 | gauge pin that holds each mosaic piece near nominal stage position; does not shrink real corrections |
 | Outlier rejection passes | 2 | iterative passes that down-weight edges disagreeing with global solution (never cut) |
 | Low-texture gate | 0.02 | robust coefficient of variation below which a band is featureless |
@@ -429,7 +429,7 @@ tiles land on top of each other -- a separate question, and it applies whether o
 **Channel-declared resample policies override your choice.** If a tile declares its channel semantics (`qpsc.resample` in OME metadata), and that policy forbids combining values (`nearest` for label maps, `angular180`/`angular360` for angles), the stitcher automatically switches to **Last tile wins** regardless of your preference. This prevents silent data corruption: a label class the pixel never had, or an angle averaged across its wrap. The log reports when an override occurs. Tiles that declare nothing, or declare `linear`, are stitched with your chosen blending mode.
 
 **Reach for a feather to fix an *intensity* seam, not a positional one.** Uneven illumination, or
-exposure that drifted across a long acquisition, leaves neighbouring tiles at different brightness,
+exposure that drifted across a long acquisition, leaves neighboring tiles at different brightness,
 and no amount of correct positioning removes the line between them -- that is what feathering is
 for. It cannot fix a misplaced tile, and it makes one look worse: feathering averages two views of
 the same feature, so wherever the tiles disagree the average is a soft double image. Register first,
@@ -461,11 +461,11 @@ the tile-to-tile offset is the same in all of them, and a constant chromatic shi
 is shared by both tiles of a seam, so it cancels.
 
 - **Auto** ranks candidates by how decisively the correlation peak beats its nearest rival on a
-  sample of seams. It no longer uses a texture score (spread over median of the tile centre). That
+  sample of seams. It no longer uses a texture score (spread over median of the tile center). That
   score answered a different question and ranked a clean nuclear stain *last*, because a dark,
   uniform background makes the ratio small even though it registers well.
 - **Normalized merge**: each channel's scale is `1 / (white - black)`, where black and white are
-  the 1st and 99.9th percentiles of up to 64 centre crops (512 px square, every 4th pixel) sampled
+  the 1st and 99.9th percentiles of up to 64 center crops (512 px square, every 4th pixel) sampled
   evenly across the grid. The cost is the same for 40 tiles or 40,000. The black point is not
   subtracted, because correlation ignores a constant offset. The high white percentile keeps a
   sparse stain from being mistaken for background. The scales are written into
@@ -504,7 +504,7 @@ Per-edge shifts reached 90% of the search allowance -- real corrections may be c
   correlate: registration reports the grid as degenerate, warns, and changes nothing. ~10% is a
   reasonable starting point. (A 0%-overlap grid is also the most common cause of visible seams in
   the first place.)
-- **Per-neighbour shifts are bounded to a plausible stage step**, so a low-texture band cannot lock
+- **Per-neighbor shifts are bounded to a plausible stage step**, so a low-texture band cannot lock
   onto a far-away wrong peak. Each per-edge correction is checked before solving to ensure it does
   not exceed the overlap band (indicating a false match rather than a real measurement). The
   *cumulative* correction across a large grid can be tens or hundreds of pixels -- that is the
@@ -512,8 +512,8 @@ Per-edge shifts reached 90% of the search allowance -- real corrections may be c
   systematic scale error of a fraction of a percent reaches hundreds of pixels across a long
   acquisition, which is why the per-edge bound (limiting individual overlap measurements) is
   distinct from the per-tile correction (which accumulates freely).
-- **Unmeasurable tiles inherit their neighbours, not nominal.** A near-blank tile whose overlap has
-  no texture to correlate is filled from the smooth correction field its registered neighbours
+- **Unmeasurable tiles inherit their neighbors, not nominal.** A near-blank tile whose overlap has
+  no texture to correlate is filled from the smooth correction field its registered neighbors
   define, rather than being pinned to its raw stage position. Pinning such a tile to nominal inside
   a grid that everything else shifted by tens of pixels is what used to produce a doubled edge with
   a bright gap; a fully disconnected region still falls back to nominal.
@@ -546,7 +546,7 @@ Per-edge shifts reached 90% of the search allowance -- real corrections may be c
 </details>
 
 <details>
-<summary><b>Channels and merging</b> -- what happens to colour and to per-channel folders</summary>
+<summary><b>Channels and merging</b> -- what happens to color and to per-channel folders</summary>
 
 ## Channels and merging
 
@@ -599,8 +599,8 @@ What to know before relying on the merged image:
   order, case-sensitive, so `ch10` sorts before `ch2`; zero-pad numbers) and named after the file
   stem. With a Downsample other than 1 the stem includes `_<n>x_downsample`, and a re-run into a
   folder that already holds the outputs writes numbered copies whose suffix also appears in the name.
-- **Colours are not set by the dialog.** Each channel keeps its per-channel file's default; set
-  colours in QuPath afterwards, or call `ChannelMerger.merge(..., channelColors, ...)` from a script.
+- **Colors are not set by the dialog.** Each channel keeps its per-channel file's default; set
+  colors in QuPath afterwards, or call `ChannelMerger.merge(..., channelColors, ...)` from a script.
 - **Width, height and pixel type must match.** If they differ, no merged image is written; the
   per-channel images remain in the folder.
 - **Partial failures.** If one sub-folder fails to stitch, the rest are still merged, so the merged

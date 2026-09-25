@@ -16,12 +16,12 @@ import qupath.ext.basicstitching.registration.NeighborGraphBuilder.GridGeometry;
 import qupath.ext.basicstitching.registration.NeighborGraphBuilder.NeighborGraph;
 
 /**
- * Corrects nominal tile positions by registering neighbouring tiles on their shared image content.
+ * Corrects nominal tile positions by registering neighboring tiles on their shared image content.
  *
  * <p>Tiles are placed from stage coordinates, and a stage has per-move error: backlash, encoder
  * resolution, and thermal drift across a long acquisition. Nominal placement leaves all of that in
  * the output as faint seams or soft double images inside the overlap band. This engine measures
- * where neighbouring tiles actually line up and solves for a globally consistent set of corrections.
+ * where neighboring tiles actually line up and solves for a globally consistent set of corrections.
  *
  * <h2>Contract</h2>
  *
@@ -44,7 +44,7 @@ public final class TileRegistrationEngine {
     /** Open-file budget shared across all workers, matching what a single stitch already uses. */
     private static final int TOTAL_READER_BUDGET = 64;
 
-    /** Correction bound when an axis has no neighbours to derive an overlap from. */
+    /** Correction bound when an axis has no neighbors to derive an overlap from. */
     private static final double FALLBACK_SEARCH_FRACTION = 0.05;
 
     /**
@@ -111,7 +111,7 @@ public final class TileRegistrationEngine {
                         nominal,
                         String.format(
                                 Locale.ROOT,
-                                "no overlapping neighbours (overlap %.1f%% x %.1f%%); "
+                                "no overlapping neighbors (overlap %.1f%% x %.1f%%); "
                                         + "registration needs a non-zero tile overlap",
                                 geometry.overlapFracX() * 100,
                                 geometry.overlapFracY() * 100));
@@ -122,7 +122,7 @@ public final class TileRegistrationEngine {
             int overlapXPx = geometry.overlapXPx(tileW);
             int overlapYPx = geometry.overlapYPx(tileH);
 
-            // Per-EDGE search bound: how far a tile can sit from its immediate NEIGHBOUR -- one
+            // Per-EDGE search bound: how far a tile can sit from its immediate NEIGHBOR -- one
             // stage step's worth of backlash and encoder noise. Real data puts this at a p90 of
             // ~15 px. It is a different quantity from the per-TILE correction, which is the running
             // sum of those steps across the whole grid and legitimately reaches tens of pixels.
@@ -147,7 +147,7 @@ public final class TileRegistrationEngine {
             }
 
             // Per-TILE clamp stays at the overlap: the cumulative correction is legitimately large,
-            // and only a displacement beyond a full overlap means a tile has lost its neighbour
+            // and only a displacement beyond a full overlap means a tile has lost its neighbor
             // entirely rather than merely drifted.
             int clampX = overlapXPx > 0 ? overlapXPx : (int) Math.round(FALLBACK_SEARCH_FRACTION * tileW);
             int clampY = overlapYPx > 0 ? overlapYPx : (int) Math.round(FALLBACK_SEARCH_FRACTION * tileH);
@@ -162,8 +162,8 @@ public final class TileRegistrationEngine {
 
             // A tile whose every edge was rejected was left at nominal by the solve. That is only
             // right when nominal is approximately right; inside a large, smooth correction field it
-            // strands the tile tens of pixels out of step with its corrected neighbours -- the worst
-            // seam in the mosaic. Diffuse the neighbours' field into those islands instead, unless
+            // strands the tile tens of pixels out of step with its corrected neighbors -- the worst
+            // seam in the mosaic. Diffuse the neighbors' field into those islands instead, unless
             // the caller has turned that off.
             FillOutcome fill = settings.fillUnregistered()
                     ? fillUnregisteredIslands(nominal, graph.edges(), outcome.edges(), deltas)
@@ -180,7 +180,7 @@ public final class TileRegistrationEngine {
                     finalAccepted,
                     outcome.tilesClamped(),
                     false,
-                    summarise(measured, outcome, geometry, deltas));
+                    summarize(measured, outcome, geometry, deltas));
 
             logger.info("Tile registration: {}", result.summary());
             logSearchUsage(measured, tileW, tileH, perEdgeX, perEdgeY);
@@ -451,18 +451,18 @@ public final class TileRegistrationEngine {
     }
 
     /**
-     * Replace the nominal fallback of unregisterable tiles with the correction their neighbours
+     * Replace the nominal fallback of unregisterable tiles with the correction their neighbors
      * imply.
      *
      * <p>A tile with no accepted edge reduces, in the global solve, to {@code lambda*p = lambda*n} --
      * it stays at nominal. That is the right answer only when nominal is close to the truth. When the
      * grid as a whole needed a large, smooth correction (a real scale error or slow drift), a tile
-     * pinned at nominal sits tens of pixels away from where its corrected neighbours put the shared
+     * pinned at nominal sits tens of pixels away from where its corrected neighbors put the shared
      * content, which reads as a hard double-image seam. An unregisterable tile is nearly always blank
-     * or low-texture, and the smooth field its neighbours define is the best estimate available for
+     * or low-texture, and the smooth field its neighbors define is the best estimate available for
      * it, so diffuse that field inward.
      *
-     * <p>Adjacency comes from the neighbour graph's candidate edges -- grid adjacency, independent of
+     * <p>Adjacency comes from the neighbor graph's candidate edges -- grid adjacency, independent of
      * whether any given edge was accepted. A tile with no path to a registered tile has no field to
      * inherit and is left at nominal.
      *
@@ -470,17 +470,17 @@ public final class TileRegistrationEngine {
      *
      * <p>The field is obtained by solving Laplace's equation on the unregistered tiles, with the
      * registered ones held fixed as Dirichlet boundary values: every unknown tile is iterated to the
-     * average of <i>all</i> its neighbours, and the sweep repeats until no tile moves. That average
+     * average of <i>all</i> its neighbors, and the sweep repeats until no tile moves. That average
      * property is exactly "placed in the middle of the tiles around it", and it is what makes a
      * <i>block</i> of blank tiles come out right.
      *
      * <p>The earlier implementation propagated a wavefront outward and froze each tile the moment it
      * was first reached, so a tile only ever saw the ring behind it. A single isolated blank tile was
-     * fine -- all its neighbours were known on the first round -- but a run of blank tiles between two
+     * fine -- all its neighbors were known on the first round -- but a run of blank tiles between two
      * tissue regions became a staircase of nearest-boundary values rather than an interpolation
      * between the two sides. Continuing to relax lets both boundaries reach the interior, which turns
      * that staircase into the smooth ramp the geometry actually implies. At a mosaic edge, where a
-     * tile simply has fewer neighbours, the same average extrapolates the interior field outward.
+     * tile simply has fewer neighbors, the same average extrapolates the interior field outward.
      *
      * @param nominal tiles in solve order
      * @param candidateEdges the grid adjacency (accepted or not)
@@ -611,7 +611,7 @@ public final class TileRegistrationEngine {
         return chunks;
     }
 
-    private static String summarise(
+    private static String summarize(
             List<EdgeMeasurement> measured,
             GlobalPositionSolver.SolveOutcome outcome,
             GridGeometry geometry,
@@ -750,7 +750,7 @@ public final class TileRegistrationEngine {
      * <h2>Why measure seams rather than score texture</h2>
      *
      * The question is which channel will register best, so this asks it directly. A texture score
-     * (spread over median of a tile's centre) answers a different question and gets it wrong in a
+     * (spread over median of a tile's center) answers a different question and gets it wrong in a
      * predictable way: a sparse nuclear stain on a dark background has a low spread-to-median ratio
      * precisely because its background is clean -- which is what makes it register well. Measured on
      * a three-channel fluorescence grid, the texture score ranked DAPI last; seam decisiveness ranked

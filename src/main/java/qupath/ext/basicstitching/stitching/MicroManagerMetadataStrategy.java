@@ -648,7 +648,7 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
     /**
      * Estimate the true pixel size from the actual tile overlap, independent of
      * the (possibly wrong) {@code PixelSizeUm} in the metadata. For each pair of
-     * neighbouring tiles the recorded stage step (um) is divided by the pixel
+     * neighboring tiles the recorded stage step (um) is divided by the pixel
      * shift recovered by normalized cross-correlation of the overlapping image
      * content. The median over several pairs is returned.
      *
@@ -670,7 +670,7 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
             return new PixelSizeEstimate(-1, 0, "Need at least two tiles with stage positions to estimate pixel size.");
         }
 
-        // Build a flat list of (path, xUm, yUm) for neighbour search.
+        // Build a flat list of (path, xUm, yUm) for neighbor search.
         List<Path> paths = new ArrayList<>(pm.pathToRecord.keySet());
         int n = paths.size();
         double[][] xy = new double[n][2];
@@ -689,9 +689,9 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
         List<Double> peaks = new ArrayList<>();
         int maxPairsPerAxis = 4;
 
-        // Horizontal neighbours: same row (|dy| < tolY), adjacent in X.
+        // Horizontal neighbors: same row (|dy| < tolY), adjacent in X.
         collectAxisEstimates(paths, xy, true, tolY, maxPairsPerAxis, estimates, peaks);
-        // Vertical neighbours: same column (|dx| < tolX), adjacent in Y.
+        // Vertical neighbors: same column (|dx| < tolX), adjacent in Y.
         collectAxisEstimates(paths, xy, false, tolX, maxPairsPerAxis, estimates, peaks);
 
         if (estimates.isEmpty()) {
@@ -720,7 +720,7 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
             int maxPairs,
             List<Double> estimates,
             List<Double> peaks) {
-        int along = horizontal ? 0 : 1; // axis that varies between neighbours
+        int along = horizontal ? 0 : 1; // axis that varies between neighbors
         int across = horizontal ? 1 : 0; // axis that stays constant within a line
         int n = paths.size();
         int found = 0;
@@ -772,7 +772,7 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
 
     /**
      * Recover the pixel step between two adjacent tiles by normalized
-     * cross-correlation of their overlapping content. For horizontal neighbours
+     * cross-correlation of their overlapping content. For horizontal neighbors
      * the right strip of {@code a} overlaps the left strip of {@code b}; the
      * returned step is the X offset of {@code b} relative to {@code a}. Search is
      * done on 2x-downsampled images for speed and scaled back.

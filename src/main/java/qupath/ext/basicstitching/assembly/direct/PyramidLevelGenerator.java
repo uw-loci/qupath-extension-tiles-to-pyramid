@@ -156,7 +156,7 @@ public class PyramidLevelGenerator {
      * Downsample data by 2x using area averaging.
      * For multi-channel data, the flat array is laid out as [C, H, W].
      */
-    // Package-private for testing: the wrap behaviour is the whole point.
+    // Package-private for testing: the wrap behavior is the whole point.
     static Object downsample2x(
             Object srcData,
             int srcW,
@@ -193,10 +193,10 @@ public class PyramidLevelGenerator {
      * Decimate by taking the top-left pixel of each 2x2 block.
      *
      * <p>Every output value is a value that actually occurred in the input, which is the only
-     * property that matters for labels, masks and object ids. Nearest-neighbour is also a safe
+     * property that matters for labels, masks and object ids. Nearest-neighbor is also a safe
      * (if lossier) fallback for angular data whose period was not declared.
      */
-    // Package-private for testing: the wrap behaviour is the whole point.
+    // Package-private for testing: the wrap behavior is the whole point.
     static void decimateShort(short[] src, short[] dst, int srcW, int srcH, int dstW, int dstH, int nChannels) {
         for (int c = 0; c < nChannels; c++) {
             int srcOff = c * srcH * srcW;
@@ -232,7 +232,7 @@ public class PyramidLevelGenerator {
      * angle), averaged as unit vectors, and converted back. This is what makes 179 and 1 average
      * to 0 rather than to 90.
      */
-    // Package-private for testing: the wrap behaviour is the whole point.
+    // Package-private for testing: the wrap behavior is the whole point.
     static void downsampleAngularShort(
             short[] src,
             short[] dst,
@@ -340,7 +340,7 @@ public class PyramidLevelGenerator {
     /**
      * Downsample 16-bit data by area-averaging 2x2 pixel blocks.
      */
-    // Package-private for testing: the wrap behaviour is the whole point.
+    // Package-private for testing: the wrap behavior is the whole point.
     static void downsampleShort(short[] src, short[] dst, int srcW, int srcH, int dstW, int dstH, int nChannels) {
         int srcPlane = srcH * srcW;
         int dstPlane = dstH * dstW;

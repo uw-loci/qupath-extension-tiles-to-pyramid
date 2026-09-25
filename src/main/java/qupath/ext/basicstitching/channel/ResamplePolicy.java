@@ -16,7 +16,7 @@ package qupath.ext.basicstitching.channel;
  *
  * <p><b>The contract is fail-safe.</b> Only an explicit (or absent) {@link #LINEAR} authorises
  * combining. Every other declared value -- including one a newer writer emits that this build has
- * never heard of -- maps to {@link #UNKNOWN} and forbids it. An unrecognised policy degrades to
+ * never heard of -- maps to {@link #UNKNOWN} and forbids it. An unrecognized policy degrades to
  * preserving the data rather than to silently destroying it, which is the whole reason this is a
  * declared vocabulary rather than a boolean.
  */
@@ -34,7 +34,7 @@ public enum ResamplePolicy {
     /** Directional angle: a full cycle is 360 degrees. Combine via sin(t)/cos(t). */
     ANGULAR_360("angular360"),
 
-    /** A policy this build does not recognise. Treated as non-combinable, by design. */
+    /** A policy this build does not recognize. Treated as non-combinable, by design. */
     UNKNOWN(null);
 
     private final String declared;
@@ -49,15 +49,15 @@ public enum ResamplePolicy {
      * @param value the raw {@code qpsc.resample} value; {@code null} or blank means the tile
      *     declared nothing, which is {@link #LINEAR} -- that describes every channel written
      *     before this convention existed
-     * @return the matching constant, or {@link #UNKNOWN} for anything unrecognised
+     * @return the matching constant, or {@link #UNKNOWN} for anything unrecognized
      */
     public static ResamplePolicy fromDeclared(String value) {
         if (value == null || value.isBlank()) {
             return LINEAR;
         }
-        String normalised = value.trim().toLowerCase();
+        String normalized = value.trim().toLowerCase();
         for (ResamplePolicy policy : values()) {
-            if (normalised.equals(policy.declared)) {
+            if (normalized.equals(policy.declared)) {
                 return policy;
             }
         }

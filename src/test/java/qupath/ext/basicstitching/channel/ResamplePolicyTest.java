@@ -26,16 +26,16 @@ class ResamplePolicyTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"nearest", "angular180", "angular360"})
-    @DisplayName("every recognised non-linear policy forbids combining")
+    @DisplayName("every recognized non-linear policy forbids combining")
     void knownNonLinearForbidsCombining(String declared) {
         ResamplePolicy policy = ResamplePolicy.fromDeclared(declared);
         assertFalse(policy.mayCombine());
-        assertFalse(policy == ResamplePolicy.UNKNOWN, "should have been recognised: " + declared);
+        assertFalse(policy == ResamplePolicy.UNKNOWN, "should have been recognized: " + declared);
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"quaternion", "label", "something-newer-than-this-build"})
-    @DisplayName("an unrecognised policy fails towards preserving the data")
+    @DisplayName("an unrecognized policy fails towards preserving the data")
     void unknownForbidsCombining(String declared) {
         // The point of the design. A stitcher built today, handed a file from a newer
         // writer, must decline to average rather than average something it cannot
@@ -45,7 +45,7 @@ class ResamplePolicyTest {
     }
 
     @Test
-    @DisplayName("angular policies are recognised as angular")
+    @DisplayName("angular policies are recognized as angular")
     void angularFlag() {
         assertTrue(ResamplePolicy.ANGULAR_180.isAngular());
         assertTrue(ResamplePolicy.ANGULAR_360.isAngular());

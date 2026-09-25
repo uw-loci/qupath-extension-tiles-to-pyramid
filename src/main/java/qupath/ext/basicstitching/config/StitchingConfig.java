@@ -47,7 +47,7 @@ public class StitchingConfig {
      * content-based solve, or a solve carried over from a sibling angle/channel.
      *
      * <p>Set via {@link #setRegistrationMode(RegistrationMode)}. Defaults to
-     * {@link RegistrationMode.Disabled}, so existing callers keep the historical behaviour without
+     * {@link RegistrationMode.Disabled}, so existing callers keep the historical behavior without
      * change.
      */
     private RegistrationMode registrationMode = RegistrationMode.disabled();

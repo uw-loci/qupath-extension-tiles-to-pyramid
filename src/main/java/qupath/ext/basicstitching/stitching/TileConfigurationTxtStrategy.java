@@ -25,7 +25,7 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
      * TileConfiguration.txt is negated before converting to pixel space. This
      * is needed for microscopes whose stage Y convention is inverted relative
      * to the standard assumption (stage Y+ = pixel Y down). CAMM/PPM leave
-     * this at {@code false} and the behaviour is unchanged.
+     * this at {@code false} and the behavior is unchanged.
      *
      * <p>Set this immediately before invoking the stitching workflow, and
      * reset it to {@code false} afterwards. It is intentionally static

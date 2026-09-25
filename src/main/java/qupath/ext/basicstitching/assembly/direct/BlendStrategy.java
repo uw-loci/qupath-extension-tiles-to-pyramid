@@ -5,7 +5,7 @@ package qupath.ext.basicstitching.assembly.direct;
  *
  * <p>The compositor asks each contributing tile for a weight per pixel, accumulates
  * {@code weight * sample}, and divides by the summed weight. A strategy therefore describes only its
- * own tile's confidence in a pixel; it never sees the neighbour, and the normalisation makes the
+ * own tile's confidence in a pixel; it never sees the neighbor, and the normalisation makes the
  * weights' absolute scale irrelevant.
  *
  * <p>The implementations are the constants of {@link OverlapBlend}, which is also where the choice
@@ -22,7 +22,7 @@ public interface BlendStrategy {
      * @param distFromEdge distance in pixels from the nearest tile edge along one axis, counting the
      *     outermost pixel as 1
      * @param overlapWidth width of the overlap band along that axis, or 0 if none could be measured
-     * @return a weight in (0, 1]; never 0, or a pixel covered by exactly one tile would normalise to
+     * @return a weight in (0, 1]; never 0, or a pixel covered by exactly one tile would normalize to
      *     nothing
      */
     float weight(int distFromEdge, int overlapWidth);

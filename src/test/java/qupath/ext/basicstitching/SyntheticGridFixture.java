@@ -53,9 +53,9 @@ final class SyntheticGridFixture {
      * @param rows grid rows
      * @param tileW tile width in pixels
      * @param tileH tile height in pixels
-     * @param overlapFrac fraction of each tile shared with its neighbour; 0 for edge-to-edge
+     * @param overlapFrac fraction of each tile shared with its neighbor; 0 for edge-to-edge
      * @param jitterSigmaPx standard deviation of the injected per-tile displacement
-     * @param driftPerTilePx a smooth, per-column/row displacement growing from the grid centre --
+     * @param driftPerTilePx a smooth, per-column/row displacement growing from the grid center --
      *     a scale-like field on top of the random jitter, mimicking the real acquisition's
      *     systematic pixel-size/stage-step error. Zero-mean by construction, so the solve's pull
      *     toward nominal recovers it rather than absorbing it into a global offset.
@@ -97,8 +97,8 @@ final class SyntheticGridFixture {
             jx[i] = rng.nextGaussian() * jitterSigmaPx;
             jy[i] = rng.nextGaussian() * jitterSigmaPx;
         }
-        centre(jx);
-        centre(jy);
+        center(jx);
+        center(jy);
 
         List<TileNode> nominal = new ArrayList<>();
         Map<String, double[]> truth = new LinkedHashMap<>();
@@ -147,7 +147,7 @@ final class SyntheticGridFixture {
      * @param rows grid rows
      * @param tileW tile width in pixels
      * @param tileH tile height in pixels
-     * @param overlapFrac fraction of each tile shared with its neighbour
+     * @param overlapFrac fraction of each tile shared with its neighbor
      * @param rotationDeg lattice rotation in degrees; a fraction of a degree is realistic
      * @param seed random seed; fixed by callers so failures reproduce
      * @return the grid's nominal positions and ground truth (rounding residual only)
@@ -248,14 +248,14 @@ final class SyntheticGridFixture {
             jx[i] = rng.nextGaussian() * jitterSigmaPx;
             jy[i] = rng.nextGaussian() * jitterSigmaPx;
         }
-        centre(jx);
-        centre(jy);
+        center(jx);
+        center(jy);
 
         Map<String, Grid> out = new LinkedHashMap<>();
         for (int ch = 0; ch < names.size(); ch++) {
             Path dir = Files.createDirectories(base.resolve(names.get(ch)));
             float[][] source = texture(srcW, srcH, rng);
-            // Re-centre the contrast on a fixed offset so the gain changes contrast, not just level.
+            // Re-center the contrast on a fixed offset so the gain changes contrast, not just level.
             for (float[] row : source) {
                 for (int x = 0; x < row.length; x++) {
                     row[x] = (float) (1000 + (row[x] - 2000) * gains[ch]);
@@ -368,7 +368,7 @@ final class SyntheticGridFixture {
         return out;
     }
 
-    private static void centre(double[] values) {
+    private static void center(double[] values) {
         double mean = 0;
         for (double v : values) {
             mean += v;

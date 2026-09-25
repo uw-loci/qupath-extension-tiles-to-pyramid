@@ -23,7 +23,7 @@ import qupath.lib.regions.ImageRegion;
  *
  * <p>The fixture is two flat tiles of different brightness placed side by side with a known overlap.
  * Flat rather than textured on purpose: it isolates the blend arithmetic completely, and it is also
- * the case blending exists for -- an intensity step between neighbouring tiles, which registration
+ * the case blending exists for -- an intensity step between neighboring tiles, which registration
  * cannot fix because the tiles are already in the right place.
  */
 class ChunkCompositorBlendTest {
@@ -107,7 +107,7 @@ class ChunkCompositorBlendTest {
 
         assertEquals(
                 (LEFT_VALUE + RIGHT_VALUE) / 2.0,
-                centreOfOverlap(out),
+                centerOfOverlap(out),
                 1.5,
                 "the middle of the overlap must be the mean of the two tiles");
     }
@@ -119,9 +119,9 @@ class ChunkCompositorBlendTest {
 
         assertEquals(
                 (LEFT_VALUE + RIGHT_VALUE) / 2.0,
-                centreOfOverlap(cosine),
+                centerOfOverlap(cosine),
                 1.5,
-                "symmetry at the centre holds for any weighting");
+                "symmetry at the center holds for any weighting");
 
         // The point of the cosine is that it leaves the endpoints flat rather than kinked, so near
         // the ends of the overlap it stays closer to the tile it is leaving than the linear ramp does.
@@ -136,7 +136,7 @@ class ChunkCompositorBlendTest {
     void aPixelCoveredByOneTileSurvivesTheOutermostRow() throws IOException {
         // The failure this guards: weights fall to zero at a tile's own border, and at the outer
         // border of the whole mosaic there is no second tile to make up the difference. Without a
-        // floor on the weight, normalising divides by zero and paints a background-coloured line
+        // floor on the weight, normalising divides by zero and paints a background-colored line
         // right around the image.
         BufferedImage out = composite(twoTiles(), OverlapBlend.LINEAR_FEATHER);
 
@@ -202,16 +202,16 @@ class ChunkCompositorBlendTest {
      * The value at the point where both tiles are equally far from their own edge.
      *
      * <p>Averaged over the two central columns rather than read from one, because an even-width
-     * overlap has no centre pixel: with a 20 px band the left tile's distances run 20..1 while the
+     * overlap has no center pixel: with a 20 px band the left tile's distances run 20..1 while the
      * right tile's run 1..20, so they would be equal only at a half-pixel position. The two columns
      * either side are mirror images of each other, so their mean is exactly the balanced value -- and
      * a single column is not, by about two grey levels, which is real and not rounding.
      *
      * <p>Whatever the weighting curve, that balanced value must be the plain mean of the two tiles.
      * This is what catches a weight computed from the wrong edge, which would still ramp smoothly and
-     * still pass a monotonicity check while being centred in the wrong place.
+     * still pass a monotonicity check while being centered in the wrong place.
      */
-    private static double centreOfOverlap(BufferedImage img) {
+    private static double centerOfOverlap(BufferedImage img) {
         return (sample(img, STEP + OVERLAP / 2 - 1) + sample(img, STEP + OVERLAP / 2)) / 2.0;
     }
 }

@@ -33,9 +33,9 @@ import java.util.List;
  * </ul>
  *
  * <p>Every accepted edge is used. This is the whole point of solving rather than tree-walking: on a
- * 10x10 grid a spanning tree keeps 99 of the 180 neighbour edges and simply discards the other 81,
+ * 10x10 grid a spanning tree keeps 99 of the 180 neighbor edges and simply discards the other 81,
  * so nothing in the result is ever asked to close a loop. Error then accumulates along tree paths,
- * and two tiles that are neighbours in space but distant in the tree are free to disagree -- which
+ * and two tiles that are neighbors in space but distant in the tree are free to disagree -- which
  * is what "large areas suddenly touching" looks like in a stitched mosaic. The loop-closing edges
  * are the constraints that prevent it, so they are exactly the ones not to throw away.
  *
