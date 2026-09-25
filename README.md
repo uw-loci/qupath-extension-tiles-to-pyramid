@@ -576,8 +576,9 @@ height, and pixel type. In the stitch dialog it appears as a "Merge the N channe
 when the selected folder holds two or more matching sub-folders of single-channel tiles (or when a
 MicroManager acquisition has multiple channels); it stays hidden for RGB tiles or a single tile folder.
 For MicroManager, channels are automatically split from the pages of each file and merged if more than
-one is found. The merged image is written as `<folder>_merged` beside the per-channel images (which are
-kept), with channels named after the sub-folders (or after the channel names from `Summary.ChNames` for
+one is found. The merged image is written as `<folder>_merged` beside the tiles; the per-channel images
+that feed it are moved into `<folder>_channels/` (best-effort: a file that cannot be moved stays put),
+with channels named after the sub-folders (or after the channel names from `Summary.ChNames` for
 MicroManager). QPSC and scripts call `ChannelMerger` directly. Co-registration across the
 channels is why registration is solved once and reused by every channel (see
 [Tile registration](#tile-registration)).
@@ -592,8 +593,9 @@ IF_run/                  Stitching Method: TileConfiguration.txt file; sub-folde
 ```
 
 Select `IF_run`, tick **Merge the 3 channel stitches into one multichannel image**, and click
-**Stitch**. Written into `IF_run/`: `DAPI_20x.ome.tif`, `FITC_20x.ome.tif`, `TRITC_20x.ome.tif`, and
-`IF_run_merged.ome.tif` with channels `DAPI_20x`, `FITC_20x`, `TRITC_20x`.
+**Stitch**. The merged image `IF_run_merged.ome.tif` is written into `IF_run/` with channels
+`DAPI_20x`, `FITC_20x`, `TRITC_20x`, and the per-channel images `DAPI_20x.ome.tif`, `FITC_20x.ome.tif`,
+`TRITC_20x.ome.tif` are moved into `IF_run_channels/`.
 
 What to know before relying on the merged image:
 
@@ -612,7 +614,8 @@ What to know before relying on the merged image:
 - **Width, height and pixel type must match.** If they differ, no merged image is written; the
   per-channel images remain in the folder.
 - **Partial failures.** If one sub-folder fails to stitch, the rest are still merged, so the merged
-  image lacks that channel. Check the "Failed:" list in the result window before using it.
+  image lacks that channel. Check the "Failed:" list in the result window before using it. Per-channel
+  images that were successfully stitched before the failure are still moved to `<folder>_channels/`.
 - **With Solve tile overlaps.** All channels share one registration solve, applied by tile file
   name. Tiles must have the same file names in every channel folder; otherwise the non-reference
   channels stay at their nominal positions and will not line up in the merged image.

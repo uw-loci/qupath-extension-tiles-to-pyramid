@@ -454,7 +454,12 @@ public class StitchingGUI {
      * merge still counts as a success -- tidying must never turn a finished stitch into a failure.
      */
     private static void tidyChannelStitches(List<String> channelOutputs, StitchingConfig config, String mergedStem) {
-        Path dir = Paths.get(config.outputPath).resolve(mergedStem.replace("_merged", "") + "_channels");
+        // Strip the "_merged" SUFFIX only: replace() would also eat it out of the middle of a
+        // folder genuinely called something like "run_merged_v2".
+        String base = mergedStem.endsWith("_merged")
+                ? mergedStem.substring(0, mergedStem.length() - "_merged".length())
+                : mergedStem;
+        Path dir = Paths.get(config.outputPath).resolve(base + "_channels");
         try {
             Files.createDirectories(dir);
         } catch (IOException e) {
