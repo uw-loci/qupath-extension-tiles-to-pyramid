@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`*` in the sub-folder field selects every sub-folder.** Selecting a set of channel or angle folders previously meant finding a substring they happened to share: `DAPI`, `FITC` and `TRITC` are selected by the letter `I`, which works, teaches nothing, and would have failed on almost any other three channel names. Leaving the field empty is not the alternative -- that stitches the parent as one folder, and since the tile search recurses, every channel's tiles land in one image with the last one winning. The field is now labelled **Sub-folders to stitch (* = all)** and its tooltip states all three cases: empty for the selected folder, `*` for every sub-folder, or text to match. Existing values keep working; `*` is new, not a replacement.
+
 ### Changed
 - **The per-channel stitches move into a sub-folder once they are merged.** A four-channel merge wrote ten files -- five images and five records -- into the folder holding the acquisition's own tiles, and the one you actually asked for was not distinguishable by eye. The merged image and its record stay where they were; the channels that fed it go to `<folder>_channels/`. Moved, not deleted, because a per-channel stitch is a legitimate thing to want. Best-effort: a file that cannot be moved stays put and the merge still counts as a success.
 - **The result window reports what registration did.** "12 of 12 seams accepted, aligned on 385, moved 36 of 36 tile placements" was written to the log and to the stitch record, and nowhere a user looks. Reading it meant finding one line among a few hundred INFO lines.

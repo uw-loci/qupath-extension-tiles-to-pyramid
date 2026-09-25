@@ -131,7 +131,7 @@ public class StitchingGUI {
     private final Label outputFormatLabel = new Label("Output format:");
     private final Label pixelSizeLabel = new Label("Pixel size, microns:");
     private final Label downsampleLabel = new Label("Downsample:");
-    private final Label matchStringLabel = new Label("Stitch sub-folders with text string:");
+    private final Label matchStringLabel = new Label("Sub-folders to stitch (* = all):");
     private final Hyperlink githubLink = new Hyperlink("GitHub ReadMe");
     private final Label xFudgeLabel = new Label("X fudge factor:");
     private final Label yFudgeLabel = new Label("Y fudge factor:");
@@ -1212,8 +1212,12 @@ public class StitchingGUI {
      * Adds matching string input components to the specified GridPane.
      */
     private void addMatchStringComponents(GridPane pane) {
-        Tooltip matchStringTooltip = new Tooltip("Stitch each sub-folder whose name contains this text.\n"
-                + "Leave empty to stitch the selected folder itself, and only that folder.");
+        Tooltip matchStringTooltip = new Tooltip("Which folders to stitch, and how many images come out.\n\n"
+                + "  (empty)   the selected folder itself -- one image\n"
+                + "  *         every sub-folder -- one image each\n"
+                + "  some text sub-folders whose name contains it -- one image each\n\n"
+                + "Matching is case-sensitive. Use * for a set of channel or angle folders;\n"
+                + "leaving it empty would pile all of their tiles into a single image.");
         matchStringLabel.setTooltip(matchStringTooltip);
         matchStringField.setTooltip(matchStringTooltip);
 

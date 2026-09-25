@@ -66,9 +66,9 @@ Developers of qpsc may want to also run the following to enable working with qps
 3. The **Tiles to Pyramid** dialog opens.
 4. Under **Stitching Method**, choose how your tile positions are recorded (see "Stitching methods and input layouts" below).
 5. Click **Select Folder** and choose the folder that holds your tiles.
-6. In **Stitch sub-folders with text string**, type text that your tile sub-folder names contain, or
-   leave it empty to stitch the selected folder on its own. It starts empty and remembers what you
-   last typed.
+6. In **Sub-folders to stitch**, say which folders you mean: leave it empty for the folder you
+   selected, type `*` for every sub-folder inside it (one image each), or type text the folders you
+   want share. It starts empty and remembers what you last typed.
 7. Click **Stitch**. Pressing Enter in a field does not start it.
 
 A notification says the stitch has started. QuPath stays usable, but a second stitch cannot start
@@ -303,7 +303,7 @@ input_folder/             Method: Filename[x,y]; sub-folder text: slide
 | **Downsample** | Downsampling factor for output | Last-used (initially 1) |
 | **Compression type** | How pixels are compressed. Lossless: `LZW` (widely readable), `ZLIB` (smaller, slower), `J2K` (smallest lossless, slow, handles 16-bit), `UNCOMPRESSED`, `DEFAULT` (the writer chooses: Bio-Formats picks the OME-TIFF codec, OME-Zarr uses zstd). Lossy: `J2K_LOSSY`, and `JPEG` which is 8-bit RGB only. For OME-Zarr these map to Blosc codecs: `LZW`/`ZLIB` to zlib, `UNCOMPRESSED` to none, everything else to zstd -- so choosing a lossy codec with OME-Zarr silently gives you a lossless one, and the log says so | Last-used (initially J2K) |
 | **Output format** | **OME-TIFF (single file)**: one pyramidal `.ome.tif` with OME-XML metadata, widely readable. **OME-Zarr (NGFF 0.4, Zarr v2)**: an `.ome.zarr` directory of chunks, written in parallel, suited to cloud storage; the versions written are what QuPath's bundled reader opens, so check what your other tools accept | Last-used (initially OME-TIFF) |
-| **Stitch sub-folders with text string** | Stitch each sub-folder whose name contains this text, one output per sub-folder. **Empty stitches the selected folder itself, and only that folder.** Not used by the MicroManager method | Last-used (initially empty) |
+| **Sub-folders to stitch (\* = all)** | Which folders are stitched, and how many images come out. **Empty** stitches the selected folder itself, and only that folder -- one image. **`*`** stitches every sub-folder, one image each. **Any other text** stitches the sub-folders whose name contains it, one image each; matching is case-sensitive. Not used by the MicroManager method, which finds its own positions | Last-used (initially empty) |
 | **Stage axes: Invert X axis / Invert Y axis** | Shown for the two methods whose tile positions are stage coordinates -- MicroManager and TileConfiguration.txt. Negates stage X and/or Y before converting to pixels, for a scope whose stage runs opposite to its camera on that axis. Leave both clear for a Fiji-written TileConfiguration.txt, which is already in image space. See [If the mosaic comes out mirrored](#if-the-mosaic-comes-out-mirrored). Remembered, since it describes the microscope | Off, off |
 | **Merge the N channel stitches into one multichannel image** | Shown only when 2+ matching sub-folders of single-channel (non-RGB) tiles will be stitched, or when a MicroManager acquisition has multiple channels. Combines the per-channel stitches into one multichannel `<folder>_merged` image; the per-channel images are kept. See [Merging channels in the dialog](#merging-channels-in-the-dialog). Choice is remembered | On |
 | **Z-Spacing (um)** | Scripts only (`StitchingConfig`); the dialog always records 1.0 | 1.0 |
