@@ -21,7 +21,7 @@ import org.slf4j.LoggerFactory;
  * least-recently-used reader when the pool is full. This bounds memory usage
  * to approximately {@code maxOpen * tileSize} regardless of total tile count.
  * <p>
- * Supports sub-region reads via {@link #readRegion(File, int, int, int, int)}
+ * Supports sub-region reads via {@link #readRegion(File, int, int, int, int, int)}
  * so that only the pixels needed for a given output chunk are loaded.
  */
 public class TileReaderPool implements AutoCloseable {
