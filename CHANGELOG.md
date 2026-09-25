@@ -5,6 +5,11 @@ All notable changes to the Tiles to Pyramid QuPath Extension will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **A stitch that finds no tiles now says why, in the dialog, and offers a way back.** Picking the wrong method for a folder produced one line in the log ("No tile mappings produced by strategy") and a dialog reading "Stitching failed. See the log for details." Since the method is remembered between runs, the usual way to hit this is to point a new folder at whichever method you used last -- which is exactly the case with the least information to debug it from. The failure now reports the folder, the method, how many TIFFs are actually there, and, where the evidence is present, which method would have worked ("This folder looks like it wants a different method: MicroManager metadata (MMStack or TIFF series) -- found 9 MicroManager metadata files"). An empty folder says so instead. A non-blank sub-folder filter that matched nothing is named as the likely cause, since that field is case-sensitive. When nothing at all matches, it points at the issue tracker and asks for a sample. The window is headed "No tiles were stitched" rather than "did not fully succeed", which promised a partial result that does not exist, and carries a **Back to settings** button that reopens the dialog with your choices intact.
+
 ## [0.7.4] - 2026-09-25
 
 ### Added

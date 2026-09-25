@@ -76,6 +76,11 @@ until this one finishes. When it does, a **Tiles to Pyramid - Result** window li
 each output file, and you can copy the paths from it or click **Open output folder** to go straight
 there. Output is written into the folder you selected.
 
+If no tiles are found, that window says so instead, and names what it did find: how many TIFFs are
+in the folder and, when the evidence is there, which method would have read them. **Back to
+settings** reopens the dialog with your choices intact. The commonest cause is the Stitching Method
+being the one you used last rather than the one this folder needs.
+
 <details>
 <summary><b>Stitching methods and input layouts</b> -- how each method reads tile positions, and how to lay the folders out</summary>
 

@@ -46,6 +46,7 @@ import qupath.ext.basicstitching.registration.RegistrationMode;
 import qupath.ext.basicstitching.registration.RegistrationReference;
 import qupath.ext.basicstitching.registration.RegistrationSettings;
 import qupath.ext.basicstitching.registration.TileRegistrationSolution;
+import qupath.ext.basicstitching.stitching.FolderDiagnosis;
 import qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy;
 import qupath.ext.basicstitching.stitching.TileConfigurationTxtStrategy;
 import qupath.ext.basicstitching.stitching.TileDirectories;
@@ -338,6 +339,7 @@ public class StitchingGUI {
         Thread worker = new Thread(
                 () -> {
                     boolean ok = false;
+                    boolean[] nothing = {false};
                     StringBuilder message = new StringBuilder();
                     // The axis flags are process-global volatile statics on the two strategies that
                     // read stage coordinates, which is also how QPSC drives them. Both pairs are set
@@ -358,7 +360,8 @@ public class StitchingGUI {
                         StitchingWorkflow.StitchingResult result = StitchingWorkflow.runDetailed(config);
                         List<String> outputs = result.outputs();
                         if (outputs.isEmpty()) {
-                            message.append("Stitching failed. See the log for details.");
+                            nothing[0] = true;
+                            message.append(explainNoTiles(config));
                         } else {
                             ok = true;
                             message.append("Output files:");
@@ -402,7 +405,8 @@ public class StitchingGUI {
                         STITCH_RUNNING.set(false);
                     }
                     boolean success = ok;
-                    Platform.runLater(() -> showResultDialog(success, message.toString(), config.outputPath));
+                    boolean none = nothing[0];
+                    Platform.runLater(() -> showResultDialog(success, none, message.toString(), config.outputPath));
                 },
                 "tiles-to-pyramid-stitch");
         worker.setDaemon(true);
@@ -1218,12 +1222,16 @@ public class StitchingGUI {
      * Report a finished stitch. The text goes in a read-only text area, not the alert's label: a
      * label wraps only at spaces, so a long output path collapsed to "..." and could not be copied.
      */
-    private static void showResultDialog(boolean success, String message, String outputDir) {
+    private static void showResultDialog(boolean success, boolean nothingProduced, String message, String outputDir) {
         Alert alert = new Alert(success ? Alert.AlertType.INFORMATION : Alert.AlertType.WARNING);
         // Distinct from the stitch dialog's title: the Dialog Manager extension remembers window
         // size per title, so sharing one made the stitch dialog reopen at this alert's small size.
         alert.setTitle("Tiles to Pyramid - Result");
-        alert.setHeaderText(success ? "Stitching complete" : "Stitching did not fully succeed");
+        // "did not fully succeed" promises a partial result; when nothing came out, say so.
+        alert.setHeaderText(
+                success
+                        ? "Stitching complete"
+                        : nothingProduced ? "No tiles were stitched" : "Stitching did not fully succeed");
         TextArea text = new TextArea(message);
         text.setEditable(false);
         text.setWrapText(false);
@@ -1237,20 +1245,101 @@ public class StitchingGUI {
         // does next. Offered only when there is a folder to open and something to open it with:
         // Desktop is unsupported on a headless JVM and on some Linux sessions.
         ButtonType openFolder = new ButtonType("Open output folder", ButtonBar.ButtonData.LEFT);
+        ButtonType backToSettings = new ButtonType("Back to settings", ButtonBar.ButtonData.LEFT);
         File dir = outputDir == null || outputDir.isBlank() ? null : new File(outputDir);
         boolean canOpen = dir != null
                 && dir.isDirectory()
                 && Desktop.isDesktopSupported()
                 && Desktop.getDesktop().isSupported(Desktop.Action.OPEN);
-        if (canOpen) {
+
+        // A failed stitch is nearly always a setting to change, so put the user back in front of
+        // the settings rather than leaving them to find the menu again. Success keeps the folder
+        // button instead: what you want next is the files.
+        if (!success) {
+            alert.getButtonTypes().setAll(backToSettings, ButtonType.CLOSE);
+        } else if (canOpen) {
             alert.getButtonTypes().setAll(openFolder, ButtonType.OK);
         }
 
         DialogOwner.own(alert);
         Optional<ButtonType> choice = alert.showAndWait();
-        if (choice.isPresent() && choice.get() == openFolder) {
-            openDirectory(dir);
+        if (choice.isEmpty()) {
+            return;
         }
+        if (choice.get() == openFolder) {
+            openDirectory(dir);
+        } else if (choice.get() == backToSettings) {
+            // Every field is restored from the preferences the run just saved, so the dialog comes
+            // back holding what they tried, ready to be corrected.
+            Platform.runLater(StitchingGUI::createGUI);
+        }
+    }
+
+    /** Where a user should report a folder we cannot read but believe we should. */
+    private static final String ISSUES_URL = "https://github.com/uw-loci/qupath-extension-tiles-to-pyramid/issues";
+
+    /**
+     * Say why a stitch found no tiles, in terms a user can act on.
+     *
+     * <p>Every wrong choice produces the same symptom -- zero tiles -- and the method is remembered
+     * between runs, so the usual cause is a folder pointed at whichever method was used last. The
+     * log line ("No tile mappings produced by strategy") names none of that. This looks at what is
+     * actually in the folder and, where the evidence is there, names the method that would have
+     * worked.
+     */
+    private static String explainNoTiles(StitchingConfig config) {
+        File folder = new File(config.folderPath);
+        StringBuilder sb = new StringBuilder();
+        sb.append("No tiles were found in this folder using the method you chose.\n\n")
+                .append("Folder:  ")
+                .append(config.folderPath)
+                .append('\n')
+                .append("Method:  ")
+                .append(config.stitchingType)
+                .append('\n');
+        if (!TileDirectories.isSingleFolder(config.matchingString)) {
+            sb.append("Sub-folder text:  '").append(config.matchingString).append("'\n");
+        }
+
+        int tiffs = FolderDiagnosis.countTiffs(folder);
+        if (tiffs == 0) {
+            sb.append("\nThere are no TIFF files in this folder or the folders inside it. ")
+                    .append("Check that you selected the right folder.");
+            return sb.toString();
+        }
+
+        List<FolderDiagnosis.Finding> found = FolderDiagnosis.diagnose(folder);
+        List<FolderDiagnosis.Finding> others = found.stream()
+                .filter(f -> !f.method().equals(config.stitchingType))
+                .toList();
+
+        sb.append("\nIt holds ")
+                .append(tiffs)
+                .append(" TIFF file")
+                .append(tiffs == 1 ? "" : "s")
+                .append(", so the images are there -- what is missing is the position information ")
+                .append("this method reads.\n");
+
+        if (!others.isEmpty()) {
+            sb.append("\nThis folder looks like it wants a different method:\n");
+            for (FolderDiagnosis.Finding f : others) {
+                sb.append("  - ")
+                        .append(f.method())
+                        .append("\n        (found ")
+                        .append(f.evidence())
+                        .append(")\n");
+            }
+            sb.append("\nChange Stitching Method to one of those and stitch again.");
+        } else if (!TileDirectories.isSingleFolder(config.matchingString)) {
+            sb.append("\nNothing else here matches another method either. The likeliest cause is the ")
+                    .append("sub-folder text: it selects only sub-folders whose name contains it, and it ")
+                    .append("is case-sensitive. Clear it to stitch the selected folder itself.");
+        } else {
+            sb.append("\nNothing here matches any of the other methods either. If you believe this ")
+                    .append("folder should stitch, please open an issue with a small sample of the data:\n  ")
+                    .append(ISSUES_URL);
+        }
+        return sb.toString();
     }
 
     /**
