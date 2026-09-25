@@ -753,13 +753,16 @@ Two limits worth stating plainly:
 
 - **The MicroManager, Filename[x,y], and Vectra strategies are 2D only** -- they read the XY
   position of each tile and place it at z=0, t=0.
-- **Planes inside a multi-page or multi-series file are not expanded.** The tile reader reads only
-  the *first* image in each file, so an MMStack that stores a z-stack (or a time series, or several
-  stage positions) inside one file is stitched as a single plane. To preserve those dimensions,
-  export the acquisition to the separate-file `z{nn}/` / `t{nn}/` layout and use the
-  TileConfiguration.txt strategy.
+- **Z and T inside a multi-page file are not expanded.** Channels are: a MicroManager file whose
+  page count equals its channel count becomes one tile per channel. But an MMStack that stores a
+  z-stack or a time series in those pages is stitched as a single plane, read from page 0. When
+  the acquisition reports several channels and the page count disagrees, the log says so; a
+  single-channel z-stack is collapsed silently. To preserve those dimensions, export the
+  acquisition to the separate-file `z{nn}/` / `t{nn}/` layout and use the TileConfiguration.txt
+  strategy.
 
-Directory names must be exactly `z00`, `z01`, `t00`, ... (a number after `z`/`t`, case-insensitive);
+Directory names must be a `z` or `t` followed by digits and nothing else -- `z0`, `z00` and `z000`
+all match, case-insensitively;
 the two levels are matched independently, so `z{nn}/t{nn}/` nesting works as well as `t{nn}/z{nn}/`.
 
 </details>
