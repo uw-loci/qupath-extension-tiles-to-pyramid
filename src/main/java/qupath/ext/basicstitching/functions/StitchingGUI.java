@@ -12,6 +12,7 @@ import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -52,6 +53,7 @@ import qupath.ext.basicstitching.stitching.TileConfigurationTxtStrategy;
 import qupath.ext.basicstitching.stitching.TileDirectories;
 import qupath.ext.basicstitching.utilities.QPPreferences;
 import qupath.ext.basicstitching.utilities.RegistrationPreferences;
+import qupath.ext.basicstitching.workflow.StitchInfoFile;
 import qupath.ext.basicstitching.workflow.StitchingWorkflow;
 import qupath.fx.dialogs.Dialogs;
 import qupath.lib.common.GeneralTools;
@@ -364,6 +366,12 @@ public class StitchingGUI {
                             message.append(explainNoTiles(config));
                         } else {
                             ok = true;
+                            // What registration did is the thing people want to know and the thing
+                            // they should not have to open the log to read.
+                            String reg = describeRegistration(config);
+                            if (reg != null) {
+                                message.append(reg).append("\n\n");
+                            }
                             message.append("Output files:");
                             outputs.forEach(o -> message.append("\n  ").append(o));
                             if (!result.failedSubdirs().isEmpty()) {
@@ -425,7 +433,50 @@ public class StitchingGUI {
                 .toList();
         String stem = new File(config.folderPath).getName() + "_merged";
         logger.info("Merging {} channel stitches {} into {}", sorted.size(), names, stem);
-        return ChannelMerger.merge(sorted, names, config.outputPath, stem, config.compressionType, config.outputFormat);
+        String merged = ChannelMerger.merge(
+                sorted, names, config.outputPath, stem, config.compressionType, config.outputFormat);
+        if (merged != null) {
+            tidyChannelStitches(sorted, config, stem);
+        }
+        return merged;
+    }
+
+    /**
+     * Move the per-channel stitches into a sub-folder once they have been merged.
+     *
+     * <p>Output lands beside the tiles, which is right for the image you asked for and wrong for
+     * the ones on the way to it: a four-channel merge otherwise leaves ten files -- five images and
+     * five records -- shuffled in among the acquisition's own tiles, and the one you actually want
+     * is not distinguishable by eye. They are moved rather than deleted, because a per-channel
+     * stitch is a legitimate thing to want; they just should not be lying in the tile folder.
+     *
+     * <p>Best-effort by design. A file that cannot be moved is left exactly where it is and the
+     * merge still counts as a success -- tidying must never turn a finished stitch into a failure.
+     */
+    private static void tidyChannelStitches(List<String> channelOutputs, StitchingConfig config, String mergedStem) {
+        Path dir = Paths.get(config.outputPath).resolve(mergedStem.replace("_merged", "") + "_channels");
+        try {
+            Files.createDirectories(dir);
+        } catch (IOException e) {
+            logger.warn("Could not create {}; leaving the per-channel stitches in place: {}", dir, e.getMessage());
+            return;
+        }
+        int moved = 0;
+        for (String out : channelOutputs) {
+            Path from = Paths.get(out);
+            Path to = dir.resolve(from.getFileName());
+            try {
+                Files.move(from, to, StandardCopyOption.REPLACE_EXISTING);
+                // The record has to travel with its image or it describes a file that is not there.
+                StitchInfoFile.moveWith(from, to);
+                moved++;
+            } catch (IOException | RuntimeException e) {
+                logger.warn("Could not move {} into {}: {}", from.getFileName(), dir.getFileName(), e.getMessage());
+            }
+        }
+        if (moved > 0) {
+            logger.info("Moved {} per-channel stitch(es) into {}", moved, dir.getFileName());
+        }
     }
 
     /**
@@ -1275,6 +1326,61 @@ public class StitchingGUI {
         }
     }
 
+    /**
+     * What registration actually did, for the result window.
+     *
+     * <p>The engine records this in the log and in the stitch record beside the image, and nowhere
+     * a user will look. Asking someone to open the log and pick "12/12 edges accepted" out of a few
+     * hundred INFO lines is not telling them: the accepted-seam count is how you know whether the
+     * stage was trusted or corrected, so it belongs in front of them.
+     *
+     * <p>Built from {@link StitchingConfig#getRegistrationRecord()}, which carries {@code mode},
+     * {@code aligned on} and {@code tile placements moved} as entries, and the solved counts in the
+     * solution-file header lines it copies ({@code # edgesAccepted: 12   edgesTotal: 12   ...}).
+     *
+     * @return a short report, or null when registration was not asked for
+     */
+    private static String describeRegistration(StitchingConfig config) {
+        if (config.getRegistrationMode() instanceof RegistrationMode.Disabled) {
+            return null;
+        }
+        StitchInfoFile.Section record = config.getRegistrationRecord();
+        if (record == null) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder("Tile registration");
+        String seams = seamCounts(record.lines());
+        if (seams != null) {
+            sb.append(": ").append(seams).append(" accepted");
+        } else {
+            String mode = record.entries().get("mode");
+            sb.append(": ").append(mode == null ? "ran" : mode);
+        }
+        String on = record.entries().get("aligned on");
+        if (on != null) {
+            sb.append(", aligned on ").append(on);
+        }
+        String moved = record.entries().get("tile placements moved");
+        if (moved != null) {
+            sb.append(", moved ").append(moved).append(" tile placements");
+        }
+        return sb.append('.').toString();
+    }
+
+    /** "12 of 12 seams" from the solution header, or null if it is not there. */
+    private static String seamCounts(List<String> headerLines) {
+        for (String line : headerLines) {
+            java.util.regex.Matcher m = SEAM_COUNTS.matcher(line);
+            if (m.find()) {
+                return m.group(1) + " of " + m.group(2) + " seams";
+            }
+        }
+        return null;
+    }
+
+    private static final java.util.regex.Pattern SEAM_COUNTS =
+            java.util.regex.Pattern.compile("edgesAccepted:\\s*(\\d+)\\s+edgesTotal:\\s*(\\d+)");
+
     /** Where a user should report a folder we cannot read but believe we should. */
     private static final String ISSUES_URL = "https://github.com/uw-loci/qupath-extension-tiles-to-pyramid/issues";
 
@@ -1309,6 +1415,10 @@ public class StitchingGUI {
         }
 
         List<FolderDiagnosis.Finding> found = FolderDiagnosis.diagnose(folder);
+        FolderDiagnosis.Finding mine = found.stream()
+                .filter(f -> f.method().equals(config.stitchingType))
+                .findFirst()
+                .orElse(null);
         List<FolderDiagnosis.Finding> others = found.stream()
                 .filter(f -> !f.method().equals(config.stitchingType))
                 .toList();
@@ -1320,6 +1430,28 @@ public class StitchingGUI {
                 .append(", so the images are there -- what is missing is the position information ")
                 .append("this method reads.\n");
 
+        // Right method, wrong folder: the evidence is here but one level down, which is what
+        // selecting an acquisition's parent rather than the acquisition itself looks like. The
+        // symptom is identical to picking the wrong method, so it has to be named separately.
+        if (mine != null && mine.onlyInSubFolders()) {
+            List<String> subs = mine.subFolders();
+            sb.append("\nThis method's own ")
+                    .append(mine.evidence())
+                    .append(subs.size() == 1 ? " is" : " are")
+                    .append(" here, but one level down, in:\n");
+            for (String sub : subs) {
+                sb.append("  ").append(sub).append("/\n");
+            }
+            sb.append("\nThis method reads only the folder you pick, so select ");
+            if (subs.size() == 1) {
+                sb.append("that one instead.");
+            } else {
+                sb.append("one of those instead, or type text they all share into ")
+                        .append("'Stitch sub-folders with text string'.");
+            }
+            return sb.toString();
+        }
+
         if (!others.isEmpty()) {
             sb.append("\nThis folder looks like it wants a different method:\n");
             for (FolderDiagnosis.Finding f : others) {
@@ -1327,6 +1459,7 @@ public class StitchingGUI {
                         .append(f.method())
                         .append("\n        (found ")
                         .append(f.evidence())
+                        .append(f.onlyInSubFolders() ? ", in " + String.join("/, ", f.subFolders()) + "/" : "")
                         .append(")\n");
             }
             sb.append("\nChange Stitching Method to one of those and stitch again.");

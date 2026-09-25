@@ -36,8 +36,22 @@ public final class FolderDiagnosis {
      *
      * @param method the dropdown identifier, exactly as {@code StitchingStrategyFactory} switches on it
      * @param evidence what was found, in the user's terms
+     * @param subFolders the sub-folders it was found in, relative to the selected folder, sorted and
+     *     de-duplicated. EMPTY means it sits in the selected folder itself. This is the difference
+     *     between "wrong method" and "right method, wrong folder" -- selecting an acquisition's
+     *     parent puts the evidence one level too deep for the strategy to see, and the symptom is
+     *     identical.
      */
-    public record Finding(String method, String evidence) {}
+    public record Finding(String method, String evidence, List<String> subFolders) {
+        public Finding {
+            subFolders = subFolders == null ? List.of() : List.copyOf(subFolders);
+        }
+
+        /** @return true when nothing was found in the selected folder itself. */
+        public boolean onlyInSubFolders() {
+            return !subFolders.isEmpty();
+        }
+    }
 
     private FolderDiagnosis() {}
 
@@ -56,7 +70,8 @@ public final class FolderDiagnosis {
         if (!configs.isEmpty()) {
             found.add(new Finding(
                     "Coordinates in TileConfiguration.txt file",
-                    configs.size() == 1 ? "a TileConfiguration.txt" : configs.size() + " TileConfiguration.txt files"));
+                    configs.size() == 1 ? "a TileConfiguration.txt" : configs.size() + " TileConfiguration.txt files",
+                    subFoldersOf(root, configs)));
         }
 
         // MicroManager writes a sidecar per position in the flat layout, and one metadata.txt per
@@ -68,7 +83,8 @@ public final class FolderDiagnosis {
         if (!mmMeta.isEmpty()) {
             found.add(new Finding(
                     "MicroManager metadata (MMStack or TIFF series)",
-                    mmMeta.size() + " MicroManager metadata file" + (mmMeta.size() == 1 ? "" : "s")));
+                    mmMeta.size() + " MicroManager metadata file" + (mmMeta.size() == 1 ? "" : "s"),
+                    subFoldersOf(root, mmMeta)));
         }
 
         List<Path> xy = scan(root, p -> {
@@ -78,7 +94,8 @@ public final class FolderDiagnosis {
         if (!xy.isEmpty()) {
             found.add(new Finding(
                     "Filename[x,y] with coordinates in microns",
-                    xy.size() + " file name" + (xy.size() == 1 ? "" : "s") + " carrying [x,y] coordinates"));
+                    xy.size() + " file name" + (xy.size() == 1 ? "" : "s") + " carrying [x,y] coordinates",
+                    subFoldersOf(root, xy)));
         }
         return found;
     }
@@ -92,6 +109,22 @@ public final class FolderDiagnosis {
             return 0;
         }
         return scan(folder.toPath(), p -> isTiff(p.getFileName().toString())).size();
+    }
+
+    /**
+     * @return the distinct sub-folders these files sit in, relative to root; empty if any of them is
+     *     directly in root, since then the selected folder is already the right one
+     */
+    private static List<String> subFoldersOf(Path root, List<Path> hits) {
+        java.util.TreeSet<String> subs = new java.util.TreeSet<>();
+        for (Path hit : hits) {
+            Path parent = hit.getParent();
+            if (parent == null || parent.equals(root)) {
+                return List.of();
+            }
+            subs.add(root.relativize(parent).toString().replace('\\', '/'));
+        }
+        return new ArrayList<>(subs);
     }
 
     private static boolean isTiff(String name) {

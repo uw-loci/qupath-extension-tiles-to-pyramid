@@ -74,6 +74,30 @@ class FolderDiagnosisTest {
     }
 
     @Test
+    void evidenceOneLevelDownIsReportedAsSuch(@TempDir Path tmp) throws IOException {
+        // Selecting an acquisition's parent instead of the acquisition: the method is right, the
+        // folder is not, and the stitch fails exactly as it would for the wrong method.
+        touch(tmp.resolve("bounds").resolve("TileConfiguration.txt"));
+        touch(tmp.resolve("bounds").resolve("DAPI").resolve("TileConfiguration.txt"));
+
+        FolderDiagnosis.Finding f = FolderDiagnosis.diagnose(tmp.toFile()).get(0);
+
+        assertTrue(f.onlyInSubFolders(), "nothing sits in the selected folder itself");
+        assertEquals(List.of("bounds", "bounds/DAPI"), f.subFolders());
+    }
+
+    @Test
+    void evidenceInTheSelectedFolderIsNotReportedAsASubFolder(@TempDir Path tmp) throws IOException {
+        touch(tmp.resolve("TileConfiguration.txt"));
+        touch(tmp.resolve("sub").resolve("TileConfiguration.txt"));
+
+        FolderDiagnosis.Finding f = FolderDiagnosis.diagnose(tmp.toFile()).get(0);
+
+        assertFalse(f.onlyInSubFolders(), "one of them is in the selected folder, so the folder is right");
+        assertTrue(f.subFolders().isEmpty());
+    }
+
+    @Test
     void anEmptyFolderIsReportedAsHavingNoImages(@TempDir Path tmp) {
         assertEquals(0, FolderDiagnosis.countTiffs(tmp.toFile()));
         assertTrue(FolderDiagnosis.diagnose(tmp.toFile()).isEmpty());
