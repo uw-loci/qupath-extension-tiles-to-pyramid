@@ -10,8 +10,9 @@ OME-Zarr beside the tiles.
 It reads the tile positions from the acquisition's own records -- a `TileConfiguration.txt`,
 coordinates in the filenames, Vectra metadata, or MicroManager metadata -- and can correct those
 positions against the image content so the seams close. Memory is set by the chunk being written
-rather than by the size of the mosaic: a 169-megapixel mosaic stitches in a 128 MB heap, and one
-five times smaller still needs 96 MB. Thousands of tiles stitch on an ordinary machine.
+rather than by the size of the mosaic, and past a point it stops growing altogether: 87, 169 and
+279 megapixels all complete in the same 128 MB heap. Thousands of tiles stitch on an ordinary
+machine.
 
 ## What it can stitch
 

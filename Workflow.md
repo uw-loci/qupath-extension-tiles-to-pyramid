@@ -118,8 +118,11 @@ header refuses to be applied to a run it was not solved for).
 
 The design constraint is **bounded memory: the footprint follows the chunk, not the mosaic**,
 against the 2-4+ GB the retired `SparseImageServer` path needed. Measured on 1024 px 16-bit tiles
-at 10% overlap (OME-TIFF, LZW), the smallest heap that completes is 96 MB at 36 tiles (32 MP) and
-128 MB at both 100 tiles (87 MP) and 196 tiles (169 MP) -- 5.3x the mosaic for 1.33x the heap.
+at 10% overlap (OME-TIFF, LZW), the smallest heap that completes is 64 MB at 16 tiles (14 MP),
+112 MB at 49 tiles (43 MP), and then 128 MB at 100, 196 and 324 tiles alike (87, 169 and 279 MP)
+-- 19x the mosaic for 2x the heap, and flat across the last three. Each floor is bracketed by the
+largest cap that still failed, and the tiles are read from disk: generating the grid in memory is
+the trap `SyntheticGridFixture` falls into, where the floor measured is the fixture's own.
 Three mechanisms hold that:
 
 - **`TileSpatialIndex`** holds only `TileMapping` references -- a file handle and a rectangle. No
