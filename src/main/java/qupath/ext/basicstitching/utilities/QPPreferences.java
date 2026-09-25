@@ -43,7 +43,11 @@ public class QPPreferences {
 
     private static final StringProperty downsampleSaved = PathPrefs.createPersistentPreference("downsample", "1");
 
-    private static final StringProperty searchStringSaved = PathPrefs.createPersistentPreference("searchString", "20x");
+    // Blank by default: an empty string stitches the selected folder on its own, which is what
+    // someone pointing at one folder of tiles wants. The old default of "20x" was a QPSC habit --
+    // it matched that project's objective-named sub-folders and matched nothing in anyone else's
+    // data, so a first-time user saw a pre-filled field they had to know to clear.
+    private static final StringProperty searchStringSaved = PathPrefs.createPersistentPreference("searchString", "");
 
     private static final StringProperty compressionTypeSaved =
             PathPrefs.createPersistentPreference("compressionType", "J2K");
