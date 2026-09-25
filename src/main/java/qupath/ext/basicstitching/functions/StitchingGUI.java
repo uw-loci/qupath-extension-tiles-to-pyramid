@@ -402,7 +402,7 @@ public class StitchingGUI {
                         STITCH_RUNNING.set(false);
                     }
                     boolean success = ok;
-                    Platform.runLater(() -> showResultDialog(success, message.toString()));
+                    Platform.runLater(() -> showResultDialog(success, message.toString(), config.outputPath));
                 },
                 "tiles-to-pyramid-stitch");
         worker.setDaemon(true);
@@ -1218,7 +1218,7 @@ public class StitchingGUI {
      * Report a finished stitch. The text goes in a read-only text area, not the alert's label: a
      * label wraps only at spaces, so a long output path collapsed to "..." and could not be copied.
      */
-    private static void showResultDialog(boolean success, String message) {
+    private static void showResultDialog(boolean success, String message, String outputDir) {
         Alert alert = new Alert(success ? Alert.AlertType.INFORMATION : Alert.AlertType.WARNING);
         // Distinct from the stitch dialog's title: the Dialog Manager extension remembers window
         // size per title, so sharing one made the stitch dialog reopen at this alert's small size.
@@ -1232,8 +1232,47 @@ public class StitchingGUI {
         text.setPrefRowCount((int) Math.min(12, message.lines().count() + 2));
         alert.getDialogPane().setContent(text);
         alert.setResizable(true);
+
+        // Copying a path out of the text area and pasting it into a file browser is what everybody
+        // does next. Offered only when there is a folder to open and something to open it with:
+        // Desktop is unsupported on a headless JVM and on some Linux sessions.
+        ButtonType openFolder = new ButtonType("Open output folder", ButtonBar.ButtonData.LEFT);
+        File dir = outputDir == null || outputDir.isBlank() ? null : new File(outputDir);
+        boolean canOpen = dir != null
+                && dir.isDirectory()
+                && Desktop.isDesktopSupported()
+                && Desktop.getDesktop().isSupported(Desktop.Action.OPEN);
+        if (canOpen) {
+            alert.getButtonTypes().setAll(openFolder, ButtonType.OK);
+        }
+
         DialogOwner.own(alert);
-        alert.showAndWait();
+        Optional<ButtonType> choice = alert.showAndWait();
+        if (choice.isPresent() && choice.get() == openFolder) {
+            openDirectory(dir);
+        }
+    }
+
+    /**
+     * Show a folder in the system file browser.
+     *
+     * <p>Off the FX thread: {@code Desktop.open} blocks until the browser has launched, which on
+     * Windows is long enough to freeze the UI visibly.
+     */
+    private static void openDirectory(File dir) {
+        Thread opener = new Thread(
+                () -> {
+                    try {
+                        Desktop.getDesktop().open(dir);
+                    } catch (IOException | RuntimeException e) {
+                        logger.error("Could not open {}: {}", dir, e.getMessage(), e);
+                        Platform.runLater(() ->
+                                showAlertDialog("Could not open the folder. It is here:\n" + dir.getAbsolutePath()));
+                    }
+                },
+                "tiles-to-pyramid-open-folder");
+        opener.setDaemon(true);
+        opener.start();
     }
 
     public static void showAlertDialog(String message) {

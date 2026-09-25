@@ -72,7 +72,8 @@ Developers of qpsc may want to also run the following to enable working with qps
 
 A notification says the stitch has started. QuPath stays usable, but a second stitch cannot start
 until this one finishes. When it does, a **Tiles to Pyramid - Result** window lists the full path of
-each output file, and you can copy the paths from it. Output is written into the folder you selected.
+each output file, and you can copy the paths from it or click **Open output folder** to go straight
+there. Output is written into the folder you selected.
 
 <details>
 <summary><b>Stitching methods and input layouts</b> -- how each method reads tile positions, and how to lay the folders out</summary>
