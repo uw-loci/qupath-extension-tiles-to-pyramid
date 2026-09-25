@@ -47,6 +47,7 @@ import qupath.ext.basicstitching.registration.RegistrationReference;
 import qupath.ext.basicstitching.registration.RegistrationSettings;
 import qupath.ext.basicstitching.registration.TileRegistrationSolution;
 import qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy;
+import qupath.ext.basicstitching.stitching.TileConfigurationTxtStrategy;
 import qupath.ext.basicstitching.stitching.TileDirectories;
 import qupath.ext.basicstitching.utilities.QPPreferences;
 import qupath.ext.basicstitching.utilities.RegistrationPreferences;
@@ -90,11 +91,11 @@ public class StitchingGUI {
     private final CheckBox resolveOverlapsCheckbox = new CheckBox("Solve tile overlaps (content-based registration)");
     // Shown only when the folder holds 2+ matching single-channel subdirectories (RGB is not channels).
     private final CheckBox mergeChannelsCheckbox = new CheckBox("Merge channels into one multichannel image");
-    // MicroManager only: see addMmInvertComponents.
-    private final CheckBox mmInvertXCheckbox = new CheckBox("Invert X axis");
-    private final CheckBox mmInvertYCheckbox = new CheckBox("Invert Y axis");
-    private final Label mmInvertLabel = new Label("Stage axes:");
-    private final HBox mmInvertBox = new HBox(16, mmInvertXCheckbox, mmInvertYCheckbox);
+    // Only for the methods whose positions are stage coordinates: see addStageInvertComponents.
+    private final CheckBox invertXCheckbox = new CheckBox("Invert X axis");
+    private final CheckBox invertYCheckbox = new CheckBox("Invert Y axis");
+    private final Label invertLabel = new Label("Stage axes:");
+    private final HBox invertBox = new HBox(16, invertXCheckbox, invertYCheckbox);
     // Per-run registration controls (the tuning knobs live in Preferences -> Tiles-to-pyramid).
     /** Versions the ZARR writer actually stamps, so the dialog cannot name a different one. */
     private static final String OME_ZARR_NGFF_VERSION =
@@ -305,11 +306,11 @@ public class StitchingGUI {
             // Only the MicroManager strategy reads stage coordinates, and the checkboxes are hidden
             // for every other method -- so take them as false rather than letting a remembered tick
             // apply to a method it was never chosen for.
-            boolean invertX = mmInvertBox.isVisible() && mmInvertXCheckbox.isSelected();
-            boolean invertY = mmInvertBox.isVisible() && mmInvertYCheckbox.isSelected();
-            if (mmInvertBox.isVisible()) {
-                QPPreferences.setMmInvertXSaved(invertX);
-                QPPreferences.setMmInvertYSaved(invertY);
+            boolean invertX = invertBox.isVisible() && invertXCheckbox.isSelected();
+            boolean invertY = invertBox.isVisible() && invertYCheckbox.isSelected();
+            if (invertBox.isVisible()) {
+                QPPreferences.setStageInvertXSaved(invertX);
+                QPPreferences.setStageInvertYSaved(invertY);
             }
             runInBackground(config, mergeOffered && mergeChannelsCheckbox.isSelected(), invertX, invertY);
 
@@ -338,14 +339,21 @@ public class StitchingGUI {
                 () -> {
                     boolean ok = false;
                     StringBuilder message = new StringBuilder();
-                    // The axis flags are process-global volatile statics on the strategy, which is
-                    // also how QPSC drives them. Restore whatever was there instead of clearing to
-                    // false, so a stitch started from this dialog cannot strand a different caller's
-                    // setting. STITCH_RUNNING keeps two dialog stitches from interleaving here.
-                    boolean prevInvertX = MicroManagerMetadataStrategy.flipStitchingX;
-                    boolean prevInvertY = MicroManagerMetadataStrategy.flipStitchingY;
+                    // The axis flags are process-global volatile statics on the two strategies that
+                    // read stage coordinates, which is also how QPSC drives them. Both pairs are set
+                    // because only the selected strategy reads its own, and the checkboxes are hidden
+                    // (so both flags are false) for the methods that read neither. Restore whatever
+                    // was there instead of clearing to false, so a stitch started from this dialog
+                    // cannot strand a different caller's setting. STITCH_RUNNING keeps two dialog
+                    // stitches from interleaving here.
+                    boolean prevMmX = MicroManagerMetadataStrategy.flipStitchingX;
+                    boolean prevMmY = MicroManagerMetadataStrategy.flipStitchingY;
+                    boolean prevTcX = TileConfigurationTxtStrategy.flipStitchingX;
+                    boolean prevTcY = TileConfigurationTxtStrategy.flipStitchingY;
                     MicroManagerMetadataStrategy.flipStitchingX = invertX;
                     MicroManagerMetadataStrategy.flipStitchingY = invertY;
+                    TileConfigurationTxtStrategy.flipStitchingX = invertX;
+                    TileConfigurationTxtStrategy.flipStitchingY = invertY;
                     try {
                         StitchingWorkflow.StitchingResult result = StitchingWorkflow.runDetailed(config);
                         List<String> outputs = result.outputs();
@@ -387,8 +395,10 @@ public class StitchingGUI {
                         message.setLength(0);
                         message.append("Stitching failed: ").append(t.getMessage());
                     } finally {
-                        MicroManagerMetadataStrategy.flipStitchingX = prevInvertX;
-                        MicroManagerMetadataStrategy.flipStitchingY = prevInvertY;
+                        MicroManagerMetadataStrategy.flipStitchingX = prevMmX;
+                        MicroManagerMetadataStrategy.flipStitchingY = prevMmY;
+                        TileConfigurationTxtStrategy.flipStitchingX = prevTcX;
+                        TileConfigurationTxtStrategy.flipStitchingY = prevTcY;
                         STITCH_RUNNING.set(false);
                     }
                     boolean success = ok;
@@ -436,31 +446,36 @@ public class StitchingGUI {
     }
 
     /**
-     * Adds the MicroManager stage-axis inversion checkboxes to the GridPane.
+     * Adds the stage-axis inversion checkboxes to the GridPane.
      *
-     * <p>MMStack sidecars carry absolute stage coordinates, and whether a rising stage coordinate
-     * moves right/down in the camera image is a property of the microscope -- how the stage is wired
-     * and how the camera is mounted. The strategy cannot infer it, so it assumes rising stage equals
-     * rising pixel; on a scope where either axis runs the other way, every tile lands in its mirrored
-     * slot. The tiles still form a grid of the right size and the overlaps still measure right, so
-     * the mosaic looks plausible at a glance while no seam actually matches -- with registration on,
-     * every edge is rejected and the log says so; with it off, nothing says anything.
+     * <p>Whether a rising stage coordinate moves right/down in the camera image is a property of the
+     * microscope -- how the stage is wired and how the camera is mounted. Neither strategy that
+     * reads stage coordinates can infer it, so both assume rising stage equals rising pixel; on a
+     * scope where either axis runs the other way, every tile lands in its mirrored slot. The tiles
+     * still form a grid of the right size and the overlaps still measure right, so the mosaic looks
+     * plausible at a glance while no seam actually matches -- with registration on, every edge is
+     * rejected and the log says so; with it off, nothing says anything.
      *
-     * <p>Offered only for MicroManager. The other methods take positions that are already in image
-     * space (Vectra, Filename[x,y]) or in a TileConfiguration.txt written in the frame it will be
-     * stitched in, so there is no stage convention left to resolve.
+     * <p>Offered for MicroManager, whose sidecars carry absolute stage positions, and for
+     * TileConfiguration.txt, whose coordinates are stage micrometers when an acquisition wrote the
+     * file (QPSC does, and negates both axes on a stage-inverted scope). A TileConfiguration.txt
+     * written by Fiji's Grid/Collection stitching is already in image space and wants both boxes
+     * clear -- which is the default. Not offered for Vectra or Filename[x,y]: those positions are
+     * image-space by construction, so there is no stage convention left to resolve.
      */
-    private void addMmInvertComponents(GridPane pane) {
-        mmInvertXCheckbox.setSelected(QPPreferences.getMmInvertXSaved());
-        mmInvertYCheckbox.setSelected(QPPreferences.getMmInvertYSaved());
+    private void addStageInvertComponents(GridPane pane) {
+        invertXCheckbox.setSelected(QPPreferences.getStageInvertXSaved());
+        invertYCheckbox.setSelected(QPPreferences.getStageInvertYSaved());
         Tooltip tip = new Tooltip("Negate the stage X and/or Y coordinate before placing tiles.\n"
                 + "Set these to match the microscope: if the mosaic comes out mirrored, or\n"
                 + "registration rejects every seam, one or both axes run the other way.\n"
+                + "Leave both clear for a TileConfiguration.txt written by Fiji, whose\n"
+                + "coordinates are already in image space.\n"
                 + "The setting is remembered, because it belongs to the scope, not the run.");
-        mmInvertLabel.setTooltip(tip);
-        mmInvertXCheckbox.setTooltip(tip);
-        mmInvertYCheckbox.setTooltip(tip);
-        addToGrid(pane, mmInvertLabel, mmInvertBox);
+        invertLabel.setTooltip(tip);
+        invertXCheckbox.setTooltip(tip);
+        invertYCheckbox.setTooltip(tip);
+        addToGrid(pane, invertLabel, invertBox);
     }
 
     private void refreshMergeVisibility() {
@@ -550,7 +565,7 @@ public class StitchingGUI {
         addStitchingGridComponents(pane);
         addFolderSelectionComponents(pane);
         addMatchStringComponents(pane);
-        addMmInvertComponents(pane);
+        addStageInvertComponents(pane);
         addMergeChannelsComponent(pane);
         addCompressionComponents(pane);
         addOutputFormatComponents(pane);
@@ -757,7 +772,7 @@ public class StitchingGUI {
         guiElementPositions.put(pixelSizeOverrideCheckbox, currentPosition++);
         guiElementPositions.put(downsampleLabel, currentPosition++);
         guiElementPositions.put(matchStringLabel, currentPosition++);
-        guiElementPositions.put(mmInvertLabel, currentPosition++);
+        guiElementPositions.put(invertLabel, currentPosition++);
         guiElementPositions.put(mergeChannelsCheckbox, currentPosition++);
         guiElementPositions.put(resolveOverlapsCheckbox, currentPosition++);
         guiElementPositions.put(registrationOptionsPane, currentPosition++);
@@ -1172,9 +1187,11 @@ public class StitchingGUI {
         }
 
         // Stage-axis inversion only means anything where the positions ARE stage coordinates.
-        boolean isMicroManager = selectedValue != null && selectedValue.startsWith("MicroManager");
-        mmInvertLabel.setVisible(isMicroManager);
-        mmInvertBox.setVisible(isMicroManager);
+        boolean stagePositions = selectedValue != null
+                && (selectedValue.startsWith("MicroManager")
+                        || "Coordinates in TileConfiguration.txt file".equals(selectedValue));
+        invertLabel.setVisible(stagePositions);
+        invertBox.setVisible(stagePositions);
 
         refreshMergeVisibility();
         adjustLayout(pane);
