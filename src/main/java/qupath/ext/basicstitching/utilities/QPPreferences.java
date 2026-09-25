@@ -74,6 +74,14 @@ public class QPPreferences {
     private static final BooleanProperty mergeChannelsSaved =
             PathPrefs.createPersistentPreference("basicstitching.dialog.mergeChannels", true);
 
+    // Negate the stage axes before converting MicroManager stage positions to pixels. A property of
+    // the microscope, not of the acquisition, so it is remembered rather than re-chosen each stitch.
+    private static final BooleanProperty mmInvertXSaved =
+            PathPrefs.createPersistentPreference("basicstitching.dialog.mmInvertX", false);
+
+    private static final BooleanProperty mmInvertYSaved =
+            PathPrefs.createPersistentPreference("basicstitching.dialog.mmInvertY", false);
+
     // Folder Location
     public static String getFolderLocationSaved() {
         return folderLocationSaved.getValue();
@@ -176,5 +184,21 @@ public class QPPreferences {
 
     public static void setMergeChannelsSaved(final boolean merge) {
         mergeChannelsSaved.setValue(merge);
+    }
+
+    public static boolean getMmInvertXSaved() {
+        return mmInvertXSaved.getValue();
+    }
+
+    public static void setMmInvertXSaved(final boolean invert) {
+        mmInvertXSaved.setValue(invert);
+    }
+
+    public static boolean getMmInvertYSaved() {
+        return mmInvertYSaved.getValue();
+    }
+
+    public static void setMmInvertYSaved(final boolean invert) {
+        mmInvertYSaved.setValue(invert);
     }
 }

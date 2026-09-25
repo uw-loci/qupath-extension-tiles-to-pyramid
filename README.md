@@ -212,11 +212,38 @@ Common to both:
 - Auto-detects pixel size from the metadata's `PixelSizeUm`
 - **Channels:** A single-channel acquisition stitches into one output named after the folder. A multi-channel acquisition emits one tile per channel, each named after its channel (from `Summary.ChNames`), so the workflow's existing per-channel-folder stitching combines them with the channel merger. Splitting only happens when the file's page count equals the channel count; a z-stack or time series interleaves those axes into the same pages and reads the first page only.
 - **Registration limit:** Seam measurement on MicroManager input is always performed on the first channel only, because all channels in a position come from the same file. The dialog's "Align-on" choice has no effect for MicroManager input. See [Tile registration](#tile-registration).
+- **Stage axes:** the sidecars record absolute stage coordinates, and whether a rising stage coordinate moves right and down in the camera image depends on how the stage is wired and the camera mounted. The strategy cannot infer that, so it assumes rising stage equals rising pixel. Where that is wrong, tick **Invert X axis** / **Invert Y axis** -- see [If the mosaic comes out mirrored](#if-the-mosaic-comes-out-mirrored).
 - No additional configuration files required
 
 **Usage:**
 - Select the acquisition's root folder (the folder containing the sidecars, or the folder containing the per-position subfolders). The strategy scans subfolders, so either layout works.
-- For stage-inverted scopes, use the `flipStitchingX` and `flipStitchingY` flags to negate coordinates
+- On a stage-inverted scope, tick **Invert X axis** and/or **Invert Y axis**. Scripted callers set `MicroManagerMetadataStrategy.flipStitchingX` / `flipStitchingY` instead.
+
+#### If the mosaic comes out mirrored
+
+On a scope where a stage axis runs opposite to the camera, every tile lands in its
+mirrored slot. That is easy to miss, because the mosaic is still the right size and
+the overlap still measures correctly -- it looks plausible until you read it.
+
+The reliable check is registration. Turn on **Solve tile overlaps** and watch the
+log. With the axes right, the seams match decisively:
+
+```
+12/12 edges accepted, overlap 10.0% x 10.0%, corrections mean 8.50 px / max 12.45 px
+```
+
+With an axis inverted, nothing matches, because the bands being compared are
+opposite edges of the two tiles:
+
+```
+no edge survived the confidence gates; keeping nominal positions
+```
+
+Tick **Invert X axis**, **Invert Y axis**, or both until the seams are accepted.
+The setting belongs to the microscope rather than the run, so it is remembered
+between stitches, and the `.stitch-info.txt` written beside the output records
+which axes were negated. QPSC's own MicroManager stitch dialog carries the same
+two checkboxes, seeded from the scope configuration.
 
 **Pixel Size Auto-fill:**
 - When you select an input folder, the pixel-size field is automatically filled from the first metadata file's `PixelSizeUm`. The dialog does not scan the default folder, so opening it without choosing a folder first will not pre-fill a pixel size
@@ -262,6 +289,7 @@ input_folder/             Method: Filename[x,y]; sub-folder text: slide
 | **Compression type** | How pixels are compressed. Lossless: `LZW` (widely readable), `ZLIB` (smaller, slower), `J2K` (smallest lossless, slow, handles 16-bit), `UNCOMPRESSED`, `DEFAULT` (the writer chooses: Bio-Formats picks the OME-TIFF codec, OME-Zarr uses zstd). Lossy: `J2K_LOSSY`, and `JPEG` which is 8-bit RGB only. For OME-Zarr these map to Blosc codecs: `LZW`/`ZLIB` to zlib, `UNCOMPRESSED` to none, everything else to zstd -- so choosing a lossy codec with OME-Zarr silently gives you a lossless one, and the log says so | Last-used (initially J2K) |
 | **Output format** | **OME-TIFF (single file)**: one pyramidal `.ome.tif` with OME-XML metadata, widely readable. **OME-Zarr (NGFF 0.4, Zarr v2)**: an `.ome.zarr` directory of chunks, written in parallel, suited to cloud storage; the versions written are what QuPath's bundled reader opens, so check what your other tools accept | Last-used (initially OME-TIFF) |
 | **Stitch sub-folders with text string** | Stitch each sub-folder whose name contains this text, one output per sub-folder. **Empty stitches the selected folder itself, and only that folder.** Not used by the MicroManager method | Last-used (initially "20x") |
+| **Stage axes: Invert X axis / Invert Y axis** | Shown only for the MicroManager method, whose tile positions are absolute stage coordinates. Negates stage X and/or Y before converting to pixels, for a scope whose stage runs opposite to its camera on that axis. See [If the mosaic comes out mirrored](#if-the-mosaic-comes-out-mirrored). Remembered, since it describes the microscope | Off, off |
 | **Merge the N channel stitches into one multichannel image** | Shown only when 2+ matching sub-folders of single-channel (non-RGB) tiles will be stitched, or when a MicroManager acquisition has multiple channels. Combines the per-channel stitches into one multichannel `<folder>_merged` image; the per-channel images are kept. See [Merging channels in the dialog](#merging-channels-in-the-dialog). Choice is remembered | On |
 | **Z-Spacing (um)** | Scripts only (`StitchingConfig`); the dialog always records 1.0 | 1.0 |
 | **Solve tile overlaps (content-based registration)** | Checkbox to enable overlap measurement and correction. When enabled, measures the real overlap between neighbouring tiles and corrects their positions before stitching, closing seams caused by stage backlash and drift. Writes a `TileRegistration.txt` solution file beside the tiles. Choice is remembered between sessions. See [Tile registration](#tile-registration) for details. | Off (faster, nominal positions) |
