@@ -72,8 +72,15 @@ dependencies {
     // avoid -- and it dragged in ~100 MB of transitives.
     shadow("io.github.qupath:qupath-extension-bioformats:0.7.0")
 
-    // Add Bio-Formats explicitly for compile time to avoid "class file for loci.formats.FormatException not found"
-    shadow("ome:formats-gpl:7.1.0")
+    // Bio-Formats itself, named explicitly so javac has loci.formats.* on the compile classpath
+    // ("class file for loci.formats.FormatException not found" without it).
+    //
+    // Pinned to what QuPath 0.7.0 actually loads at runtime: its qupath-extension-bioformats 0.7.0
+    // declares ome:formats-gpl:8.4.0. Because this is PROVIDED, the runtime version is QuPath's
+    // whatever we write here -- so the only thing this line controls is which API we compile
+    // against, and it should be the same one. Dependabot offers 8.5.0 periodically; taking it
+    // would compile against an API newer than the runtime, which is the direction that breaks.
+    shadow("ome:formats-gpl:8.4.0")
 
     // OME-ZARR support. PROVIDED for the same reason: QuPath ships jzarr 0.4.2 (the identical
     // version) plus jblosc and the platform-correct blosc native in its lib/.
