@@ -34,6 +34,13 @@ repositories {
     maven {
         url = uri("https://maven.scijava.org/content/repositories/releases")
     }
+    // SciJava's aggregating group, which proxies OME. Listed before artifacts.openmicroscopy.org
+    // because that host is a single point of failure for the Bio-Formats chain: when it went 503
+    // in September 2026 every Windows CI run died in dependency resolution, while Linux passed
+    // only on a warm Gradle cache. The upstream repo stays below as the fallback.
+    maven {
+        url = uri("https://maven.scijava.org/content/groups/public")
+    }
     maven {
         url = uri("https://artifacts.openmicroscopy.org/artifactory/maven/")
     }
