@@ -5,7 +5,7 @@ All notable changes to the Tiles to Pyramid QuPath Extension will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.6] - 2026-09-25
 
 ### Fixed
 - **A merged image opened as grayscale.** Every source of a merge is a single-channel OME-TIFF, and those report their channel colour as near-white (`#FFFDFE`), so the merged image inherited four white channels and QuPath had nothing to colour them with. Channels whose source colour carries no information now get one: `DAPI`, `FITC`, `TRITC` and `Cy5` by name, a bare number in 340-800 read as the excitation wavelength and given the colour its emission is conventionally shown in (385 blue, 475 green, 550 red, 621 magenta), and anything unrecognized from QuPath's own palette by position so the channels are at least tellable apart. A source that does supply a real colour keeps it.
