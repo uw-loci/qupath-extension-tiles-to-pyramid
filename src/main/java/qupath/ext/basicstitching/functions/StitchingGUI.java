@@ -228,6 +228,7 @@ public class StitchingGUI {
             QPPreferences.setCompressionTypeSaved(compressionType);
             QPPreferences.setDownsampleSaved(downsampleField.getText());
             QPPreferences.setSearchStringSaved(matchingString);
+            QPPreferences.setPixelSizeOverrideSaved(pixelSizeOverrideCheckbox.isSelected());
             if (pixelSizeOverrideCheckbox.isSelected()) {
                 QPPreferences.setImagePixelSizeInMicronsSaved(pixelSizeField.getText());
             }
@@ -523,7 +524,8 @@ public class StitchingGUI {
                 new Tooltip("Each matching sub-folder is stitched to its own single-channel image.\n"
                         + "When ticked, those images are also combined into one multichannel image\n"
                         + "named <folder>_merged, with channels named after the sub-folders.\n"
-                        + "The per-channel images are kept. Not offered for RGB tiles."));
+                        + "The per-channel images are kept, in a <folder>_channels sub-folder.\n"
+                        + "Not offered for RGB tiles."));
         Integer row = guiElementPositions.get(mergeChannelsCheckbox);
         if (row != null) {
             pane.add(mergeChannelsCheckbox, 0, row, 2, 1);
@@ -1095,13 +1097,20 @@ public class StitchingGUI {
                 + "Tick 'Manually edit pixel size' to override.");
         pixelSizeLabel.setTooltip(pixelSizeTooltip);
         pixelSizeField.setTooltip(pixelSizeTooltip);
-        pixelSizeField.setEditable(false);
         pixelSizeSourceLabel.setStyle("-fx-font-size: 0.85em; -fx-text-fill: #666;");
 
-        // Default: field is locked. Checking the box unlocks it; unchecking
-        // restores the auto-detected value (or the saved default if no MMStack
-        // metadata was found in the current folder).
-        pixelSizeOverrideCheckbox.setSelected(false);
+        // Restored, like every other control in this dialog. The field already reloads the number
+        // typed last time, so resetting the box to unticked left that number visible but unused --
+        // and TileConfiguration.txt tiles carry no pixel size to fall back on, making it look like
+        // the value had simply been forgotten.
+        boolean manualAtOpen = QPPreferences.getPixelSizeOverrideSaved();
+        pixelSizeOverrideCheckbox.setSelected(manualAtOpen);
+        pixelSizeField.setEditable(manualAtOpen);
+        if (manualAtOpen) {
+            pixelSizeSourceLabel.setText("(manual override)");
+        }
+        // Checking the box unlocks the field; unchecking restores the auto-detected value (or the
+        // saved default if no MMStack metadata was found in the current folder).
         pixelSizeOverrideCheckbox.setOnAction(e -> {
             boolean manual = pixelSizeOverrideCheckbox.isSelected();
             pixelSizeField.setEditable(manual);

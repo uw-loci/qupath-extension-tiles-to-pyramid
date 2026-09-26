@@ -362,15 +362,10 @@ public class StitchingWorkflow {
             source.put("mosaic extent (px, after registration)", (maxX - minX) + " x " + (maxY - minY));
         }
 
-        boolean flipX;
-        boolean flipY;
-        if (strategy instanceof qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy) {
-            flipX = qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy.flipStitchingX;
-            flipY = qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy.flipStitchingY;
-        } else {
-            flipX = qupath.ext.basicstitching.stitching.TileConfigurationTxtStrategy.flipStitchingX;
-            flipY = qupath.ext.basicstitching.stitching.TileConfigurationTxtStrategy.flipStitchingY;
-        }
+        qupath.ext.basicstitching.stitching.StageAxisFlips flips =
+                qupath.ext.basicstitching.stitching.StageAxisFlips.forMethod(config.stitchingType);
+        boolean flipX = flips.x();
+        boolean flipY = flips.y();
         Map<String, String> stitching = new java.util.LinkedHashMap<>();
         stitching.put("method", config.stitchingType);
         stitching.put("strategy", strategy.getClass().getSimpleName());
@@ -382,10 +377,24 @@ public class StitchingWorkflow {
             stitching.put("z spacing (um)", String.valueOf(config.zSpacingMicrons));
         }
         stitching.put("stage axes negated (X, Y)", flipX + ", " + flipY);
-        stitching.put(
-                "overlap blending",
-                config.getOverlapBlend().label()
-                        + " (a channel declaring a non-combinable resample policy forces last-tile-wins; see log)");
+        // Report the blend that was USED, not the one that was asked for. The old wording appended
+        // "a channel declaring a non-combinable resample policy forces last-tile-wins" to every
+        // record, which reads as an explanation of the run in hand and sent at least one reader
+        // looking for an override that had not happened.
+        qupath.ext.basicstitching.channel.ChannelSemantics.Declaration declaration = tiles.isEmpty()
+                ? qupath.ext.basicstitching.channel.ChannelSemantics.LINEAR
+                : qupath.ext.basicstitching.channel.ChannelSemantics.read(tiles.get(0).file);
+        if (declaration.policy().mayCombine()) {
+            stitching.put("overlap blending", config.getOverlapBlend().label());
+        } else {
+            stitching.put(
+                    "overlap blending",
+                    qupath.ext.basicstitching.assembly.direct.OverlapBlend.LAST_WINS.label()
+                            + " (forced: channel declares resample policy " + declaration.policy()
+                            + ", which must not be mixed; "
+                            + config.getOverlapBlend().label()
+                            + " was requested)");
+        }
         stitching.put("output format", String.valueOf(config.outputFormat));
         stitching.put("compression", config.compressionType);
 

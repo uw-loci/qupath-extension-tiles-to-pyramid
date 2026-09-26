@@ -87,6 +87,14 @@ public class QPPreferences {
     private static final BooleanProperty stageInvertYSaved =
             PathPrefs.createPersistentPreference("basicstitching.dialog.stageInvertY", false);
 
+    // Whether the pixel size is typed rather than read from the tiles. Persisted because the pixel
+    // size box beside it is, and a remembered number under a reset tick-box is worse than neither:
+    // the value typed last time sits in the field, greyed out, while the run uses an auto-detected
+    // one instead. Methods that carry no pixel size of their own (TileConfiguration.txt) must be
+    // told it every run, so forgetting the tick means retyping the number each time.
+    private static final BooleanProperty pixelSizeOverrideSaved =
+            PathPrefs.createPersistentPreference("basicstitching.dialog.pixelSizeOverride", false);
+
     // Folder Location
     public static String getFolderLocationSaved() {
         return folderLocationSaved.getValue();
@@ -205,5 +213,13 @@ public class QPPreferences {
 
     public static void setStageInvertYSaved(final boolean invert) {
         stageInvertYSaved.setValue(invert);
+    }
+
+    public static boolean getPixelSizeOverrideSaved() {
+        return pixelSizeOverrideSaved.getValue();
+    }
+
+    public static void setPixelSizeOverrideSaved(final boolean override) {
+        pixelSizeOverrideSaved.setValue(override);
     }
 }

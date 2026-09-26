@@ -19,7 +19,7 @@ import qupath.ext.basicstitching.registration.RegistrationSettings;
 import qupath.ext.basicstitching.registration.TileNode;
 import qupath.ext.basicstitching.registration.TileRegistrationEngine;
 import qupath.ext.basicstitching.registration.TileRegistrationSolution;
-import qupath.ext.basicstitching.stitching.TileConfigurationTxtStrategy;
+import qupath.ext.basicstitching.stitching.StageAxisFlips;
 import qupath.ext.basicstitching.stitching.TileMapping;
 import qupath.lib.regions.ImageRegion;
 
@@ -286,13 +286,14 @@ public final class TileRegistrationStep {
         }
         try {
             TileNode first = plan.grid().get(0);
+            StageAxisFlips flips = StageAxisFlips.forMethod(config.stitchingType);
             TileRegistrationSolution.from(
                             result,
                             plan.label(),
                             config.pixelSizeInMicrons,
                             config.baseDownsample,
-                            TileConfigurationTxtStrategy.flipStitchingX,
-                            TileConfigurationTxtStrategy.flipStitchingY,
+                            flips.x(),
+                            flips.y(),
                             first.widthPx(),
                             first.heightPx())
                     .write(out, settings, plan.notes());
@@ -316,11 +317,12 @@ public final class TileRegistrationStep {
         }
 
         ImageRegion sample = mappings.get(0).region;
+        StageAxisFlips flips = StageAxisFlips.forMethod(config.stitchingType);
         String why = solution.incompatibilityReason(
                 config.pixelSizeInMicrons,
                 config.baseDownsample,
-                TileConfigurationTxtStrategy.flipStitchingX,
-                TileConfigurationTxtStrategy.flipStitchingY,
+                flips.x(),
+                flips.y(),
                 sample.getWidth(),
                 sample.getHeight());
         if (why != null) {
