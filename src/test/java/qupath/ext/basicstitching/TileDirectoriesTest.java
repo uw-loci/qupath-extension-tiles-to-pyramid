@@ -70,6 +70,20 @@ class TileDirectoriesTest {
         assertFalse(TileDirectories.resolve(root, "*").isEmpty());
     }
 
+    /**
+     * The reference-subdirectory dropdown is built from this call, so what resolves here decides
+     * what a user can offer the solver as a registration reference. A MicroManager folder stitches
+     * with a blank match -- its channels are pages inside each file, not folders -- and after a
+     * merge that same folder also holds our own {@code <folder>_channels} output. Listing
+     * subdirectories directly offered that output as a channel to register on; resolving keeps the
+     * answer at "the selected folder", which is what will actually be stitched.
+     */
+    @Test
+    void ourOwnChannelsOutputIsNotAStitchTarget(@TempDir Path root) throws IOException {
+        Files.createDirectories(root.resolve("fluo-cells_channels"));
+        assertEquals(List.of(root), TileDirectories.resolve(root, ""));
+    }
+
     @Test
     void blankStillMeansTheSelectedFolderAlone(@TempDir Path root) throws IOException {
         Files.createDirectories(root.resolve("DAPI"));

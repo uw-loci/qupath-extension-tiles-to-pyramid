@@ -761,6 +761,8 @@ public class StitchingGUI {
         referenceBox.setTooltip(referenceLabel.getTooltip());
         refreshReferenceChoices();
         folderField.textProperty().addListener((obs, o, n) -> refreshReferenceChoices());
+        // The candidates are the folders that will be stitched, so they change with the match too.
+        matchStringField.textProperty().addListener((obs, o, n) -> refreshReferenceChoices());
 
         registrationHintLabel.setStyle("-fx-font-size: 0.85em; -fx-text-fill: #666;");
         registrationHintLabel.setTooltip(
@@ -804,10 +806,19 @@ public class StitchingGUI {
     }
 
     /**
-     * Populate the reference-subdirectory choices from the immediate subdirectories of the selected
-     * folder, keeping {@link #AUTO_REFERENCE} first (and {@link #PROJECTION_REFERENCE} second when
-     * there is more than one subdirectory to merge), preserving the current selection when it still
-     * exists.
+     * Populate the reference-subdirectory choices with the folders this run will actually stitch,
+     * keeping {@link #AUTO_REFERENCE} first and {@link #PROJECTION_REFERENCE} second when there are
+     * at least two, and preserving the current selection when it survives.
+     *
+     * <p>The candidates come from {@link TileDirectories#resolve}, the same call the stitch makes,
+     * so the list cannot disagree with what is stitched. Listing every immediate subdirectory
+     * instead offered folders that are not channels at all: after a merge the tile folder contains
+     * our own {@code <folder>_channels} output, which duly appeared in the dropdown, and on the
+     * MicroManager method there are no channel subdirectories in the first place -- its channels
+     * are pages inside each file. Choosing one of those cannot work, so it should not be offered.
+     *
+     * <p>Fewer than two directories means there is nothing to choose between, so only
+     * {@code Auto} is offered.
      */
     private void refreshReferenceChoices() {
         String previous = referenceBox.getValue();
@@ -815,16 +826,18 @@ public class StitchingGUI {
         choices.add(AUTO_REFERENCE);
         String path = folderField.getText();
         if (path != null && !path.trim().isEmpty()) {
-            File folder = new File(path.trim());
-            File[] children = folder.listFiles(File::isDirectory);
-            if (children != null) {
-                java.util.Arrays.sort(children);
-                if (children.length >= 2) {
+            try {
+                java.util.List<java.nio.file.Path> dirs =
+                        TileDirectories.resolve(new File(path.trim()).toPath(), matchStringField.getText());
+                if (dirs.size() >= 2) {
                     choices.add(PROJECTION_REFERENCE);
+                    for (java.nio.file.Path dir : dirs) {
+                        choices.add(dir.getFileName().toString());
+                    }
                 }
-                for (File child : children) {
-                    choices.add(child.getName());
-                }
+            } catch (IOException | RuntimeException e) {
+                // An unreadable or half-typed folder is not worth a dialog; Auto still works.
+                logger.debug("Could not list reference choices for {}: {}", path, e.toString());
             }
         }
         referenceBox.getItems().setAll(choices);
