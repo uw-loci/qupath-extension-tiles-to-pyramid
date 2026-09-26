@@ -405,10 +405,11 @@ persistent tuning knobs in QuPath's Preferences.
   whose overlap you know.
 - **Reference subdirectory** -- what to measure the overlaps on. The solution is reused by every
   subdirectory. Choices:
-  - **Auto (best match)** (default). Measures about 24 seams on every
-    subdirectory and solves on the one whose matches are most decisive. Seams that come out weak or
-    rejected on it are then re-measured on the other subdirectories, and the best match wins. Only
-    the weak seams pay for this.
+  - **Auto (best match)** (default). Measures the same seams on every folder and solves on the one
+    where the tiles fit together only one way. A folder of small repeated features can line up in
+    several places that all look about equally good; one with large distinct structure usually cannot,
+    and it is the safer thing to measure. Weak seams are then re-measured on the other subdirectories,
+    and the best match wins. Only the weak seams pay for this extra measurement.
   - **Normalized merge of all** (shown when there are two or more sub-folders). Scales each subdirectory
     by one factor for the whole dataset, then averages them. A dim channel counts as much as a bright
     one, and a feature looks the same in both tiles of a seam. Every seam reads every subdirectory,
