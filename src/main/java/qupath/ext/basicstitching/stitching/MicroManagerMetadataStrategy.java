@@ -281,8 +281,14 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
             double rawY = posUm[1];
             if (flipX) rawX = -rawX;
             if (flipY) rawY = -rawY;
-            double x = rawX / (effectivePixelSize * baseDownsample);
-            double y = rawY / (effectivePixelSize * baseDownsample);
+            // Positions are in FULL-RESOLUTION pixels, deliberately not divided by
+            // baseDownsample. The tile's width and height below come from the file and are
+            // full resolution too, so scaling only the position while leaving the size alone
+            // shrinks the grid under fixed-size tiles: at downsample 2 a 10% overlap became
+            // 55% and the mosaic was built wrong. Downsampling belongs to the writer, which
+            // applies config.baseDownsample when it writes the pyramid.
+            double x = rawX / effectivePixelSize;
+            double y = rawY / effectivePixelSize;
             ImageRegion region = ImageRegion.createInstance(
                     (int) Math.round(x), (int) Math.round(y), dims.get("width"), dims.get("height"), 0, 0);
 

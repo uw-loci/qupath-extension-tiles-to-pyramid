@@ -256,8 +256,10 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
                         if (flipY) {
                             rawY = -rawY;
                         }
-                        double x = rawX / (pixelSizeInMicrons * baseDownsample);
-                        double y = rawY / (pixelSizeInMicrons * baseDownsample);
+                        // Full-resolution pixels; see MicroManagerMetadataStrategy for why
+                        // baseDownsample is not applied here. The writer downsamples.
+                        double x = rawX / pixelSizeInMicrons;
+                        double y = rawY / pixelSizeInMicrons;
                         map.put(imageName, new Position(x, y));
                     }
                 }

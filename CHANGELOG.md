@@ -5,6 +5,11 @@ All notable changes to the Tiles to Pyramid QuPath Extension will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Downsample greater than 1 built the mosaic wrongly.** Both strategies that read stage coordinates divided the tile POSITIONS by the downsample factor while leaving the tile WIDTH and HEIGHT at full resolution, so the grid shrank underneath fixed-size tiles. At downsample 2 a 10% overlap became 55%, a 9-tile mosaic came out 3891 x 3891 instead of 5754 x 5749, registration matched 0 of 12 seams, and the image was scrambled. Downsampling is the writer's job -- it already applies `baseDownsample` when writing the pyramid -- so the positions were being scaled twice, once correctly and once not. Positions are now full-resolution pixels. Verified on a 3x3 four-channel acquisition: at downsample 2 the geometry is again 10% overlap with 12 of 12 seams accepted, and the written image is 2877 x 2874, exactly half the full-resolution mosaic.
+
 ## [0.7.5] - 2026-09-25
 
 ### Added
