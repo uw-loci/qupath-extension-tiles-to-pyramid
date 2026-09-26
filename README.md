@@ -155,7 +155,7 @@ root/
 
 **Usage:**
 - Each group must contain a `TileConfiguration.txt` file (at the root for z/t layouts, or in each angle subdirectory for flat/projected)
-- Coordinates in the config are stage positions in micrometers; each is divided by the pixel size and the downsample to place the tile
+- Coordinates in the config are stage positions in micrometers; each is divided by the pixel size to place the tile in full-resolution pixels. Downsampling is applied by the writer when creating the pyramid, not by the position reader.
 - On a scope whose stage runs opposite to its camera, tick **Invert X axis** / **Invert Y axis** (QPSC writes these files in stage micrometers and negates both axes on such a scope). Leave both clear for a file written by Fiji's Grid/Collection stitching, whose coordinates are already in image space -- see [If the mosaic comes out mirrored](#if-the-mosaic-comes-out-mirrored)
 - In the dialog, check **Pixel size, microns** before stitching. It is locked by default and shows the last manually entered value (initially 7.2), or one auto-filled from MicroManager metadata found in the folder; tick **Manually edit pixel size** to set it. QPSC and scripts pass the pixel size explicitly
 - Tile filenames in the config must match across all z/t planes (the stitcher recursively finds tiles by name, regardless of z/t nesting)
