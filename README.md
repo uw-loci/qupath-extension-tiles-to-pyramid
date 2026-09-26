@@ -73,7 +73,7 @@ Developers of qpsc may want to also run the following to enable working with qps
 
 A notification says the stitch has started. QuPath stays usable, but a second stitch cannot start
 until this one finishes. When it does, a **Tiles to Pyramid - Result** window lists the full path of
-each output file, and you can copy the paths from it or click **Open output folder** to go straight
+each output file (you can copy the paths from it), and an **Open output folder** button to go straight
 there. Output is written into the folder you selected.
 
 If no tiles are found, that window says so instead, and names what it did find: how many TIFFs are
@@ -228,6 +228,16 @@ Common to both:
 - Select the acquisition's root folder (the folder containing the sidecars, or the folder containing the per-position subfolders). The strategy scans subfolders, so either layout works.
 - On a stage-inverted scope, tick **Invert X axis** and/or **Invert Y axis**. Scripted callers set `MicroManagerMetadataStrategy.flipStitchingX` / `flipStitchingY` instead.
 
+**Pixel Size Auto-fill:**
+- When you select an input folder, the pixel-size field is automatically filled from the first metadata file's `PixelSizeUm`. The dialog does not scan the default folder, so opening it without choosing a folder first will not pre-fill a pixel size.
+- The field is **locked by default** to prevent accidental edits -- a label shows the source (`(from MicroManager metadata)` / `(no MicroManager metadata - tick 'Manually edit' to set)` / `(manual override)`).
+- By default the metadata `PixelSizeUm` is authoritative, so an accidental dialog value cannot silently misalign a stitch when the metadata is correct.
+- Tick **"Manually edit pixel size"** to override. When ticked, your value **wins over the metadata** -- this is required for scopes whose metadata pixel size is wrong (e.g. laser-scanning microscopes whose zoom factor is not reflected in MicroManager's pixel-size calibration). Symptom of a wrong metadata pixel size: tiles are placed too far apart and overlap regions appear **duplicated** along every seam.
+
+**"Measure from tiles..." (measure the pixel size from the overlap):**
+- When the metadata pixel size is untrustworthy, click this button to **measure** the true pixel size directly from the data. It phase-correlates (normalized cross-correlation) the overlapping content of neighboring tiles, divides the recorded stage step (µm) by the measured pixel shift, and reports the median over several tile pairs.
+- The measured value is written into the field **as a manual override** (so the stitcher uses it) and the source label shows the confidence. If confidence is low (low-texture or low-overlap tiles), verify the result and adjust manually.
+
 #### If the mosaic comes out mirrored
 
 On a scope where a stage axis runs opposite to the camera, every tile lands in its
@@ -259,17 +269,6 @@ stage micrometers when an acquisition wrote the file. Leave them clear for a
 `TileConfiguration.txt` written by Fiji's Grid/Collection stitching: those
 coordinates are already in image space. They are not offered for Vectra or
 Filename[x,y], whose positions are image-space by construction.
-
-**Pixel Size Auto-fill:**
-- When you select an input folder, the pixel-size field is automatically filled from the first metadata file's `PixelSizeUm`. The dialog does not scan the default folder, so opening it without choosing a folder first will not pre-fill a pixel size
-- The field is **locked by default** to prevent accidental edits -- a label shows the source (`(from MicroManager metadata)` / `(no MicroManager metadata - tick 'Manually edit' to set)` / `(manual override)`)
-- By default the metadata `PixelSizeUm` is authoritative, so an accidental dialog value cannot silently misalign a stitch when the metadata is correct
-- Tick **"Manually edit pixel size"** to override. When ticked, your value **wins over the metadata** -- this is required for scopes whose metadata pixel size is wrong (e.g. laser-scanning microscopes whose zoom factor is not reflected in MicroManager's pixel-size calibration). Symptom of a wrong metadata pixel size: tiles are placed too far apart and overlap regions appear **duplicated** along every seam.
-
-**"Measure from tiles..." (measure the pixel size from the overlap):**
-- Shown only for the **MicroManager metadata** method, since it relies on reading MicroManager's sidecar metadata to identify which tiles are neighbors.
-- When the metadata pixel size is untrustworthy, click this button to **measure** the true pixel size directly from the data. It phase-correlates (normalized cross-correlation) the overlapping content of neighboring tiles, divides the recorded stage step (µm) by the measured pixel shift, and reports the median over several tile pairs.
-- The measured value is written into the field **as a manual override** (so the stitcher uses it) and the source label shows the confidence. If confidence is low (low-texture or low-overlap tiles), verify the result and adjust manually.
 
 ### Input directory structure
 
@@ -310,6 +309,18 @@ input_folder/             Method: Filename[x,y]; sub-folder text: slide
 | **Z-Spacing (um)** | Scripts only (`StitchingConfig`); the dialog always records 1.0 | 1.0 |
 | **Solve tile overlaps (content-based registration)** | Checkbox to enable overlap measurement and correction. When enabled, measures the real overlap between neighboring tiles and corrects their positions before stitching, closing seams caused by stage backlash and drift. Writes a `TileRegistration.txt` solution file beside the tiles. Choice is remembered between sessions. See [Tile registration](#tile-registration) for details. | Off (faster, nominal positions) |
 | **Reference subdirectory** | Shown when overlap solving is on: what the overlaps are measured on. **Auto (best match)**, a named sub-folder, or **Normalized merge of all** when there are two or more. Every sub-folder is then placed with that one result. See [Tile registration](#tile-registration) | Auto |
+
+### Result window and warnings
+
+When a stitch completes, the **Tiles to Pyramid - Result** window appears listing:
+- The full path of each output file (which you can copy)
+- An **Open output folder** button to navigate there
+- What registration did, when it was asked for -- how many seams were accepted, which channel
+  they were measured on, and how many tile placements moved
+- A line beginning **WARNING:** when the geometry looks implausible. There is no matching "OK"
+  line; a stitch with nothing to report simply does not have one
+
+If the window opens with **WARNING: The tiles overlap by X% x Y%**, this means the overlap is far larger than any real acquisition would arrange (real acquisitions use 5–20% overlap). The most likely cause is a pixel size that does not match your tiles — too large a value packs the tiles together. Check your pixel-size setting and re-stitch with the correct value. The image was still written, so check it before using it.
 
 ### Output format options
 
@@ -840,6 +851,12 @@ the two levels are matched independently, so `z{nn}/t{nn}/` nesting works as wel
 - **Cause**: All acquisitions use the memory-efficient direct stitcher, whose footprint is set by the chunk being written rather than by the tile count. Measured on 1024 px 16-bit tiles at 10% overlap, a 169-megapixel mosaic completes in a 128 MB heap and a 32-megapixel one in 96 MB, so running out of memory here usually points at the JVM configuration or at something else in the same JVM rather than at the mosaic being too large.
 - **Solution**: Increase JVM heap size if needed, use higher downsample values for initial processing, or reduce the number of concurrent operations. The direct stitcher's bounded memory usage should handle most configurations.
 - **Command**: `java -Xmx16G -jar QuPath.jar`
+
+#### "The tiles overlap by X% x Y%, which no acquisition is set up to do"
+- **Cause**: Real acquisitions use 5–20% tile overlap. An overlap above 45% in both axes is so rare that it almost always means the pixel size is wrong — too large a value packs the tiles together. A stitched polarized set at 4× the intended pixel size produced 76% overlap where the acquisition used 10%.
+- **What happens**: The stitch succeeds and the image is written, but the **Tiles to Pyramid - Result** window shows **WARNING** at the top with the overlap percentage and the pixel size that was used.
+- **Solution**: Check your pixel-size setting. The source label shows where it came from (MicroManager metadata, manual entry, or measured from tiles). For MicroManager methods, you can click **"Measure from tiles..."** to compute the correct pixel size from the overlap itself. Re-stitch with the correct pixel size.
+- **What to check first**: Verify that you selected the right acquisition folder and the right stitching method. A MicroManager acquisition selected with a TileConfiguration.txt method, or a polarized set's metadata read as MicroManager, are common mistakes.
 
 ### Debug logging
 Enable detailed logging by setting log level to DEBUG:
