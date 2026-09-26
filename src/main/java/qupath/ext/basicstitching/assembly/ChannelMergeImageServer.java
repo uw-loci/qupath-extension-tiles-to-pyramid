@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.lib.awt.common.BufferedImageTools;
@@ -87,11 +88,20 @@ public class ChannelMergeImageServer implements ImageServer<BufferedImage> {
                 } else {
                     name = srcChannel.getName();
                 }
-                Integer color = (channelColors != null
-                                && overrideIdx < channelColors.size()
-                                && channelColors.get(overrideIdx) != null)
-                        ? channelColors.get(overrideIdx)
-                        : srcChannel.getColor();
+                Integer color;
+                if (channelColors != null
+                        && overrideIdx < channelColors.size()
+                        && channelColors.get(overrideIdx) != null) {
+                    color = channelColors.get(overrideIdx);
+                } else if (isGrey(srcChannel.getColor())) {
+                    // Each source is a single-channel OME-TIFF, and those report near-white
+                    // (#FFFDFE in practice). Inheriting that gives a merged image whose every
+                    // channel is grey, which opens in QuPath as grayscale however many channels
+                    // it has. Pick something distinguishable instead.
+                    color = defaultColorFor(name, overrideIdx);
+                } else {
+                    color = srcChannel.getColor();
+                }
                 merged.add(ImageChannel.getInstance(name, color));
                 overrideIdx++;
             }
@@ -285,6 +295,81 @@ public class ChannelMergeImageServer implements ImageServer<BufferedImage> {
     @Override
     public int nChannels() {
         return mergedChannels.size();
+    }
+
+    /** True when a colour carries no information: absent, or any shade of grey including white. */
+    private static boolean isGrey(Integer color) {
+        if (color == null) {
+            return true;
+        }
+        int r = (color >> 16) & 0xFF;
+        int g = (color >> 8) & 0xFF;
+        int b = color & 0xFF;
+        // A little tolerance: a round trip through OME-XML turns pure white into #FFFDFE.
+        return Math.abs(r - g) <= 6 && Math.abs(g - b) <= 6 && Math.abs(r - b) <= 6;
+    }
+
+    /**
+     * A display colour for a channel whose source did not supply a useful one.
+     *
+     * <p>Named channels are matched first, since a microscopist expects DAPI blue and FITC green
+     * whatever order they were stitched in. A channel named only by a number is read as the
+     * EXCITATION wavelength in nm -- which is how filter cubes are labelled, and how QPSC and
+     * MicroManager name these channels -- and given the colour its emission is conventionally
+     * displayed in. That is a convention, not a measurement: the emission is always longer than
+     * the excitation, and a 550 nm cube is shown red rather than green.
+     *
+     * <p>Anything unrecognized falls back to QuPath's own palette by position, which at least
+     * makes the channels tellable apart.
+     */
+    private static Integer defaultColorFor(String name, int index) {
+        if (name != null) {
+            String n = name.toUpperCase(Locale.ROOT);
+            if (n.contains("DAPI") || n.contains("HOECHST")) {
+                return rgb(0, 0, 255);
+            }
+            if (n.contains("FITC") || n.contains("GFP") || n.contains("488")) {
+                return rgb(0, 255, 0);
+            }
+            if (n.contains("TRITC") || n.contains("CY3") || n.contains("RFP") || n.contains("TEXAS")) {
+                return rgb(255, 0, 0);
+            }
+            if (n.contains("CY5") || n.contains("647")) {
+                return rgb(255, 0, 255);
+            }
+            Integer byWavelength = fromExcitationNm(n);
+            if (byWavelength != null) {
+                return byWavelength;
+            }
+        }
+        return ImageChannel.getDefaultChannelColor(index);
+    }
+
+    /** @return a colour for a bare excitation wavelength in nm, or null if the name is not one */
+    private static Integer fromExcitationNm(String name) {
+        int nm;
+        try {
+            nm = Integer.parseInt(name.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        if (nm < 340 || nm > 800) {
+            return null;
+        }
+        if (nm < 420) {
+            return rgb(0, 0, 255); // UV/violet cube: DAPI and friends, shown blue
+        }
+        if (nm < 505) {
+            return rgb(0, 255, 0); // blue cube: GFP/FITC, shown green
+        }
+        if (nm < 580) {
+            return rgb(255, 0, 0); // green cube: TRITC/Cy3, shown red
+        }
+        return rgb(255, 0, 255); // red cube: Cy5 and beyond, conventionally magenta
+    }
+
+    private static int rgb(int r, int g, int b) {
+        return (r << 16) | (g << 8) | b;
     }
 
     @Override

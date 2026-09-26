@@ -428,9 +428,8 @@ public class StitchingGUI {
     private static String mergeChannelOutputs(List<String> outputs, StitchingConfig config) {
         List<String> sorted = new ArrayList<>(outputs);
         Collections.sort(sorted);
-        List<String> names = sorted.stream()
-                .map(p -> GeneralTools.stripExtension(new File(p).getName()))
-                .toList();
+        List<String> names =
+                sorted.stream().map(p -> channelNameOf(new File(p).getName())).toList();
         String stem = new File(config.folderPath).getName() + "_merged";
         logger.info("Merging {} channel stitches {} into {}", sorted.size(), names, stem);
         String merged = ChannelMerger.merge(
@@ -439,6 +438,28 @@ public class StitchingGUI {
             tidyChannelStitches(sorted, config, stem);
         }
         return merged;
+    }
+
+    /** A trailing "_2x_downsample", with an optional "_3" uniqueness counter after it. */
+    private static final java.util.regex.Pattern OUTPUT_SUFFIX =
+            java.util.regex.Pattern.compile("_\\d+x_downsample(_\\d+)?$|_(\\d+)$");
+
+    /**
+     * The channel's own name, recovered from the file the stitch wrote.
+     *
+     * <p>Outputs are named after the channel, but the writer appends "_2x_downsample" when the
+     * downsample is not 1 and "_2" when a file of that name already exists. Neither belongs in a
+     * channel name: they would show in QuPath's channel list, and they stop a channel called
+     * "385" being recognized as a wavelength when its colour is chosen.
+     *
+     * @param fileName the output file's name, with extension
+     * @return the channel name
+     */
+    private static String channelNameOf(String fileName) {
+        String stem = GeneralTools.stripExtension(fileName);
+        String trimmed = OUTPUT_SUFFIX.matcher(stem).replaceFirst("");
+        // Never strip everything: a channel genuinely called "2" keeps its name.
+        return trimmed.isBlank() ? stem : trimmed;
     }
 
     /**
@@ -1239,7 +1260,12 @@ public class StitchingGUI {
         pixelSizeField.setVisible(!hidePixelSize);
         pixelSizeOverrideCheckbox.setVisible(!hidePixelSize);
         pixelSizeSourceLabel.setVisible(!hidePixelSize);
-        estimatePixelSizeButton.setVisible(!hidePixelSize);
+        // "Measure from tiles..." estimates the pixel size from the overlap between neighbors,
+        // and it finds which tiles neighbor which by reading MicroManager metadata. On any other
+        // method it can only report "Need at least two tiles with stage positions", so offering it
+        // there is an invitation to a dead end.
+        boolean canMeasurePixelSize = selectedValue != null && selectedValue.startsWith("MicroManager");
+        estimatePixelSizeButton.setVisible(!hidePixelSize && canMeasurePixelSize);
 
         // Show fudge factor components only for Vectra
         boolean showFudgeFactor = "Vectra tiles with metadata".equals(selectedValue);
