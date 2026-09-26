@@ -9,7 +9,7 @@ plugins {
     // Auto-formatting (palantirJavaFormat) -- gates the build via `check`
     id("com.diffplug.spotless") version "7.0.2"
     // Static bug detection
-    id("com.github.spotbugs") version "6.5.0"
+    id("com.github.spotbugs") version "6.5.5"
     // Note: Platform detection (osdetector) is already provided by qupath-conventions
 }
 
