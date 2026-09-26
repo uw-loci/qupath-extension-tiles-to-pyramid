@@ -267,6 +267,7 @@ Filename[x,y], whose positions are image-space by construction.
 - Tick **"Manually edit pixel size"** to override. When ticked, your value **wins over the metadata** -- this is required for scopes whose metadata pixel size is wrong (e.g. laser-scanning microscopes whose zoom factor is not reflected in MicroManager's pixel-size calibration). Symptom of a wrong metadata pixel size: tiles are placed too far apart and overlap regions appear **duplicated** along every seam.
 
 **"Measure from tiles..." (measure the pixel size from the overlap):**
+- Shown only for the **MicroManager metadata** method, since it relies on reading MicroManager's sidecar metadata to identify which tiles are neighbors.
 - When the metadata pixel size is untrustworthy, click this button to **measure** the true pixel size directly from the data. It phase-correlates (normalized cross-correlation) the overlapping content of neighboring tiles, divides the recorded stage step (µm) by the measured pixel shift, and reports the median over several tile pairs.
 - The measured value is written into the field **as a manual override** (so the stitcher uses it) and the source label shows the confidence. If confidence is low (low-texture or low-overlap tiles), verify the result and adjust manually.
 
@@ -607,10 +608,16 @@ What to know before relying on the merged image:
   fluorescence tiles therefore count as RGB and hide the option; save one channel per file to use it.
 - **Channel order and names.** Channels are ordered by the per-channel output file name (plain text
   order, case-sensitive, so `ch10` sorts before `ch2`; zero-pad numbers) and named after the file
-  stem. With a Downsample other than 1 the stem includes `_<n>x_downsample`, and a re-run into a
-  folder that already holds the outputs writes numbered copies whose suffix also appears in the name.
-- **Colors are not set by the dialog.** Each channel keeps its per-channel file's default; set
-  colors in QuPath afterwards, or call `ChannelMerger.merge(..., channelColors, ...)` from a script.
+  stem. Writer suffixes (`_<n>x_downsample` for downsampling, and `_<n>` for uniqueness when a file
+  is re-run into a folder that already holds the outputs) are automatically stripped from the merged
+  channel names.
+- **Channel colors are assigned automatically.** Named channels (`DAPI`, `HOECHST`, `FITC`, `GFP`,
+  `TRITC`, `CY3`, `RFP`, `TEXAS RED`, `CY5`, `647`) are assigned their conventional display colors.
+  A bare number in the range 340–800 nm is read as an excitation wavelength and colored according to
+  the convention for that filter cube (385 nm blue, 475 nm green, 550 nm red, 621 nm magenta).
+  Unrecognized names fall back to QuPath's own palette by position, which at least makes channels
+  tellable apart. A source channel that supplied a real color keeps it. Colors can be overridden in
+  QuPath afterwards, or by calling `ChannelMerger.merge(..., channelColors, ...)` from a script.
 - **Width, height and pixel type must match.** If they differ, no merged image is written; the
   per-channel images remain in the folder.
 - **Partial failures.** If one sub-folder fails to stitch, the rest are still merged, so the merged
