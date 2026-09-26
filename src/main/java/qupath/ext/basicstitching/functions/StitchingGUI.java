@@ -752,8 +752,11 @@ public class StitchingGUI {
         referenceLabel.setTooltip(
                 new Tooltip("What to measure tile overlaps on. The solution is reused by every subdirectory\n"
                         + "(angles/channels are co-captured, so they must share one solve).\n\n"
-                        + "Auto (best match): tries a sample of seams on every folder, solves on the one that\n"
-                        + "matches most decisively, and re-measures only the weak seams on the other folders.\n"
+                        + "Auto (best match): measures the same seams on every folder and solves on the one\n"
+                        + "where the tiles fit together only one way. A folder of small repeated features can\n"
+                        + "line up in several places that all look about equally good; one with large distinct\n"
+                        + "structure usually cannot, and it is the safer thing to measure. Weak seams are then\n"
+                        + "re-measured on the other folders.\n"
                         + "Normalized merge of all: scales each folder once for the whole dataset, then averages\n"
                         + "them.\n"
                         + "Reads every folder at every seam, so it takes longer than a single folder.\n"

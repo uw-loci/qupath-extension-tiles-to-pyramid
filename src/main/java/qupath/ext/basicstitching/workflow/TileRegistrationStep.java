@@ -269,7 +269,7 @@ public final class TileRegistrationStep {
         notes.add(
                 alternates.isEmpty()
                         ? "reference choice: only subdirectory"
-                        : "reference choice: auto (most decisive on sampled seams; weak seams re-measured on "
+                        : "reference choice: auto (tiles fit only one way on this one; weak seams re-measured on "
                                 + String.join(
                                         ", ",
                                         alternates.stream()
