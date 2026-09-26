@@ -106,6 +106,7 @@ public class DirectTileStitcher {
 
             // 2. Build spatial index
             TileSpatialIndex index = new TileSpatialIndex(mappings, DEFAULT_CHUNK_SIZE);
+            checkGeometry(index, dims, config);
             int imageWidth = index.getImageWidth();
             int imageHeight = index.getImageHeight();
             int zCount = countZSlices(mappings);
@@ -225,6 +226,7 @@ public class DirectTileStitcher {
 
             // 2. Build spatial index from tile positions
             TileSpatialIndex index = new TileSpatialIndex(mappings, DEFAULT_CHUNK_SIZE);
+            checkGeometry(index, dims, config);
             int imageWidth = index.getImageWidth();
             int imageHeight = index.getImageHeight();
             int zCount = countZSlices(mappings);
@@ -429,5 +431,47 @@ public class DirectTileStitcher {
             }
             counter++;
         }
+    }
+
+    /**
+     * The largest overlap an acquisition plausibly uses. Real ones run 5-20%; a stage would have
+     * to be moving less than half a field per step to exceed this on purpose.
+     */
+    private static final double IMPLAUSIBLE_OVERLAP_FRACTION = 0.45;
+
+    /**
+     * Notice a mosaic whose tiles overlap far more than any acquisition would arrange.
+     *
+     * <p>A wrong pixel size cannot fail the stitch. Positions are micrometers divided by the pixel
+     * size, so too large a value packs the tiles together, the mosaic is written, and it looks
+     * like a mosaic. The only evidence is the geometry: stitching a polarized set at 0.653 um/px
+     * instead of 0.1732 produced 76% overlap where the acquisition used 10%.
+     *
+     * <p>Recorded on the config rather than only logged, so the host can tell the user. Never
+     * throws: an odd overlap is a strong hint, not proof, and refusing to write an image someone
+     * asked for on a hint would be worse than writing it with a warning attached.
+     */
+    private static void checkGeometry(
+            TileSpatialIndex index, TileReaderPool.TileDimensions dims, StitchingConfig config) {
+        if (config == null || dims.width() <= 0 || dims.height() <= 0) {
+            return;
+        }
+        double fx = index.getOverlapPxX() / (double) dims.width();
+        double fy = index.getOverlapPxY() / (double) dims.height();
+        double worst = Math.max(fx, fy);
+        if (worst < IMPLAUSIBLE_OVERLAP_FRACTION) {
+            return;
+        }
+        String warning = String.format(
+                java.util.Locale.ROOT,
+                "The tiles overlap by %.0f%% x %.0f%%, which no acquisition is set up to do. "
+                        + "The usual cause is a pixel size that does not belong to these tiles: "
+                        + "%s um/px was used, and too large a value packs the tiles together. "
+                        + "The image was still written, but check it before using it.",
+                fx * 100,
+                fy * 100,
+                config.pixelSizeInMicrons);
+        logger.warn(warning);
+        config.setGeometryWarning(warning);
     }
 }

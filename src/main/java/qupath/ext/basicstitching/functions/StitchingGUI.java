@@ -366,6 +366,14 @@ public class StitchingGUI {
                             message.append(explainNoTiles(config));
                         } else {
                             ok = true;
+                            // Geometry that cannot be right does not fail the stitch, so the
+                            // result is demoted to a warning and the reason put at the top,
+                            // where it is read before the list of files.
+                            String geometry = config.getGeometryWarning();
+                            if (geometry != null) {
+                                ok = false;
+                                message.append("WARNING: ").append(geometry).append("\n\n");
+                            }
                             // What registration did is the thing people want to know and the thing
                             // they should not have to open the log to read.
                             String reg = describeRegistration(config);
@@ -1197,6 +1205,17 @@ public class StitchingGUI {
         if (pixelSizeOverrideCheckbox.isSelected()) {
             return;
         }
+        // MicroManager only. The scan looks three levels down, so on any other method the
+        // "MicroManager metadata" it finds can belong to an unrelated acquisition inside the
+        // folder you picked -- selecting a parent holding both a MicroManager set and a
+        // polarized set filled in the MicroManager pixel size and stitched the other one at
+        // nearly four times the right scale, with the label claiming the value was measured.
+        // A TileConfiguration.txt carries no pixel size, so there is nothing honest to fill.
+        String method = stitchingGridBox.getValue();
+        if (method == null || !method.startsWith("MicroManager")) {
+            pixelSizeSourceLabel.setText("");
+            return;
+        }
         String path = folderField.getText();
         if (path == null || path.trim().isEmpty()) {
             pixelSizeSourceLabel.setText("");
@@ -1283,6 +1302,10 @@ public class StitchingGUI {
         invertLabel.setVisible(stagePositions);
         invertBox.setVisible(stagePositions);
 
+        // Re-evaluate on a method change too, not only a folder change: switching away from
+        // MicroManager must drop a value that was auto-filled from its metadata, along with the
+        // label claiming where it came from.
+        autoFillPixelSizeFromFolder();
         refreshMergeVisibility();
         adjustLayout(pane);
     }

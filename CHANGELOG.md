@@ -5,6 +5,14 @@ All notable changes to the Tiles to Pyramid QuPath Extension will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **The pixel size auto-filled from an unrelated acquisition.** The field is filled by scanning the selected folder for MicroManager metadata, the scan looks three levels down, and it ran whatever method was chosen. Selecting a folder that holds both a MicroManager acquisition and something else filled in the MicroManager pixel size and labelled it "(from MicroManager metadata)" -- so a polarized set needing 0.1732 um/px was stitched at 0.653, giving 76% overlap where the acquisition used 10%, and a scrambled image. Auto-fill now happens only for the MicroManager method, where the selected folder is the acquisition; a `TileConfiguration.txt` carries no pixel size, so there was never anything honest to fill. It is also re-evaluated when the method changes, so switching away drops both the value and the label.
+
+### Added
+- **A stitch whose tiles overlap implausibly says so, in the result window.** A wrong pixel size cannot fail a stitch: positions are micrometers divided by it, so too large a value packs the tiles together and a mosaic that looks like a mosaic is written. When the measured overlap exceeds 45% of a tile -- real acquisitions use 5-20% -- the result window leads with the overlap, the pixel size that produced it, and the advice to check the image. It warns rather than refuses: an odd overlap is a strong hint, not proof.
+
 ## [0.7.6] - 2026-09-25
 
 ### Fixed

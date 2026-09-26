@@ -76,6 +76,26 @@ public class StitchingConfig {
                     "registration", java.util.Map.of("mode", "off (tiles at nominal stage positions)"));
 
     /** @return what registration did on this stitch; never null. */
+    /**
+     * A problem with the result that the stitch could not refuse to produce.
+     *
+     * <p>A wrong pixel size does not fail: the tiles are placed at the wrong spacing, the mosaic
+     * is written, and it looks like a mosaic. The only symptom is geometry that cannot be right --
+     * an overlap of 76% where acquisitions use 10%. Recording it here lets the host say so rather
+     * than leaving the user to notice, or not.
+     */
+    private volatile String geometryWarning;
+
+    /** @return the warning, or null if the geometry looked plausible. */
+    public String getGeometryWarning() {
+        return geometryWarning;
+    }
+
+    /** @param warning what looks wrong; null clears it. */
+    public void setGeometryWarning(String warning) {
+        this.geometryWarning = warning;
+    }
+
     public qupath.ext.basicstitching.workflow.StitchInfoFile.Section getRegistrationRecord() {
         return registrationRecord;
     }
