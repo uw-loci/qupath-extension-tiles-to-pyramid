@@ -5,7 +5,7 @@ All notable changes to the Tiles to Pyramid QuPath Extension will be documented 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.5] - 2026-09-25
 
 ### Added
 - **`*` in the sub-folder field selects every sub-folder.** Selecting a set of channel or angle folders previously meant finding a substring they happened to share: `DAPI`, `FITC` and `TRITC` are selected by the letter `I`, which works, teaches nothing, and would have failed on almost any other three channel names. Leaving the field empty is not the alternative -- that stitches the parent as one folder, and since the tile search recurses, every channel's tiles land in one image with the last one winning. The field is now labelled **Sub-folders to stitch (* = all)** and its tooltip states all three cases: empty for the selected folder, `*` for every sub-folder, or text to match. Existing values keep working; `*` is new, not a replacement.
