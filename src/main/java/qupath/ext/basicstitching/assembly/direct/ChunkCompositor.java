@@ -18,8 +18,8 @@ import qupath.ext.basicstitching.stitching.TileMapping;
  * source tiles (typically 1-4), reads the overlapping region from each tile via
  * the {@link TileReaderPool}, and composites them into the output buffer.
  * <p>
- * RGB images get a white background in uncovered regions; non-RGB images
- * get black (zero), matching the existing {@code WhiteBackgroundImageServer} behavior.
+ * Uncovered regions are white when {@code whiteBackground} is set (RGB brightfield, the
+ * default for RGB) and black (zero) otherwise; see {@code ChannelSemantics.whiteBackground}.
  */
 public class ChunkCompositor {
 

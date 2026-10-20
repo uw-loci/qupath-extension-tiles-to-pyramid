@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **A tile can say its empty background is black.** The area no tile reaches is filled white for RGB, on the assumption that RGB is brightfield, and black otherwise. An RGB image that is not brightfield -- an LC-PolScope orientation colour map, where no signal is black -- came out as dark tissue in a white frame. A tile now declares `qpsc.background` = `black` (or `white`) in its OME metadata, beside `qpsc.resample`, and the stitcher fills with that instead. Tiles that declare nothing are stitched as before.
+
 ## [0.7.7] - 2026-09-26
 
 ### Fixed

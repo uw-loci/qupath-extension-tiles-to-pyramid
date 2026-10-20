@@ -120,7 +120,7 @@ public class DirectTileStitcher {
                     tCount);
 
             // 3. Create compositor and reader pool (try-with-resources for cleanup on exception)
-            boolean whiteBackground = dims.isRGB();
+            boolean whiteBackground = ChannelSemantics.whiteBackground(mappings.get(0).file, dims.isRGB());
 
             // A channel that declares it must not be combined cannot be feathered across a
             // seam either: a weighted blend of two label values, or of two angles across
@@ -149,6 +149,7 @@ public class DirectTileStitcher {
                         imageHeight,
                         dims.nChannels(),
                         dims.isRGB(),
+                        whiteBackground,
                         dims.bitDepth(),
                         zCount,
                         tCount,
@@ -269,7 +270,7 @@ public class DirectTileStitcher {
                         numLevels);
 
                 // 6. Create compositor with bounded reader pool
-                boolean whiteBackground = dims.isRGB();
+                boolean whiteBackground = ChannelSemantics.whiteBackground(mappings.get(0).file, dims.isRGB());
                 BlendStrategy blend = config.getOverlapBlend();
                 if (!declaration.policy().mayCombine() && blend != OverlapBlend.LAST_WINS) {
                     logger.info(

@@ -42,6 +42,7 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
     private final TileReaderPool readerPool;
     private final ImageServerMetadata metadata;
     private final boolean isRGB;
+    private final boolean whiteBackground;
     private final String id;
 
     // Set true once close() has been called. Once true, readRegion() returns an
@@ -63,6 +64,7 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
      * @param imageHeight Full image height in pixels
      * @param nChannels Number of channels (3 for RGB, 1 for grayscale)
      * @param isRGB Whether the image is RGB
+     * @param whiteBackground Whether areas no tile reaches are white (RGB only; others are 0)
      * @param bitDepth Bits per sample (8 or 16)
      * @param zCount Number of z-slices (>= 1)
      * @param tCount Number of timepoints (>= 1)
@@ -76,6 +78,7 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
             int imageHeight,
             int nChannels,
             boolean isRGB,
+            boolean whiteBackground,
             int bitDepth,
             int zCount,
             int tCount,
@@ -84,6 +87,7 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
         this.compositor = compositor;
         this.readerPool = readerPool;
         this.isRGB = isRGB;
+        this.whiteBackground = whiteBackground;
         this.id = "compositor-" + UUID.randomUUID();
 
         // Build metadata
@@ -204,10 +208,12 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
     private BufferedImage createEmptyTile(int width, int height) {
         if (isRGB) {
             var img = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
-            var g = img.createGraphics();
-            g.setColor(java.awt.Color.WHITE);
-            g.fillRect(0, 0, width, height);
-            g.dispose();
+            if (whiteBackground) {
+                var g = img.createGraphics();
+                g.setColor(java.awt.Color.WHITE);
+                g.fillRect(0, 0, width, height);
+                g.dispose();
+            }
             return img;
         }
         return new BufferedImage(

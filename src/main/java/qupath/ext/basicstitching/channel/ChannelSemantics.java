@@ -37,6 +37,9 @@ public final class ChannelSemantics {
     private static final Pattern PERIOD =
             Pattern.compile("<M\\s+K=\"qpsc\\.resample_period\"\\s*>([^<]*)</M>", Pattern.CASE_INSENSITIVE);
 
+    private static final Pattern BACKGROUND =
+            Pattern.compile("<M\\s+K=\"qpsc\\.background\"\\s*>([^<]*)</M>", Pattern.CASE_INSENSITIVE);
+
     private ChannelSemantics() {}
 
     /** A tile's declared handling: its policy and, for angular policies, its period. */
@@ -95,6 +98,47 @@ public final class ChannelSemantics {
                     policy);
         }
         return new Declaration(policy, period);
+    }
+
+    /**
+     * Whether the mosaic is filled with white where no tile reaches.
+     *
+     * <p>By default RGB is taken to be brightfield, where empty glass is white, and everything
+     * else is black. A tile can say otherwise with {@code qpsc.background} = {@code black} or
+     * {@code white}: an RGB image that is not brightfield, such as an LC-PolScope orientation
+     * colour map where no signal is black, declares {@code black} so the area around the tissue
+     * matches the empty areas inside it.
+     *
+     * @param file a tile of the mosaic; may be null
+     * @param isRGB whether the tiles are RGB
+     * @return true to fill with white
+     */
+    public static boolean whiteBackground(File file, boolean isRGB) {
+        if (file == null || !file.exists()) {
+            return isRGB;
+        }
+        Boolean declared = declaredWhiteBackground(readImageDescription(file));
+        return declared != null ? declared : isRGB;
+    }
+
+    /** The background a description declares: true white, false black, null when it says nothing. */
+    static Boolean declaredWhiteBackground(String description) {
+        if (description == null) {
+            return null;
+        }
+        Matcher m = BACKGROUND.matcher(description);
+        if (!m.find()) {
+            return null;
+        }
+        String value = m.group(1).trim();
+        if (value.equalsIgnoreCase("white")) {
+            return Boolean.TRUE;
+        }
+        if (value.equalsIgnoreCase("black")) {
+            return Boolean.FALSE;
+        }
+        logger.warn("Unrecognized qpsc.background '{}'; using the default for the pixel type", value);
+        return null;
     }
 
     private static String readImageDescription(File file) {
