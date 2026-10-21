@@ -90,7 +90,7 @@ dependencies {
     // and no blosc.dll -- to Windows users. It only ever worked because QuPath's own install
     // supplies the right one for the platform it is installed on. Taking it as provided means the
     // native always matches the host, by construction.
-    shadow("dev.zarr:jzarr:0.4.2")
+    shadow("dev.zarr:jzarr:0.5.0")
 
     // If you aren't using Groovy, this can be removed
     shadow(libs.bundles.groovy)
@@ -103,7 +103,7 @@ dependencies {
     // and why bioformats/jzarr must be too now that they are provided rather than bundled.
     testImplementation(libs.bundles.qupath)
     testImplementation("io.github.qupath:qupath-extension-bioformats:0.7.0")
-    testImplementation("dev.zarr:jzarr:0.4.2")
+    testImplementation("dev.zarr:jzarr:0.5.0")
     testImplementation(libs.junit)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
