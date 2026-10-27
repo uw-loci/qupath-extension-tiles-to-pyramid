@@ -40,7 +40,9 @@ package qupath.ext.basicstitching.registration;
  *     fractional bound stays usable on small tiles. Never binds on large acquisition tiles.
  * @param fillUnregistered when true, a tile whose edges were all rejected inherits the correction
  *     its registered neighbors imply (a diffusion fill over the grid) instead of snapping to its
- *     nominal position. Off reverts to the plain nominal fallback.
+ *     nominal position, and a block of tiles that registered to each other but to nothing else is
+ *     shifted as a body to meet its neighbors instead of staying where the stage said. Off reverts
+ *     to the plain nominal fallback for both.
  */
 public record RegistrationSettings(
         double minNcc,

@@ -423,7 +423,7 @@ persistent tuning knobs in QuPath's Preferences.
 | Minimum match confidence | 0.30 | NCC below which a tile-pair match is not trusted |
 | Max shift per step, as % of tile | 2.0 | largest per-neighbor correction searched for |
 | Max shift per step, floor (px) | 24 | floor on the above so small tiles keep a usable window |
-| Fill unregisterable tiles from neighbors | on | inherit neighbors' correction instead of nominal |
+| Fill unregisterable tiles from neighbors | on | inherit neighbors' correction instead of nominal; also moves a block of tiles that registered only to each other, as one body, to meet its neighbors |
 | Nominal pull (lambda) | 0.01 | gauge pin that holds each mosaic piece near nominal stage position; does not shrink real corrections |
 | Outlier rejection passes | 2 | iterative passes that down-weight edges disagreeing with global solution (never cut) |
 | Low-texture gate | 0.02 | robust coefficient of variation below which a band is featureless |
@@ -540,7 +540,16 @@ Per-edge shifts reached 90% of the search allowance -- real corrections may be c
   no texture to correlate is filled from the smooth correction field its registered neighbors
   define, rather than being pinned to its raw stage position. Pinning such a tile to nominal inside
   a grid that everything else shifted by tens of pixels is what used to produce a doubled edge with
-  a bright gap; a fully disconnected region still falls back to nominal.
+  a bright gap.
+- **So does a block that registered only to itself.** When every seam between one group of tiles
+  and the rest is rejected (a narrow neck of a region whose three seams were low-texture or
+  ambiguous, say), the group is a separate piece of the accepted-edge graph. The solve places each
+  piece at its own stage mean, so the group's tiles are right relative to each other but the group
+  as a whole sits where the stage said while the rest of the mosaic has moved: a white gap and a
+  sideways step across the whole neck, with real overlap on both sides (PPM, 2026-10-26). The group
+  is now shifted as one body to meet its neighbors, and the log says so (`Attached N block(s)`).
+  Only a group with no grid path at all to the main piece still falls back to nominal, and the log
+  reports those too. Every rejected seam is now listed by tile name with the numbers the gate saw.
 - **Translation only.** Rotation and scale are not corrected. A systematic scale error (e.g. a
   slightly wrong pixel size) is absorbed as a smooth field of per-tile translations -- it stitches
   correctly, but the corrections grow toward the edges of the grid; fixing the pixel-size

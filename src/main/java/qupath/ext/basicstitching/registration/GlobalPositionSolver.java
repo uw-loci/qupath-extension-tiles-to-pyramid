@@ -172,7 +172,7 @@ public final class GlobalPositionSolver {
                 // tile-by-tile, so relative geometry inside a component comes purely from the
                 // measurements while the piece as a whole stays where the stage said it was.
                 int[] component = new int[n];
-                int componentCount = components(n, graph, component);
+                int componentCount = components(n, graph.from, graph.to, graph.count, component);
                 qx = solveAxis(n, graph, graph.deltaX, lambda, component, componentCount);
                 qy = solveAxis(n, graph, graph.deltaY, lambda, component, componentCount);
                 if (pass == settings.maxOutlierIters() || !reweightOutliers(graph, qx, qy, robust)) {
@@ -289,18 +289,26 @@ public final class GlobalPositionSolver {
      * would leave the difference between them unconstrained. A tile with no accepted edge is its own
      * component and is therefore pinned at nominal exactly, which is the right answer for it.
      *
+     * <p>That pinning is only the SOLVE's answer. A piece other than the largest -- a block of tiles
+     * registered to each other but tied to the rest only by rejected seams -- is left where the
+     * stage said while the main piece's correction field may have grown to hundreds of pixels by
+     * the time it reaches that seam. Package-private so the engine can relabel the same components
+     * afterwards and attach each such piece to the mosaic through its neighbors.
+     *
      * @param n tile count
-     * @param graph the accepted-edge graph
+     * @param from source tile index per accepted edge
+     * @param to target tile index per accepted edge
+     * @param edgeCount number of accepted edges, i.e. the used prefix of {@code from} and {@code to}
      * @param component output: component id per tile
      * @return the number of components
      */
-    private static int components(int n, Graph graph, int[] component) {
+    static int components(int n, int[] from, int[] to, int edgeCount, int[] component) {
         int[] parent = new int[n];
         for (int i = 0; i < n; i++) {
             parent[i] = i;
         }
-        for (int e = 0; e < graph.count; e++) {
-            union(parent, graph.from[e], graph.to[e]);
+        for (int e = 0; e < edgeCount; e++) {
+            union(parent, from[e], to[e]);
         }
         int[] label = new int[n];
         Arrays.fill(label, -1);

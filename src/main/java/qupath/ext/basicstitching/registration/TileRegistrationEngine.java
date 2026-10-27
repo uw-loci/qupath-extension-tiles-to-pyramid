@@ -1,6 +1,7 @@
 package qupath.ext.basicstitching.registration;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -160,14 +161,15 @@ public final class TileRegistrationEngine {
                 deltas.put(nominal.get(i).filename(), new double[] {p.dxPx(), p.dyPx()});
             }
 
-            // A tile whose every edge was rejected was left at nominal by the solve. That is only
+            // A tile whose every edge was rejected was left at nominal by the solve, and so was
+            // every BLOCK of tiles that registered to each other but not to the rest. That is only
             // right when nominal is approximately right; inside a large, smooth correction field it
-            // strands the tile tens of pixels out of step with its corrected neighbors -- the worst
-            // seam in the mosaic. Diffuse the neighbors' field into those islands instead, unless
-            // the caller has turned that off.
+            // strands the piece tens or hundreds of pixels out of step with its corrected neighbors
+            // -- the worst seam in the mosaic. Attach those pieces through the neighbors' field
+            // instead, unless the caller has turned that off.
             FillOutcome fill = settings.fillUnregistered()
-                    ? fillUnregisteredIslands(nominal, graph.edges(), outcome.edges(), deltas)
-                    : new FillOutcome(0, 0);
+                    ? attachUnanchoredPieces(nominal, graph.edges(), outcome.edges(), deltas)
+                    : FillOutcome.NONE;
 
             int finalAccepted = (int)
                     outcome.edges().stream().filter(EdgeMeasurement::accepted).count();
@@ -194,7 +196,24 @@ public final class TileRegistrationEngine {
                         String.format(Locale.ROOT, "%.1f", 100.0 * fill.filled() / nominal.size()),
                         String.format(Locale.ROOT, "%.2f", fill.maxCorrectionPx()));
             }
-            logRejections(outcome.edges());
+            if (fill.blocks() > 0) {
+                // Loud on purpose: this is the case that produced a white gap across a whole arm of
+                // a region on 2026-10-26, and it is invisible in the accepted-edge count (210/216).
+                logger.warn(
+                        "Attached {} block(s) of {} tile(s) that registered to each other but to nothing else"
+                                + " (their seams to the rest were all rejected) to the mosaic through their"
+                                + " neighbors; largest shift {} px. Each block had been left where the stage"
+                                + " said it was.",
+                        fill.blocks(),
+                        fill.blockTiles(),
+                        String.format(Locale.ROOT, "%.2f", fill.maxBlockShiftPx()));
+            }
+            if (fill.stranded() > 0) {
+                logger.warn(
+                        "{} tile(s) have no path to the registered mosaic and stay at their stage positions",
+                        fill.stranded());
+            }
+            logRejections(nominal, outcome.edges());
             return result;
 
         } catch (RuntimeException e) {
@@ -451,8 +470,9 @@ public final class TileRegistrationEngine {
     }
 
     /**
-     * Replace the nominal fallback of unregisterable tiles with the correction their neighbors
-     * imply.
+     * Replace the nominal fallback of every piece the solve could not tie to the mosaic with the
+     * placement its neighbors imply: single unregisterable tiles, and whole blocks of tiles that
+     * registered to each other but to nothing else.
      *
      * <p>A tile with no accepted edge reduces, in the global solve, to {@code lambda*p = lambda*n} --
      * it stays at nominal. That is the right answer only when nominal is close to the truth. When the
@@ -462,9 +482,22 @@ public final class TileRegistrationEngine {
      * or low-texture, and the smooth field its neighbors define is the best estimate available for
      * it, so diffuse that field inward.
      *
+     * <h2>Blocks</h2>
+     *
+     * <p>The same fallback applies to a whole connected piece of the accepted-edge graph that is not
+     * the largest one: the solve pins each piece at its own nominal mean, so its tiles are right
+     * relative to each other and the piece as a whole sits where the stage said. On 2026-10-26 (PPM)
+     * a U-shaped region's right arm narrowed to three tiles and the three seam edges across that
+     * neck were rejected; the block above became its own piece, pinned at nominal, while the main
+     * piece's correction had grown to hundreds of pixels by the time it reached the neck. The
+     * result was a white gap and a sideways step across the whole arm, with real overlap on both
+     * sides of it, and nothing in the log beyond "210/216 edges accepted". Such a piece has exactly
+     * one unknown, its translation; it is solved here as a rigid body whose shift is the mean, over
+     * its boundary edges, of what its neighbors say minus what its own solve says.
+     *
      * <p>Adjacency comes from the neighbor graph's candidate edges -- grid adjacency, independent of
-     * whether any given edge was accepted. A tile with no path to a registered tile has no field to
-     * inherit and is left at nominal.
+     * whether any given edge was accepted. A tile or block with no path to the largest piece has no
+     * field to inherit and is left at nominal.
      *
      * <h2>Why this is a Laplace solve and not a single outward sweep</h2>
      *
@@ -482,25 +515,52 @@ public final class TileRegistrationEngine {
      * that staircase into the smooth ramp the geometry actually implies. At a mosaic edge, where a
      * tile simply has fewer neighbors, the same average extrapolates the interior field outward.
      *
+     * <p>Blocks join the same relaxation as rigid unknowns: a block's shift is re-estimated each
+     * sweep from its boundary neighbors' current values, and its tiles' current values follow.
+     * Contracting a block to one node keeps the system a Laplace problem with the largest piece as
+     * the Dirichlet boundary, so the same sweep converges on it.
+     *
      * @param nominal tiles in solve order
      * @param candidateEdges the grid adjacency (accepted or not)
      * @param edges the post-solve edge list, carrying final acceptance
-     * @param deltas the per-filename corrections, mutated in place for filled tiles
-     * @return how many tiles were interpolated, and the largest correction handed to one
+     * @param deltas the per-filename corrections, mutated in place for every moved tile
+     * @return what was interpolated, attached and stranded, for reporting
      */
-    private static FillOutcome fillUnregisteredIslands(
+    private static FillOutcome attachUnanchoredPieces(
             List<TileNode> nominal,
             List<EdgePair> candidateEdges,
             List<EdgeMeasurement> edges,
             Map<String, double[]> deltas) {
 
         int n = nominal.size();
-        boolean[] registered = new boolean[n];
+
+        // The pieces exactly as the solve pinned them: components of the accepted-edge graph.
+        int[] from = new int[edges.size()];
+        int[] to = new int[edges.size()];
+        int accepted = 0;
         for (EdgeMeasurement e : edges) {
             if (e.accepted()) {
-                registered[e.i()] = true;
-                registered[e.j()] = true;
+                from[accepted] = e.i();
+                to[accepted] = e.j();
+                accepted++;
             }
+        }
+        int[] component = new int[n];
+        int componentCount = GlobalPositionSolver.components(n, from, to, accepted, component);
+        int[] size = new int[componentCount];
+        for (int i = 0; i < n; i++) {
+            size[component[i]]++;
+        }
+        int main = 0;
+        for (int c = 1; c < componentCount; c++) {
+            if (size[c] > size[main]) {
+                main = c;
+            }
+        }
+        if (size[main] < 2) {
+            // No piece registered at all; the engine refuses before reaching here, but a caller
+            // supplying its own edges could. Nothing is anchored, so nothing can be attached.
+            return FillOutcome.NONE;
         }
 
         List<List<Integer>> adjacency = new ArrayList<>(n);
@@ -512,59 +572,96 @@ public final class TileRegistrationEngine {
             adjacency.get(e.j()).add(e.i());
         }
 
-        double[] dx = new double[n];
-        double[] dy = new double[n];
+        // base: what the solve said. cur: the running estimate, which for the largest piece never
+        // changes (the Dirichlet boundary), for a lone tile is its own unknown, and for a block
+        // tile is base plus the block's current rigid shift.
+        double[] baseX = new double[n];
+        double[] baseY = new double[n];
         for (int i = 0; i < n; i++) {
             double[] d = deltas.get(nominal.get(i).filename());
-            dx[i] = d[0];
-            dy[i] = d[1];
+            baseX[i] = d[0];
+            baseY[i] = d[1];
         }
+        double[] curX = baseX.clone();
+        double[] curY = baseY.clone();
 
-        // Which unknowns have any path at all to a registered tile. One without has nothing to
+        // Which tiles have any path at all to the largest piece. One without has nothing to
         // interpolate from and must stay at nominal -- and including it would leave the system
-        // singular, since a component with no boundary condition has no unique harmonic solution.
-        boolean[] solvable = new boolean[n];
+        // singular, since a region with no boundary condition has no unique harmonic solution.
+        // A block's tiles are joined by accepted edges, which are candidate edges too, so a block
+        // is reached entirely or not at all.
+        boolean[] fixed = new boolean[n];
+        boolean[] reached = new boolean[n];
         int[] queue = new int[n];
         int head = 0;
         int tail = 0;
         for (int i = 0; i < n; i++) {
-            if (registered[i]) {
+            if (component[i] == main) {
+                fixed[i] = true;
+                reached[i] = true;
                 queue[tail++] = i;
             }
         }
         while (head < tail) {
             for (int j : adjacency.get(queue[head++])) {
-                if (!registered[j] && !solvable[j]) {
-                    solvable[j] = true;
+                if (!reached[j]) {
+                    reached[j] = true;
                     queue[tail++] = j;
                 }
             }
         }
 
-        List<Integer> unknowns = new ArrayList<>();
+        List<Integer> loneTiles = new ArrayList<>();
+        List<List<Integer>> blockTiles = new ArrayList<>();
+        List<List<int[]>> blockBoundary = new ArrayList<>();
+        int[] blockIndexOf = new int[componentCount];
+        Arrays.fill(blockIndexOf, -1);
+        int stranded = 0;
         for (int i = 0; i < n; i++) {
-            if (solvable[i]) {
-                unknowns.add(i);
+            if (fixed[i]) {
+                continue;
+            }
+            if (!reached[i]) {
+                stranded++;
+                continue;
+            }
+            int c = component[i];
+            if (size[c] == 1) {
+                loneTiles.add(i);
+                continue;
+            }
+            if (blockIndexOf[c] < 0) {
+                blockIndexOf[c] = blockTiles.size();
+                blockTiles.add(new ArrayList<>());
+                blockBoundary.add(new ArrayList<>());
+            }
+            blockTiles.get(blockIndexOf[c]).add(i);
+            for (int j : adjacency.get(i)) {
+                if (component[j] != c) {
+                    blockBoundary.get(blockIndexOf[c]).add(new int[] {i, j});
+                }
             }
         }
-        if (unknowns.isEmpty()) {
-            return new FillOutcome(0, 0);
+        if (loneTiles.isEmpty() && blockTiles.isEmpty()) {
+            return new FillOutcome(0, 0, 0, 0, 0, stranded);
         }
 
         // Gauss-Seidel: updates are read back within the same sweep, which propagates the boundary
         // roughly twice as fast as Jacobi and needs no second array. The graph is tiny and each sweep
         // is a pass over the edge list, so even a wide gap converges in microseconds.
+        double[] shiftX = new double[blockTiles.size()];
+        double[] shiftY = new double[blockTiles.size()];
         double maxUpdate = 0;
         int sweep = 0;
         for (; sweep < MAX_FILL_SWEEPS; sweep++) {
             maxUpdate = 0;
-            for (int i : unknowns) {
+            for (int i : loneTiles) {
                 double sx = 0;
                 double sy = 0;
                 int c = 0;
                 for (int j : adjacency.get(i)) {
-                    sx += dx[j];
-                    sy += dy[j];
+                    sx += curX[j];
+                    sy += curY[j];
                     c++;
                 }
                 if (c == 0) {
@@ -572,9 +669,30 @@ public final class TileRegistrationEngine {
                 }
                 double nx = sx / c;
                 double ny = sy / c;
-                maxUpdate = Math.max(maxUpdate, Math.max(Math.abs(nx - dx[i]), Math.abs(ny - dy[i])));
-                dx[i] = nx;
-                dy[i] = ny;
+                maxUpdate = Math.max(maxUpdate, Math.max(Math.abs(nx - curX[i]), Math.abs(ny - curY[i])));
+                curX[i] = nx;
+                curY[i] = ny;
+            }
+            for (int b = 0; b < blockTiles.size(); b++) {
+                List<int[]> boundary = blockBoundary.get(b);
+                if (boundary.isEmpty()) {
+                    continue;
+                }
+                double sx = 0;
+                double sy = 0;
+                for (int[] edge : boundary) {
+                    sx += curX[edge[1]] - baseX[edge[0]];
+                    sy += curY[edge[1]] - baseY[edge[0]];
+                }
+                double nx = sx / boundary.size();
+                double ny = sy / boundary.size();
+                maxUpdate = Math.max(maxUpdate, Math.max(Math.abs(nx - shiftX[b]), Math.abs(ny - shiftY[b])));
+                shiftX[b] = nx;
+                shiftY[b] = ny;
+                for (int i : blockTiles.get(b)) {
+                    curX[i] = baseX[i] + nx;
+                    curY[i] = baseY[i] + ny;
+                }
             }
             if (maxUpdate < FILL_TOLERANCE_PX) {
                 break;
@@ -589,15 +707,37 @@ public final class TileRegistrationEngine {
         }
 
         double maxCorrection = 0;
-        for (int i : unknowns) {
-            deltas.put(nominal.get(i).filename(), new double[] {dx[i], dy[i]});
-            maxCorrection = Math.max(maxCorrection, Math.hypot(dx[i], dy[i]));
+        for (int i : loneTiles) {
+            deltas.put(nominal.get(i).filename(), new double[] {curX[i], curY[i]});
+            maxCorrection = Math.max(maxCorrection, Math.hypot(curX[i], curY[i]));
         }
-        return new FillOutcome(unknowns.size(), maxCorrection);
+        double maxShift = 0;
+        int attachedTiles = 0;
+        for (int b = 0; b < blockTiles.size(); b++) {
+            for (int i : blockTiles.get(b)) {
+                deltas.put(nominal.get(i).filename(), new double[] {curX[i], curY[i]});
+            }
+            attachedTiles += blockTiles.get(b).size();
+            maxShift = Math.max(maxShift, Math.hypot(shiftX[b], shiftY[b]));
+        }
+        return new FillOutcome(loneTiles.size(), maxCorrection, blockTiles.size(), attachedTiles, maxShift, stranded);
     }
 
-    /** What the unregistered-tile interpolation did, for reporting. */
-    private record FillOutcome(int filled, double maxCorrectionPx) {}
+    /**
+     * What the post-solve attachment did, for reporting.
+     *
+     * @param filled lone unregisterable tiles interpolated from their neighbors
+     * @param maxCorrectionPx the largest correction handed to one of them
+     * @param blocks pieces of two or more mutually registered tiles that were shifted as a body
+     * @param blockTiles tiles in those pieces
+     * @param maxBlockShiftPx the largest shift applied to a piece
+     * @param stranded tiles with no path to the largest piece, left at nominal
+     */
+    private record FillOutcome(
+            int filled, double maxCorrectionPx, int blocks, int blockTiles, double maxBlockShiftPx, int stranded) {
+
+        static final FillOutcome NONE = new FillOutcome(0, 0, 0, 0, 0, 0);
+    }
 
     private static <T> List<List<T>> partition(List<T> items, int parts) {
         List<List<T>> chunks = new ArrayList<>();
@@ -732,15 +872,41 @@ public final class TileRegistrationEngine {
         return Double.isNaN(v) ? "-" : String.format(Locale.ROOT, "%.3f", v);
     }
 
-    /** Counts per rejection reason, so a bad run says why rather than just "few edges". */
-    private static void logRejections(List<EdgeMeasurement> edges) {
+    /**
+     * Counts per rejection reason, so a bad run says why rather than just "few edges" -- and the
+     * rejected edges themselves, by name and with the numbers the gate saw.
+     *
+     * <p>The per-edge table is DEBUG because it has one line per seam. The rejections are the few
+     * lines that matter when a mosaic tears, and on 2026-10-26 they were exactly the three seams
+     * across a region's neck; the INFO log said only "{LOW_VARIANCE=3, AMBIGUOUS=3}", which named
+     * neither the tiles nor how far from passing they were.
+     */
+    private static void logRejections(List<TileNode> nominal, List<EdgeMeasurement> edges) {
         Map<RejectReason, Integer> counts = new java.util.EnumMap<>(RejectReason.class);
         for (EdgeMeasurement e : edges) {
             counts.merge(e.reject(), 1, Integer::sum);
         }
         counts.remove(RejectReason.NONE);
-        if (!counts.isEmpty()) {
-            logger.info("Rejected edges by reason: {}", counts);
+        if (counts.isEmpty()) {
+            return;
+        }
+        logger.info("Rejected edges by reason: {}", counts);
+        for (EdgeMeasurement e : edges) {
+            if (e.accepted()) {
+                continue;
+            }
+            EdgeDiagnostics d = e.diagnostics();
+            logger.info(
+                    "  rejected {} | {}: {} ncc={} texture={}/{} peakRatio={} band={}x{}",
+                    nominal.get(e.i()).filename(),
+                    nominal.get(e.j()).filename(),
+                    e.reject(),
+                    fmt(e.ncc()),
+                    fmt(d.textureA()),
+                    fmt(d.textureB()),
+                    fmt(d.secondPeakRatio()),
+                    d.bandWidthPx(),
+                    d.bandHeightPx());
         }
     }
 

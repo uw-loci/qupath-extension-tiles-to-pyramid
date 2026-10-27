@@ -170,29 +170,39 @@ class TileRegistrationEngineTest {
         // below. The two are indistinguishable on a single isolated tile and on any symmetric gap,
         // which is why this uses an even-length span and checks every tile in it.
         //
-        // One row of 8, textured at both ends and blank across the middle four.
+        // Eight columns by three rows. The middle row is blank across columns 2-5 and textured at
+        // both ends; the rows above and below are textured throughout, so the whole mosaic is ONE
+        // registered piece and the gap has measured tissue on every side to ramp between. Two
+        // textured ends joined by nothing but the gap would be two pieces, and the second is then
+        // attached to the first by continuity with nothing to ramp toward (see the next test): the
+        // ramp this test asserts only exists when both sides are measured against each other.
         SyntheticGridFixture.Grid grid =
-                SyntheticGridFixture.write(tempDir, 8, 1, TILE_W, TILE_H, 0.15, 1.0, 6.0, List.of(2, 3, 4, 5), 11);
+                SyntheticGridFixture.write(tempDir, 8, 3, TILE_W, TILE_H, 0.15, 1.0, 6.0, List.of(10, 11, 12, 13), 11);
 
         RegistrationResult result = register(grid);
 
-        assertFalse(result.degenerate(), "the textured ends must still register: " + result.summary());
+        assertFalse(result.degenerate(), "the textured tiles must still register: " + result.summary());
 
-        double[] left = result.deltaFor("2.tif"); // index 1, the last textured tile on the left
-        double[] right = result.deltaFor("7.tif"); // index 6, the first on the right
+        // Row 1 is 9.tif..16.tif (row-major, 1-based): 10.tif is the last textured tile on the left
+        // of the gap, 15.tif the first on the right. The drift field puts five columns, 30 px,
+        // between them.
+        double[] left = result.deltaFor("10.tif");
+        double[] right = result.deltaFor("15.tif");
         double span = right[0] - left[0];
         assertTrue(
                 Math.abs(span) > 2.0,
                 "the two sides must be corrected differently or this test proves nothing; span " + span);
 
-        // Five steps from index 1 to index 6, so the k-th blank tile sits k/5 of the way across.
-        String[] gap = {"3.tif", "4.tif", "5.tif", "6.tif"};
+        // Five steps from column 1 to column 6, so the k-th blank tile sits k/5 of the way across.
+        // The registered tiles carry their recovered jitter (sigma 1 px), so the ramp is linear to
+        // within a couple of pixels, not to machine precision.
+        String[] gap = {"11.tif", "12.tif", "13.tif", "14.tif"};
         for (int k = 0; k < gap.length; k++) {
             double expected = left[0] + span * (k + 1) / 5.0;
             assertEquals(
                     expected,
                     result.deltaFor(gap[k])[0],
-                    1e-4,
+                    2.5,
                     gap[k] + " must sit " + (k + 1) + "/5 of the way across the gap, not at either boundary");
         }
 
@@ -206,6 +216,62 @@ class TileRegistrationEngineTest {
                     Math.signum(curr - prev) == Math.signum(span) && Math.abs(curr - prev) > 1e-9,
                     "the gap must ramp monotonically; " + gap[k - 1] + "=" + prev + " then " + gap[k] + "=" + curr);
         }
+    }
+
+    @Test
+    void texturedBlockBeyondABlankRow_isAttachedToTheMosaic_notPinnedAtNominal() throws IOException {
+        // PPM, 2026-10-26: a U-shaped region whose right arm narrowed to three tiles. The three seam
+        // edges across that neck were rejected, so the block above became its own piece of the
+        // accepted-edge graph. The solve pins each piece at its own nominal mean, and the main
+        // piece's correction field had grown to hundreds of pixels by the time it reached the neck,
+        // so the block sat where the stage said while everything below it had moved: a white gap
+        // and a sideways step across the whole arm, with real overlap on both sides of it.
+        //
+        // Same mechanism with a blank row instead of rejected seams: 3 columns x 7 rows, row 3
+        // blank, drift 6 px/tile. The bottom block (rows 4-6) registers to itself and to nothing
+        // else. Row-major, 1-based filenames: row r, column c is (r * 3 + c + 1).tif.
+        SyntheticGridFixture.Grid grid =
+                SyntheticGridFixture.write(tempDir, 3, 7, TILE_W, TILE_H, 0.15, 1.0, 6.0, List.of(9, 10, 11), 23);
+
+        RegistrationResult result = register(grid);
+
+        assertFalse(result.degenerate(), "both textured blocks must register: " + result.summary());
+
+        // The true field puts rows 4-6 a further 24 px down in Y than rows 0-2. Pinned at their own
+        // nominal means, the two blocks' mean corrections were equal. Attached through the blank
+        // row, the bottom block at least continues the top block's edge value (about 12 px); the
+        // field is not extrapolated beyond that, which is the honest estimate.
+        double topMean = meanDeltaY(result, 0, 2);
+        double bottomMean = meanDeltaY(result, 4, 6);
+        assertTrue(
+                bottomMean - topMean > 9.0,
+                "the bottom block must be shifted to meet the mosaic, not left at nominal; top mean " + topMean
+                        + ", bottom mean " + bottomMean);
+
+        // And the seam between the blank row and the block is continuous, column by column.
+        for (int c = 0; c < 3; c++) {
+            double blank = result.deltaFor((3 * 3 + c + 1) + ".tif")[1];
+            double below = result.deltaFor((4 * 3 + c + 1) + ".tif")[1];
+            assertEquals(blank, below, 3.0, "column " + c + ": the block must meet the blank row above it");
+        }
+
+        // Inside the block the measured geometry is kept: rows still step by the 6 px drift.
+        double row4 = meanDeltaY(result, 4, 4);
+        double row6 = meanDeltaY(result, 6, 6);
+        assertEquals(12.0, row6 - row4, 2.0, "the block's internal registration must survive the shift");
+    }
+
+    /** Mean Y correction over the tiles of rows {@code r0..r1} of a 3-column grid. */
+    private static double meanDeltaY(RegistrationResult result, int r0, int r1) {
+        double sum = 0;
+        int count = 0;
+        for (int r = r0; r <= r1; r++) {
+            for (int c = 0; c < 3; c++) {
+                sum += result.deltaFor((r * 3 + c + 1) + ".tif")[1];
+                count++;
+            }
+        }
+        return sum / count;
     }
 
     @Test

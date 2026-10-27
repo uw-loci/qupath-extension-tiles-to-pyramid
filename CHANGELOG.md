@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A block of tiles that registered only to itself no longer sits where the stage said.** When every seam between a group of tiles and the rest of the mosaic is rejected, the group is its own piece of the accepted-edge graph and the solve pins it at its own stage mean, while the main piece's correction may have grown to hundreds of pixels by that seam. On a U-shaped PPM region (2026-10-26) whose right arm narrowed to three tiles, the three seam edges were rejected and the arm above them was placed with a white gap and a sideways step, with real overlap on both sides. Such a group is now shifted as one body to meet its neighbors, through the same relaxation that already fills blank tiles, and the log warns `Attached N block(s) ... largest shift X px`. Tiles with no grid path to the main piece are reported as stranded.
+- **Rejected seams are logged by name.** Each rejected edge now gets an INFO line with both tile names, the reason, the NCC, both texture scores, the second-peak ratio and the band size, so a torn mosaic can be read from the log without re-running at DEBUG.
+
 ## [0.7.8] - 2026-10-21
 
 ### Added

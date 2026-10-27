@@ -119,7 +119,9 @@ public final class RegistrationPreferences {
                 .category(CATEGORY)
                 .description("When a tile is too low-texture to register, take the correction its registered"
                         + " neighbors imply instead of leaving it at its raw stage position (which can strand it"
-                        + " tens of pixels away inside a corrected grid). Default on.")
+                        + " tens of pixels away inside a corrected grid). Also moves a block of tiles that"
+                        + " registered to each other but to nothing else, as one body, to meet its neighbors."
+                        + " Default on.")
                 .build());
         items.add(new PropertyItemBuilder<>(lambda, Double.class)
                 .name("Registration: nominal pull (lambda)")
