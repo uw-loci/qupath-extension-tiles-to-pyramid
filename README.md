@@ -985,6 +985,7 @@ Configuration class for stitching operations.
 - `TileConfigurationTxtStrategy`: Read ImageJ/Fiji tile configurations (and the `z{nn}/`/`t{nn}/` layouts)
 - `VectraMetadataStrategy`: Extract Vectra TIFF metadata
 - `MicroManagerMetadataStrategy`: Read MicroManager sidecar metadata (MMStack or single-plane TIFF series)
+- `MicroManagerFrameAverager`: Average each position's time points into a one-frame copy before stitching (`average(source, output)`, `countFrames(folder)`, `defaultOutput(source)`); see [Averaging time points](#averaging-time-points-micromanager)
 
 ### Extension points
 The extension supports custom stitching strategies by implementing the `StitchingStrategy` interface:
