@@ -25,7 +25,8 @@ machine.
 - **Channels:** single-channel folders can be merged into one multichannel image; RGB tiles stay
   RGB.
 - **Z-stacks and time series:** only from separate files per plane, and only with the
-  TileConfiguration.txt method. See [Z-stacks and time series](#z-stacks-and-time-series).
+  TileConfiguration.txt method. A MicroManager time series per position (e.g. SHG frames) can be
+  averaged before stitching. See [Z-stacks and time series](#z-stacks-and-time-series).
 - **Closing seams:** optional content-based registration measures where tiles really overlap and
   corrects their positions. See [Tile registration](#tile-registration).
 
@@ -220,6 +221,7 @@ Common to both:
 - Falls back to `Summary.StagePositions` labels if a per-tile block is missing or malformed
 - Auto-detects pixel size from the metadata's `PixelSizeUm`
 - **Channels:** A single-channel acquisition stitches into one output named after the folder. A multi-channel acquisition emits one tile per channel, each named after its channel (from `Summary.ChNames`), so the workflow's existing per-channel-folder stitching combines them with the channel merger. Splitting only happens when the file's page count equals the channel count; a z-stack or time series interleaves those axes into the same pages and reads the first page only.
+- **Time series per position (averaging):** when the acquisition has more than one frame per position (one OME-TIFF per position), the dialog offers **Average the N time points of each position before stitching**. See [Averaging time points](#averaging-time-points-micromanager).
 - **Registration limit:** Seam measurement on MicroManager input is always performed on the first channel only, because all channels in a position come from the same file. The dialog's "Align-on" choice has no effect for MicroManager input. See [Tile registration](#tile-registration).
 - **Stage axes:** the sidecars record absolute stage coordinates, and whether a rising stage coordinate moves right and down in the camera image depends on how the stage is wired and the camera mounted. The strategy cannot infer that, so it assumes rising stage equals rising pixel. Where that is wrong, tick **Invert X axis** / **Invert Y axis** -- see [If the mosaic comes out mirrored](#if-the-mosaic-comes-out-mirrored).
 - No additional configuration files required
@@ -306,6 +308,7 @@ input_folder/             Method: Filename[x,y]; sub-folder text: slide
 | **Output format** | **OME-TIFF (single file)**: one pyramidal `.ome.tif` with OME-XML metadata, widely readable. **OME-Zarr (NGFF 0.4, Zarr v2)**: an `.ome.zarr` directory of chunks, written in parallel, suited to cloud storage; the versions written are what QuPath's bundled reader opens, so check what your other tools accept | Last-used (initially OME-TIFF) |
 | **Sub-folders to stitch (\* = all)** | Which folders are stitched, and how many images come out. **Empty** stitches the selected folder itself, and only that folder -- one image. **`*`** stitches every sub-folder, one image each. **Any other text** stitches the sub-folders whose name contains it, one image each; matching is case-sensitive. Not used by the MicroManager method, which finds its own positions | Last-used (initially empty) |
 | **Stage axes: Invert X axis / Invert Y axis** | Shown for the two methods whose tile positions are stage coordinates -- MicroManager and TileConfiguration.txt. Negates stage X and/or Y before converting to pixels, for a scope whose stage runs opposite to its camera on that axis. Leave both clear for a Fiji-written TileConfiguration.txt, which is already in image space. See [If the mosaic comes out mirrored](#if-the-mosaic-comes-out-mirrored). Remembered, since it describes the microscope | Off, off |
+| **Average the N time points of each position before stitching** | Shown only for the MicroManager method when the acquisition has more than one frame per position. Averages each position's frames into a `<folder>_averaged` copy and stitches that. See [Averaging time points](#averaging-time-points-micromanager). Choice is remembered | On |
 | **Merge the N channel stitches into one multichannel image** | Shown only when 2+ matching sub-folders of single-channel (non-RGB) tiles will be stitched, or when a MicroManager acquisition has multiple channels. Combines the per-channel stitches into one multichannel `<folder>_merged` image; the per-channel images are kept. See [Merging channels in the dialog](#merging-channels-in-the-dialog). Choice is remembered | On |
 | **Z-Spacing (um)** | Scripts only (`StitchingConfig`); the dialog always records 1.0 | 1.0 |
 | **Solve tile overlaps (content-based registration)** | Checkbox to enable overlap measurement and correction. When enabled, measures the real overlap between neighboring tiles and corrects their positions before stitching, closing seams caused by stage backlash and drift. Writes a `TileRegistration.txt` solution file beside the tiles. Choice is remembered between sessions. See [Tile registration](#tile-registration) for details. | Off (faster, nominal positions) |
@@ -801,7 +804,35 @@ Two limits worth stating plainly:
   the acquisition reports several channels and the page count disagrees, the log says so; a
   single-channel z-stack is collapsed silently. To preserve those dimensions, export the
   acquisition to the separate-file `z{nn}/` / `t{nn}/` layout and use the TileConfiguration.txt
-  strategy.
+  strategy. A time series can instead be averaged, below.
+
+### Averaging time points (MicroManager)
+
+For acquisitions that take several frames at each position to average out noise, as SHG and other
+laser-scanning modalities often do. MicroManager must save them as **separate image files per
+position** (`<prefix>_MMStack_<label>.ome.tif` plus `_metadata.txt`).
+
+When the selected folder's metadata reports more than one frame, the dialog shows **Average the N
+time points of each position before stitching** (on by default, remembered). When ticked:
+
+1. Each channel and z-slice of each position is averaged over its frames: the mean, rounded to the
+   original bit depth (8- or 16-bit stay 8- or 16-bit; 32-bit float stays float). Sums are kept in
+   double precision, so bright or saturated frames cannot overflow; the mean is clamped to the
+   type's range.
+2. The result is written to `<folder>_averaged`, beside the acquisition folder, in the same
+   MicroManager layout: one `_MMStack_<label>.ome.tif` per position with one page per channel, and
+   a `_metadata.txt` whose `Summary.Frames` is 1 and which keeps each position's stage
+   coordinates and pixel size. `Summary.FrameAveraging` and `frame_averaging.txt` record the source
+   and how many frames were averaged. The originals are not changed.
+3. That copy is stitched as usual. The output is named after it (`<folder>_averaged.ome.tif`) and
+   written where the stitch would otherwise write; the `.stitch-info.txt` record has a
+   *frame averaging* section.
+
+Which frame a page belongs to is read from the MicroManager tag on every page, or, for a file
+without it, from the order of the `FrameKey-t-c-z` entries in its sidecar; a file matching neither
+is refused rather than guessed. Positions with different frame counts are each averaged over
+their own frames and the record says so. A re-run overwrites a `<folder>_averaged` folder that
+frame averaging wrote, and refuses one that holds anything else. RGB frames are not supported.
 
 Directory names must be a `z` or `t` followed by digits and nothing else -- `z0`, `z00` and `z000`
 all match, case-insensitively;

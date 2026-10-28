@@ -75,6 +75,9 @@ public class QPPreferences {
             PathPrefs.createPersistentPreference("basicstitching.dialog.outputFormat", "OME_TIFF");
 
     // Merge per-channel stitches into one multichannel image (only offered when there are channels).
+    private static final BooleanProperty averageFramesSaved =
+            PathPrefs.createPersistentPreference("basicstitching.dialog.averageFrames", true);
+
     private static final BooleanProperty mergeChannelsSaved =
             PathPrefs.createPersistentPreference("basicstitching.dialog.mergeChannels", true);
 
@@ -189,6 +192,14 @@ public class QPPreferences {
 
     public static void setOutputFormatSaved(final String format) {
         outputFormatSaved.setValue(format);
+    }
+
+    public static boolean getAverageFramesSaved() {
+        return averageFramesSaved.getValue();
+    }
+
+    public static void setAverageFramesSaved(final boolean average) {
+        averageFramesSaved.setValue(average);
     }
 
     public static boolean getMergeChannelsSaved() {

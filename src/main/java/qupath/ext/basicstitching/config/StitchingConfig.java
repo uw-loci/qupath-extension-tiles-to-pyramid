@@ -136,6 +136,58 @@ public class StitchingConfig {
         this.overlapBlend = overlapBlend;
     }
 
+    /**
+     * What preprocessing produced the tiles in {@link #folderPath}, for the stitch record; null when
+     * the tiles are the acquisition's own. Set when time points were averaged first.
+     */
+    private qupath.ext.basicstitching.workflow.StitchInfoFile.Section preprocessingRecord = null;
+
+    /** @return the preprocessing section of the stitch record, or null if none */
+    public qupath.ext.basicstitching.workflow.StitchInfoFile.Section getPreprocessingRecord() {
+        return preprocessingRecord;
+    }
+
+    /** @param record what was done to the tiles before stitching; null for nothing */
+    public void setPreprocessingRecord(qupath.ext.basicstitching.workflow.StitchInfoFile.Section record) {
+        this.preprocessingRecord = record;
+    }
+
+    /**
+     * A copy reading its tiles from another folder, every other setting kept. A registration solve
+     * writes its solution beside the new tiles, since that is what it describes.
+     *
+     * @param newFolderPath the folder holding the tiles to stitch
+     * @return the copy
+     */
+    public StitchingConfig withFolderPath(String newFolderPath) {
+        StitchingConfig copy = new StitchingConfig(
+                stitchingType,
+                newFolderPath,
+                outputPath,
+                compressionType,
+                pixelSizeInMicrons,
+                baseDownsample,
+                matchingString,
+                zSpacingMicrons,
+                xFudgeFactor,
+                yFudgeFactor,
+                outputFormat);
+        copy.outputFilename = outputFilename;
+        copy.manualPixelSizeOverride = manualPixelSizeOverride;
+        copy.overlapBlend = overlapBlend;
+        copy.preprocessingRecord = preprocessingRecord;
+        RegistrationMode mode = registrationMode;
+        if (mode instanceof RegistrationMode.Solve solve && solve.solutionOut() != null) {
+            mode = new RegistrationMode.Solve(
+                    java.nio.file.Paths.get(newFolderPath)
+                            .resolve(solve.solutionOut().getFileName()),
+                    solve.settings(),
+                    solve.reference());
+        }
+        copy.registrationMode = mode;
+        return copy;
+    }
+
     /** @return whether {@link #pixelSizeInMicrons} should override metadata pixel size. */
     public boolean isManualPixelSizeOverride() {
         return manualPixelSizeOverride;

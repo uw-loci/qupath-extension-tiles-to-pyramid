@@ -410,12 +410,16 @@ public class StitchingWorkflow {
             software.put("computer", "unknown");
         }
 
-        return List.of(
-                StitchInfoFile.Section.of("image", image),
-                StitchInfoFile.Section.of("source tiles", source),
-                StitchInfoFile.Section.of("stitching", stitching),
-                config.getRegistrationRecord(),
-                StitchInfoFile.Section.of("software", software));
+        List<StitchInfoFile.Section> sections = new ArrayList<>();
+        sections.add(StitchInfoFile.Section.of("image", image));
+        sections.add(StitchInfoFile.Section.of("source tiles", source));
+        if (config.getPreprocessingRecord() != null) {
+            sections.add(config.getPreprocessingRecord());
+        }
+        sections.add(StitchInfoFile.Section.of("stitching", stitching));
+        sections.add(config.getRegistrationRecord());
+        sections.add(StitchInfoFile.Section.of("software", software));
+        return sections;
     }
 
     /**

@@ -48,6 +48,7 @@ import qupath.ext.basicstitching.registration.RegistrationReference;
 import qupath.ext.basicstitching.registration.RegistrationSettings;
 import qupath.ext.basicstitching.registration.TileRegistrationSolution;
 import qupath.ext.basicstitching.stitching.FolderDiagnosis;
+import qupath.ext.basicstitching.stitching.MicroManagerFrameAverager;
 import qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy;
 import qupath.ext.basicstitching.stitching.TileConfigurationTxtStrategy;
 import qupath.ext.basicstitching.stitching.TileDirectories;
@@ -94,6 +95,8 @@ public class StitchingGUI {
     private final CheckBox resolveOverlapsCheckbox = new CheckBox("Solve tile overlaps (content-based registration)");
     // Shown only when the folder holds 2+ matching single-channel subdirectories (RGB is not channels).
     private final CheckBox mergeChannelsCheckbox = new CheckBox("Merge channels into one multichannel image");
+    // Shown only for a MicroManager acquisition with more than one time point per position.
+    private final CheckBox averageFramesCheckbox = new CheckBox("Average time points before stitching");
     // Only for the methods whose positions are stage coordinates: see addStageInvertComponents.
     private final CheckBox invertXCheckbox = new CheckBox("Invert X axis");
     private final CheckBox invertYCheckbox = new CheckBox("Invert Y axis");
@@ -316,7 +319,12 @@ public class StitchingGUI {
                 QPPreferences.setStageInvertXSaved(invertX);
                 QPPreferences.setStageInvertYSaved(invertY);
             }
-            runInBackground(config, mergeOffered && mergeChannelsCheckbox.isSelected(), invertX, invertY);
+            boolean averageFrames = averageFramesCheckbox.isVisible() && averageFramesCheckbox.isSelected();
+            if (averageFramesCheckbox.isVisible()) {
+                QPPreferences.setAverageFramesSaved(averageFramesCheckbox.isSelected());
+            }
+            runInBackground(
+                    config, mergeOffered && mergeChannelsCheckbox.isSelected(), averageFrames, invertX, invertY);
 
         } catch (Exception e) {
             logger.error("Error processing dialog result", e);
@@ -328,11 +336,13 @@ public class StitchingGUI {
      * Run the stitch (and the optional channel merge) off the FX thread so QuPath stays responsive,
      * reporting the outcome in a dialog when it finishes.
      *
+     * @param averageFrames average each MicroManager position's time points into a copy first, and
+     *     stitch the copy
      * @param invertX negate stage X before placing MicroManager tiles
      * @param invertY negate stage Y before placing MicroManager tiles
      */
     private static void runInBackground(
-            StitchingConfig config, boolean mergeChannels, boolean invertX, boolean invertY) {
+            StitchingConfig requested, boolean mergeChannels, boolean averageFrames, boolean invertX, boolean invertY) {
         if (!STITCH_RUNNING.compareAndSet(false, true)) {
             showAlertDialog("A stitch is already running. Wait for it to finish before starting another.");
             return;
@@ -344,6 +354,7 @@ public class StitchingGUI {
                     boolean ok = false;
                     boolean[] nothing = {false};
                     StringBuilder message = new StringBuilder();
+                    StitchingConfig config = requested;
                     // The axis flags are process-global volatile statics on the two strategies that
                     // read stage coordinates, which is also how QPSC drives them. Both pairs are set
                     // because only the selected strategy reads its own, and the checkboxes are hidden
@@ -360,7 +371,17 @@ public class StitchingGUI {
                     TileConfigurationTxtStrategy.flipStitchingX = invertX;
                     TileConfigurationTxtStrategy.flipStitchingY = invertY;
                     try {
+                        String averaged = null;
+                        if (averageFrames) {
+                            config = averagedCopy(requested);
+                            averaged = "Averaged time points into " + config.folderPath + "\n"
+                                    + config.getPreprocessingRecord().entries().get("frames per position")
+                                    + " frame(s) per position.";
+                        }
                         StitchingWorkflow.StitchingResult result = StitchingWorkflow.runDetailed(config);
+                        if (averaged != null) {
+                            message.append(averaged).append("\n\n");
+                        }
                         List<String> outputs = result.outputs();
                         if (outputs.isEmpty()) {
                             nothing[0] = true;
@@ -423,11 +444,31 @@ public class StitchingGUI {
                     }
                     boolean success = ok;
                     boolean none = nothing[0];
-                    Platform.runLater(() -> showResultDialog(success, none, message.toString(), config.outputPath));
+                    String outputDir = config.outputPath;
+                    Platform.runLater(() -> showResultDialog(success, none, message.toString(), outputDir));
                 },
                 "tiles-to-pyramid-stitch");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    /**
+     * Average every position's time points into {@code <folder>_averaged} and return the config
+     * that stitches that copy, carrying a record of the averaging for the stitch-info file.
+     */
+    private static StitchingConfig averagedCopy(StitchingConfig config) throws IOException {
+        Path source = Paths.get(config.folderPath.trim());
+        MicroManagerFrameAverager.Result r =
+                MicroManagerFrameAverager.average(source, MicroManagerFrameAverager.defaultOutput(source));
+        Map<String, String> entries = new java.util.LinkedHashMap<>();
+        entries.put("method", "mean over time points, rounded to the source bit depth");
+        entries.put("acquisition folder", source.toString());
+        entries.put("averaged copy", r.output().toString());
+        entries.put("positions", String.valueOf(r.positions()));
+        entries.put("frames per position", r.frameSummary());
+        StitchingConfig averaged = config.withFolderPath(r.output().toString());
+        averaged.setPreprocessingRecord(new StitchInfoFile.Section("frame averaging", entries, r.notes()));
+        return averaged;
     }
 
     /**
@@ -569,6 +610,42 @@ public class StitchingGUI {
         addToGrid(pane, invertLabel, invertBox);
     }
 
+    /**
+     * Adds the "average time points" option, for a MicroManager acquisition saved as one OME-TIFF
+     * per position with several frames each (e.g. SHG collected as a short time series). The
+     * averaged copy is written beside the folder as {@code <folder>_averaged}, in the same
+     * MicroManager layout, and that copy is what gets stitched.
+     */
+    private void addAverageFramesComponent(GridPane pane) {
+        averageFramesCheckbox.setSelected(QPPreferences.getAverageFramesSaved());
+        averageFramesCheckbox.setTooltip(
+                new Tooltip("Each position holds several frames. When ticked, every channel is\n"
+                        + "averaged over its frames (mean, rounded to the original bit depth) and\n"
+                        + "written to a copy of the acquisition named <folder>"
+                        + MicroManagerFrameAverager.FOLDER_SUFFIX + ",\n"
+                        + "beside the original, in the same MicroManager layout. That copy is stitched.\n"
+                        + "When clear, only the first frame of each position is stitched."));
+        Integer row = guiElementPositions.get(averageFramesCheckbox);
+        if (row != null) {
+            pane.add(averageFramesCheckbox, 0, row, 2, 1);
+        } else {
+            logger.error("Row index not found for averageFramesCheckbox");
+        }
+        folderField.textProperty().addListener((obs, o, n) -> refreshAverageVisibility());
+    }
+
+    private void refreshAverageVisibility() {
+        String method = stitchingGridBox.getValue();
+        String path = folderField.getText();
+        int frames = method != null && method.startsWith("MicroManager") && path != null && !path.isBlank()
+                ? MicroManagerFrameAverager.countFrames(new File(path.trim()))
+                : 0;
+        averageFramesCheckbox.setVisible(frames > 1);
+        if (frames > 1) {
+            averageFramesCheckbox.setText("Average the " + frames + " time points of each position before stitching");
+        }
+    }
+
     private void refreshMergeVisibility() {
         int channels = countChannelFolders();
         mergeChannelsCheckbox.setVisible(channels >= 2);
@@ -657,6 +734,7 @@ public class StitchingGUI {
         addFolderSelectionComponents(pane);
         addMatchStringComponents(pane);
         addStageInvertComponents(pane);
+        addAverageFramesComponent(pane);
         addMergeChannelsComponent(pane);
         addCompressionComponents(pane);
         addOutputFormatComponents(pane);
@@ -880,6 +958,7 @@ public class StitchingGUI {
         guiElementPositions.put(downsampleLabel, currentPosition++);
         guiElementPositions.put(matchStringLabel, currentPosition++);
         guiElementPositions.put(invertLabel, currentPosition++);
+        guiElementPositions.put(averageFramesCheckbox, currentPosition++);
         guiElementPositions.put(mergeChannelsCheckbox, currentPosition++);
         guiElementPositions.put(resolveOverlapsCheckbox, currentPosition++);
         guiElementPositions.put(registrationOptionsPane, currentPosition++);
@@ -1332,6 +1411,7 @@ public class StitchingGUI {
         // label claiming where it came from.
         autoFillPixelSizeFromFolder();
         refreshMergeVisibility();
+        refreshAverageVisibility();
         adjustLayout(pane);
     }
 
