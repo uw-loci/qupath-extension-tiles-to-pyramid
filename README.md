@@ -221,7 +221,7 @@ Common to both:
 - Falls back to `Summary.StagePositions` labels if a per-tile block is missing or malformed
 - Auto-detects pixel size from the metadata's `PixelSizeUm`
 - **Channels:** A single-channel acquisition stitches into one output named after the folder. A multi-channel acquisition emits one tile per channel, each named after its channel (from `Summary.ChNames`), so the workflow's existing per-channel-folder stitching combines them with the channel merger. Splitting only happens when the file's page count equals the channel count; a z-stack or time series interleaves those axes into the same pages and reads the first page only, unless the time points are averaged first (see [Averaging time points](#averaging-time-points-micromanager)).
-- **Time series per position (averaging):** when the acquisition has more than one frame per position (one OME-TIFF per position), the dialog offers **Average the N time points of each position before stitching**. See [Averaging time points](#averaging-time-points-micromanager).
+- **Time series per position (averaging):** when the acquisition has more than one frame per position (either layout), the dialog offers **Average the N time points of each position before stitching**. See [Averaging time points](#averaging-time-points-micromanager).
 - **Registration limit:** Seam measurement on MicroManager input is always performed on the first channel only, because all channels in a position come from the same file. The dialog's "Align-on" choice has no effect for MicroManager input. See [Tile registration](#tile-registration).
 - **Stage axes:** the sidecars record absolute stage coordinates, and whether a rising stage coordinate moves right and down in the camera image depends on how the stage is wired and the camera mounted. The strategy cannot infer that, so it assumes rising stage equals rising pixel. Where that is wrong, tick **Invert X axis** / **Invert Y axis** -- see [If the mosaic comes out mirrored](#if-the-mosaic-comes-out-mirrored).
 - No additional configuration files required
@@ -809,8 +809,11 @@ Two limits worth stating plainly:
 ### Averaging time points (MicroManager)
 
 For acquisitions that take several frames at each position to average out noise, as SHG and other
-laser-scanning modalities often do. MicroManager must save them as **separate image files per
-position** (`<prefix>_MMStack_<label>.ome.tif` plus `_metadata.txt`).
+laser-scanning modalities often do. Both MicroManager layouts work: **separate image files per
+position** (`<prefix>_MMStack_<label>.ome.tif` plus `_metadata.txt`) and the **single-plane TIFF
+series** (a folder per position holding one `img_channelCCC_positionPPP_timeTTTTTTTTT_zZZZ.tif` per
+plane and a `metadata.txt`). Without averaging, the second layout stitches every frame as its own
+tile, stacked on the others at the same stage position, and the last one wins.
 
 When the selected folder's metadata reports more than one frame, the dialog shows **Average the N
 time points of each position before stitching** (on by default, remembered). When ticked:
@@ -820,17 +823,21 @@ time points of each position before stitching** (on by default, remembered). Whe
    double precision, so bright or saturated frames cannot overflow; the mean is clamped to the
    type's range.
 2. The result is written to `<folder>_averaged`, beside the acquisition folder, in the same
-   MicroManager layout: one `_MMStack_<label>.ome.tif` per position with one page per channel, and
-   a `_metadata.txt` whose `Summary.Frames` is 1 and which keeps each position's stage
-   coordinates and pixel size. `Summary.FrameAveraging` and `frame_averaging.txt` record the source
+   MicroManager layout: one `_MMStack_<label>.ome.tif` per position with one page per channel, or
+   (single-plane series) one folder per position holding one file per channel and slice, named
+   as its `time000000000` frame. Each position's `_metadata.txt` / `metadata.txt` has
+   `Summary.Frames` 1 and keeps the stage coordinates and pixel size. `Summary.FrameAveraging` and `frame_averaging.txt` record the source
    and how many frames were averaged. The originals are not changed.
 3. That copy is stitched as usual. The output is named after it (`<folder>_averaged.ome.tif`) and
    written where the stitch would otherwise write; the `.stitch-info.txt` record has a
    *frame averaging* section.
 
 Which frame a page belongs to is read from the MicroManager tag on every page, or, for a file
-without it, from the order of the `FrameKey-t-c-z` entries in its sidecar; a file matching neither
-is refused rather than guessed. Positions with different frame counts are each averaged over
+without it, from the order of the `FrameKey-t-c-z` entries in its sidecar; in a single-plane series
+it is read from the file name, or the file's `Metadata-` block. A file matching none of these is
+refused rather than guessed. On a 500-position, 3-frame 16-bit SHG acquisition (512 x 512 tiles)
+averaging took about 2 minutes over a network-mounted drive, and every averaged plane matched an
+independent numpy mean exactly. Positions with different frame counts are each averaged over
 their own frames and the record says so. A re-run overwrites a `<folder>_averaged` folder that
 frame averaging wrote, and refuses one that holds anything else. RGB frames are not supported.
 

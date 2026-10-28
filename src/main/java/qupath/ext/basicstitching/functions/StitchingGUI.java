@@ -611,8 +611,8 @@ public class StitchingGUI {
     }
 
     /**
-     * Adds the "average time points" option, for a MicroManager acquisition saved as one OME-TIFF
-     * per position with several frames each (e.g. SHG collected as a short time series). The
+     * Adds the "average time points" option, for a MicroManager acquisition with several frames per
+     * position (e.g. SHG collected as a short time series), in either MicroManager layout. The
      * averaged copy is written beside the folder as {@code <folder>_averaged}, in the same
      * MicroManager layout, and that copy is what gets stitched.
      */
@@ -624,7 +624,9 @@ public class StitchingGUI {
                         + "written to a copy of the acquisition named <folder>"
                         + MicroManagerFrameAverager.FOLDER_SUFFIX + ",\n"
                         + "beside the original, in the same MicroManager layout. That copy is stitched.\n"
-                        + "When clear, only the first frame of each position is stitched."));
+                        + "When clear, nothing is averaged: an OME-TIFF per position stitches its\n"
+                        + "first frame, and a single-plane TIFF series stitches every frame as its\n"
+                        + "own tile, stacked at the same position."));
         Integer row = guiElementPositions.get(averageFramesCheckbox);
         if (row != null) {
             pane.add(averageFramesCheckbox, 0, row, 2, 1);

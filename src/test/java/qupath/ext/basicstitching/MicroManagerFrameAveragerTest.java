@@ -175,7 +175,90 @@ class MicroManagerFrameAveragerTest {
 
     private static boolean saturate = false;
 
+    /**
+     * Single-plane TIFF series, the layout of the 2026-10-27 SHG run: a folder per position with one
+     * file per frame. Every frame used to be stitched as its own tile, stacked on the others.
+     */
+    @Test
+    void singlePlaneSeriesAveragesIntoOneFilePerPosition(@TempDir Path tmp) throws IOException {
+        Path src = Files.createDirectories(tmp.resolve("shg"));
+        writeSinglePlanePosition(src, "Tile_R0_C0", 0, 0.0, 0.0, 3);
+        writeSinglePlanePosition(src, "Tile_R0_C1", 1, 4.0, 0.0, 3);
+        Files.writeString(src.resolve("comments.txt"), "{}");
+        assertEquals(3, MicroManagerFrameAverager.countFrames(src.toFile()));
+        assertEquals(
+                6,
+                new MicroManagerMetadataStrategy()
+                        .prepareStitching(src.toString(), PIXEL_UM, 1.0, "")
+                        .size(),
+                "before: every frame is a tile");
+
+        Path out = tmp.resolve("shg_averaged");
+        var result = MicroManagerFrameAverager.average(src, out);
+        assertEquals(2, result.positions());
+        assertEquals("3", result.frameSummary());
+        assertTrue(Files.isRegularFile(out.resolve("comments.txt")));
+
+        Path pos = out.resolve("Tile_R0_C1");
+        try (var files = Files.list(pos)) {
+            assertEquals(
+                    List.of("img_channel000_position001_time000000000_z000.tif", "metadata.txt"),
+                    files.map(p -> p.getFileName().toString()).sorted().toList());
+        }
+        for (int v : readPages(pos.resolve("img_channel000_position001_time000000000_z000.tif"))
+                .get(0)) {
+            assertEquals(2001, v, "(0 + 1 + 3) / 3 rounds to 1");
+        }
+        JsonObject side = JsonParser.parseString(Files.readString(pos.resolve("metadata.txt")))
+                .getAsJsonObject();
+        assertEquals(1, side.getAsJsonObject("Summary").get("Frames").getAsInt());
+        assertTrue(side.has("Metadata-Tile_R0_C1/img_channel000_position001_time000000000_z000.tif"));
+        assertTrue(side.has("Coords-Tile_R0_C1/img_channel000_position001_time000000000_z000.tif"));
+        assertFalse(side.has("Metadata-Tile_R0_C1/img_channel000_position001_time000000001_z000.tif"));
+
+        List<TileMapping> after =
+                new MicroManagerMetadataStrategy().prepareStitching(out.toString(), PIXEL_UM, 1.0, "");
+        assertEquals(2, after.size(), "after: one tile per position");
+        assertEquals(8, after.stream().mapToInt(m -> m.region.getX()).max().getAsInt());
+    }
+
     // ---- synthetic MicroManager acquisition ----
+
+    /** One single-plane position folder: one 16-bit file per frame, and a metadata.txt. */
+    private static void writeSinglePlanePosition(Path root, String label, int p, double xUm, double yUm, int frames)
+            throws IOException {
+        Path dir = Files.createDirectories(root.resolve(label));
+        StringBuilder sb = new StringBuilder();
+        sb.append("{\"Summary\":{\"Channels\":1,\"Slices\":1,\"Frames\":").append(frames);
+        sb.append(",\"ChNames\":[\"Default\"],\"IntendedDimensions\":{\"time\":")
+                .append(frames)
+                .append("}}");
+        for (int t = 0; t < frames; t++) {
+            String name = String.format("img_channel000_position%03d_time%09d_z000.tif", p, t);
+            BufferedImage img = new BufferedImage(W, H, BufferedImage.TYPE_USHORT_GRAY);
+            WritableRaster r = img.getRaster();
+            for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) r.setSample(x, y, 0, value(p, 0, t));
+            ImageIO.write(img, "TIFF", dir.resolve(name).toFile());
+            String rel = label + "/" + name;
+            sb.append(",\"Coords-")
+                    .append(rel)
+                    .append("\":{\"ChannelIndex\":0,\"FrameIndex\":")
+                    .append(t)
+                    .append("}");
+            sb.append(",\"Metadata-").append(rel).append("\":{\"FileName\":\"").append(rel);
+            sb.append("\",\"XPositionUm\":")
+                    .append(xUm)
+                    .append(",\"YPositionUm\":")
+                    .append(yUm);
+            sb.append(",\"PixelSizeUm\":")
+                    .append(PIXEL_UM)
+                    .append(",\"PositionName\":\"")
+                    .append(label)
+                    .append("\"}");
+        }
+        sb.append("}");
+        Files.writeString(dir.resolve("metadata.txt"), sb.toString());
+    }
 
     /** One position: pages written frame by frame (t outer, c inner), as MicroManager does. */
     private static void writePosition(

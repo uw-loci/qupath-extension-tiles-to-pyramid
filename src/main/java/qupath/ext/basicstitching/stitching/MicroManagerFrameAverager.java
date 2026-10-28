@@ -40,16 +40,24 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Averages the time points of a MicroManager multi-position acquisition saved as one
- * {@code <prefix>_MMStack_<label>.ome.tif} per position, writing a copy with one frame per
- * position in the same layout, so {@link MicroManagerMetadataStrategy} stitches it like any
- * single-frame acquisition.
+ * Averages the time points of a MicroManager multi-position acquisition, writing a copy with one
+ * frame per position in the same layout, so {@link MicroManagerMetadataStrategy} stitches it like
+ * any single-frame acquisition. Both MicroManager layouts are handled:
+ *
+ * <ul>
+ *   <li><b>One OME-TIFF per position</b> ({@code <prefix>_MMStack_<label>.ome.tif} plus
+ *       {@code _metadata.txt}). A page's channel, slice and frame come from the MicroManager tag
+ *       (51123) on every page; when a file lacks it, the order of the {@code FrameKey-t-c-z}
+ *       blocks in the sidecar is used, and a file matching neither is refused rather than
+ *       guessed.</li>
+ *   <li><b>Single-plane TIFF series</b> (a folder per position holding
+ *       {@code img_channelCCC_positionPPP_timeTTTTTTTTT_zZZZ.tif} files and a
+ *       {@code metadata.txt}). Channel, slice and frame come from the file name, or from the
+ *       file's {@code Metadata-} block. The copy keeps each plane's frame-0 file name.</li>
+ * </ul>
  *
  * <p>Each output plane is the mean of that channel and z-slice over every frame, rounded to the
- * source bit depth (float data stays float). A page's channel, slice and frame come from the
- * MicroManager tag (51123) MicroManager writes on every page; when a file lacks it, the order of
- * the {@code FrameKey-t-c-z} blocks in the position's sidecar is used, and a file matching
- * neither is refused rather than guessed.
+ * source bit depth (float data stays float).
  */
 public final class MicroManagerFrameAverager {
     private static final Logger logger = LoggerFactory.getLogger(MicroManagerFrameAverager.class);
@@ -65,6 +73,10 @@ public final class MicroManagerFrameAverager {
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Pattern FRAME_KEY = Pattern.compile("FrameKey-(\\d+)-(\\d+)-(\\d+)");
+    private static final Pattern SINGLE_PLANE =
+            Pattern.compile("img_channel(\\d+)_position\\d+_time(\\d+)_z(\\d+)\\.tiff?", Pattern.CASE_INSENSITIVE);
+    /** Root files MicroManager writes beside the position folders, copied so the copy matches. */
+    private static final List<String> ROOT_EXTRAS = List.of("comments.txt", "DisplaySettings.json");
     /** A continuation file MicroManager starts past 4 GB: {@code <label>_1.ome.tif}. */
     private static final Pattern CONTINUATION = Pattern.compile("^(.*)_(\\d+)$");
 
@@ -90,7 +102,7 @@ public final class MicroManagerFrameAverager {
     /**
      * Frames per position of the acquisition in {@code folder}, from the first sidecar's Summary.
      *
-     * @return the frame count, or 0 when the folder holds no MMStack sidecar
+     * @return the frame count, or 0 when the folder holds no MicroManager sidecar
      */
     public static int countFrames(File folder) {
         if (folder == null || !folder.isDirectory()) return 0;
@@ -99,8 +111,15 @@ public final class MicroManagerFrameAverager {
         try (var files = Files.list(root)) {
             for (Path p : (Iterable<Path>) files.sorted()::iterator) {
                 String name = p.getFileName().toString();
-                if (!name.endsWith("_metadata.txt") || !name.contains("_MMStack_")) continue;
-                JsonObject summary = summaryOf(readJson(p));
+                Path sidecar;
+                if (name.endsWith("_metadata.txt") && name.contains("_MMStack_")) {
+                    sidecar = p;
+                } else if (Files.isRegularFile(p.resolve("metadata.txt"))) {
+                    sidecar = p.resolve("metadata.txt");
+                } else {
+                    continue;
+                }
+                JsonObject summary = summaryOf(readJson(sidecar));
                 if (summary != null) {
                     return intOr(summary, "Frames", 1);
                 }
@@ -120,7 +139,8 @@ public final class MicroManagerFrameAverager {
     /**
      * Average every position in {@code source} into {@code output}.
      *
-     * @param source folder holding the {@code _MMStack_} files and their sidecars
+     * @param source the acquisition folder: {@code _MMStack_} files and their sidecars, or one
+     *     sub-folder per position (single-plane TIFF series)
      * @param output folder to write; created if absent. An existing folder is written into only
      *     when it is empty or was written by this class (it holds {@link #RECORD_FILENAME}).
      * @return what was written
@@ -135,13 +155,23 @@ public final class MicroManagerFrameAverager {
         }
         prepareOutput(out);
 
-        Map<String, List<Path>> filesByPosition = positionFiles(src);
-        if (filesByPosition.isEmpty()) {
-            throw new IOException("No MicroManager *_MMStack_*.ome.tif files in " + src);
-        }
-
         Map<String, Integer> frames = new LinkedHashMap<>();
         List<String> notes = new ArrayList<>();
+        Map<String, List<Path>> filesByPosition = positionFiles(src);
+        List<Path> positionDirs = filesByPosition.isEmpty() ? singlePlaneDirs(src) : List.of();
+        if (filesByPosition.isEmpty() && positionDirs.isEmpty()) {
+            throw new IOException("No MicroManager acquisition in " + src + ": neither *_MMStack_*.ome.tif files"
+                    + " nor position folders holding a metadata.txt");
+        }
+        for (Path dir : positionDirs) {
+            averageSinglePlanePosition(dir, out.resolve(dir.getFileName().toString()), src, frames, notes);
+        }
+        for (String extra : ROOT_EXTRAS) {
+            Path f = src.resolve(extra);
+            if (Files.isRegularFile(f)) {
+                Files.copy(f, out.resolve(extra), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+        }
         for (var entry : filesByPosition.entrySet()) {
             String label = entry.getKey();
             List<Path> files = entry.getValue();
@@ -153,7 +183,7 @@ public final class MicroManagerFrameAverager {
                 notes.add(label + ": no sidecar " + sidecarIn.getFileName() + "; stage position from other sidecars");
             }
 
-            Planes planes = averagePosition(files, sidecar);
+            Planes planes = averagePosition(files, sidecar, null);
             frames.put(label, planes.frames);
             if (planes.missing > 0) {
                 notes.add(label + ": " + planes.missing + " of " + planes.frames * planes.planeCount()
@@ -161,7 +191,15 @@ public final class MicroManagerFrameAverager {
             }
 
             String outName = stem + ".ome.tif";
-            writeOmeTiff(out.resolve(outName), planes, label, sidecar);
+            writeTiff(
+                    out.resolve(outName),
+                    planes,
+                    java.util.Arrays.asList(planes.mean),
+                    planes.channels,
+                    planes.slices,
+                    channelNames(sidecar),
+                    firstFrameBlock(sidecar),
+                    label);
             if (sidecar != null) {
                 Files.writeString(
                         out.resolve(stem + "_metadata.txt"),
@@ -212,7 +250,13 @@ public final class MicroManagerFrameAverager {
     /** Page coordinates (channel, slice, frame). */
     private record Coord(int c, int z, int t) {}
 
-    private static Planes averagePosition(List<Path> files, JsonObject sidecar) throws IOException {
+    /**
+     * @param files the position's files, in the order MicroManager wrote them
+     * @param sidecar the position's sidecar, for the frame-key fallback; may be null
+     * @param fileCoords single-plane files' coordinates, or null to read them from each page
+     */
+    private static Planes averagePosition(List<Path> files, JsonObject sidecar, Map<Path, Coord> fileCoords)
+            throws IOException {
         List<Coord> sidecarOrder = sidecar == null ? List.of() : frameKeyOrder(sidecar);
 
         Map<Long, double[]> sums = new TreeMap<>();
@@ -229,7 +273,11 @@ public final class MicroManagerFrameAverager {
                     reader.setInput(in, false, false);
                     int pages = reader.getNumImages(true);
                     for (int i = 0; i < pages; i++, pageIndex++) {
-                        Coord coord = tagCoord(reader, i);
+                        if (fileCoords != null && pages > 1) {
+                            throw new IOException(file.getFileName() + " has " + pages
+                                    + " pages; a single-plane TIFF series file holds one");
+                        }
+                        Coord coord = fileCoords != null ? fileCoords.get(file) : tagCoord(reader, i);
                         if (coord == null) {
                             // No tag: the sidecar's frame keys are in the order the pages were written.
                             if (pageIndex >= sidecarOrder.size()) {
@@ -369,7 +417,20 @@ public final class MicroManagerFrameAverager {
         return Math.max(lo, Math.min(hi, Math.round(v)));
     }
 
-    private static void writeOmeTiff(Path path, Planes p, String label, JsonObject sidecar) throws IOException {
+    /**
+     * Write planes (channel fastest, then z) as one TIFF; {@code .ome.tif} gets OME-XML, a plain
+     * {@code .tif} is a plain TIFF.
+     */
+    private static void writeTiff(
+            Path path,
+            Planes p,
+            List<double[]> planes,
+            int sizeC,
+            int sizeZ,
+            List<String> names,
+            JsonObject block,
+            String label)
+            throws IOException {
         Files.deleteIfExists(path);
         IMetadata meta = MetadataTools.createOMEXMLMetadata();
         MetadataTools.populateMetadata(
@@ -381,19 +442,13 @@ public final class MicroManagerFrameAverager {
                 FormatTools.getPixelTypeString(p.pixelType),
                 p.width,
                 p.height,
-                p.slices,
-                p.channels,
+                sizeZ,
+                sizeC,
                 1,
                 1);
-        JsonObject summary = summaryOf(sidecar);
-        List<String> names = new ArrayList<>();
-        if (summary != null && summary.has("ChNames") && summary.get("ChNames").isJsonArray()) {
-            summary.getAsJsonArray("ChNames").forEach(e -> names.add(e.isJsonPrimitive() ? e.getAsString() : null));
-        }
-        for (int c = 0; c < p.channels; c++) {
+        for (int c = 0; c < sizeC; c++) {
             if (c < names.size() && names.get(c) != null) meta.setChannelName(names.get(c), 0, c);
         }
-        JsonObject block = firstFrameBlock(sidecar);
         Double px = block == null ? null : doubleOr(block, "PixelSizeUm");
         if (px != null && px > 0) {
             meta.setPixelsPhysicalSizeX(new Length(px, UNITS.MICROMETER), 0);
@@ -411,8 +466,8 @@ public final class MicroManagerFrameAverager {
             writer.setWriteSequentially(true);
             writer.setMetadataRetrieve(meta);
             writer.setId(path.toString());
-            for (int i = 0; i < p.planeCount(); i++) {
-                writer.saveBytes(i, pack(p.mean[i], p.pixelType));
+            for (int i = 0; i < planes.size(); i++) {
+                writer.saveBytes(i, pack(planes.get(i), p.pixelType));
             }
         } catch (FormatException e) {
             throw new IOException("Could not write " + path, e);
@@ -424,17 +479,7 @@ public final class MicroManagerFrameAverager {
         JsonObject out = new JsonObject();
         JsonObject summary = summaryOf(sidecar);
         if (summary != null) {
-            JsonObject s = summary.deepCopy();
-            s.addProperty("Frames", 1);
-            if (s.has("IntendedDimensions") && s.get("IntendedDimensions").isJsonObject()) {
-                s.getAsJsonObject("IntendedDimensions").addProperty("time", 1);
-            }
-            JsonObject avg = new JsonObject();
-            avg.addProperty("Source", source.toString());
-            avg.addProperty("FramesAveraged", p.frames);
-            avg.addProperty("Method", "mean over frames, rounded to the source bit depth");
-            s.add("FrameAveraging", avg);
-            out.add("Summary", s);
+            out.add("Summary", oneFrameSummary(summary, p.frames, source));
         }
         Map<String, JsonObject> earliest = new LinkedHashMap<>();
         for (String key : sidecar.keySet()) {
@@ -461,6 +506,166 @@ public final class MicroManagerFrameAverager {
             }
         }
         return out;
+    }
+
+    /** Summary.ChNames, or an empty list. */
+    private static List<String> channelNames(JsonObject sidecar) {
+        List<String> names = new ArrayList<>();
+        JsonObject summary = summaryOf(sidecar);
+        if (summary != null && summary.has("ChNames") && summary.get("ChNames").isJsonArray()) {
+            summary.getAsJsonArray("ChNames").forEach(e -> names.add(e.isJsonPrimitive() ? e.getAsString() : null));
+        }
+        return names;
+    }
+
+    /** Position folders of a single-plane TIFF series: sub-folders holding a metadata.txt. */
+    private static List<Path> singlePlaneDirs(Path src) throws IOException {
+        List<Path> out = new ArrayList<>();
+        try (var s = Files.list(src)) {
+            for (Path p : (Iterable<Path>) s.sorted()::iterator) {
+                if (!p.getFileName().toString().contains(":")
+                        && Files.isDirectory(p)
+                        && Files.isRegularFile(p.resolve("metadata.txt"))) {
+                    out.add(p);
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Average one position folder of a single-plane TIFF series into {@code outDir}: one file per
+     * channel and slice, named as that plane's earliest frame, and a metadata.txt for one frame.
+     */
+    private static void averageSinglePlanePosition(
+            Path dir, Path outDir, Path src, Map<String, Integer> frames, List<String> notes) throws IOException {
+        String label = dir.getFileName().toString();
+        JsonObject sidecar = readJson(dir.resolve("metadata.txt"));
+        if (sidecar == null) {
+            throw new IOException("Empty metadata.txt in " + dir);
+        }
+        Map<Path, Coord> coords = new LinkedHashMap<>();
+        Map<Long, Path> earliest = new TreeMap<>();
+        try (var s = Files.list(dir)) {
+            for (Path f : (Iterable<Path>) s.sorted()::iterator) {
+                String name = f.getFileName().toString();
+                String lower = name.toLowerCase(Locale.ROOT);
+                if (name.contains(":") || !(lower.endsWith(".tif") || lower.endsWith(".tiff"))) continue;
+                Coord c = singlePlaneCoord(name, sidecar.get("Metadata-" + label + "/" + name));
+                if (c == null) {
+                    throw new IOException("Cannot tell which channel, slice and frame " + label + "/" + name
+                            + " holds: its name is not img_channelCCC_positionPPP_timeTTTTTTTTT_zZZZ.tif"
+                            + " and metadata.txt has no Metadata- block for it");
+                }
+                coords.put(f, c);
+                long key = ((long) c.z << 32) | c.c;
+                Path have = earliest.get(key);
+                if (have == null || c.t < coords.get(have).t) earliest.put(key, f);
+            }
+        }
+        if (coords.isEmpty()) {
+            notes.add(label + ": no TIFF files; skipped");
+            return;
+        }
+        Planes planes = averagePosition(new ArrayList<>(coords.keySet()), null, coords);
+        frames.put(label, planes.frames);
+        if (planes.missing > 0) {
+            notes.add(label + ": " + planes.missing + " of " + planes.frames * planes.planeCount()
+                    + " planes absent; those planes averaged over the frames present");
+        }
+
+        Files.createDirectories(outDir);
+        List<String> names = channelNames(sidecar);
+        java.util.Set<String> kept = new java.util.HashSet<>();
+        for (int z = 0; z < planes.slices; z++) {
+            for (int c = 0; c < planes.channels; c++) {
+                Path first = earliest.get(((long) z << 32) | c);
+                if (first == null) continue;
+                String name = first.getFileName().toString();
+                kept.add(name);
+                JsonElement block = sidecar.get("Metadata-" + label + "/" + name);
+                writeTiff(
+                        outDir.resolve(name),
+                        planes,
+                        List.of(planes.mean[c + planes.channels * z]),
+                        1,
+                        1,
+                        c < names.size() ? java.util.Collections.singletonList(names.get(c)) : List.of(),
+                        block != null && block.isJsonObject() ? block.getAsJsonObject() : null,
+                        label);
+            }
+        }
+        Files.writeString(
+                outDir.resolve("metadata.txt"),
+                GSON.toJson(averagedSinglePlaneSidecar(sidecar, label, kept, planes.frames, src)),
+                StandardCharsets.UTF_8);
+        logger.info(
+                "Averaged {} frame(s) of {} ({} channel(s), {} slice(s))",
+                planes.frames,
+                label,
+                planes.channels,
+                planes.slices);
+    }
+
+    /** Channel, slice and frame from a single-plane file's name, else from its Metadata- block. */
+    private static Coord singlePlaneCoord(String name, JsonElement block) {
+        Matcher m = SINGLE_PLANE.matcher(name);
+        if (m.matches()) {
+            return new Coord(Integer.parseInt(m.group(1)), Integer.parseInt(m.group(3)), Integer.parseInt(m.group(2)));
+        }
+        if (block != null && block.isJsonObject()) {
+            JsonObject b = block.getAsJsonObject();
+            if (b.has("ChannelIndex") && b.has("FrameIndex")) {
+                return new Coord(intOr(b, "ChannelIndex", 0), intOr(b, "SliceIndex", 0), intOr(b, "FrameIndex", 0));
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The position's metadata.txt for one frame: Summary says 1 frame, and only the per-file
+     * blocks of the files written are kept.
+     */
+    private static JsonObject averagedSinglePlaneSidecar(
+            JsonObject sidecar, String label, java.util.Set<String> kept, int framesAveraged, Path source) {
+        JsonObject out = new JsonObject();
+        for (String key : sidecar.keySet()) {
+            JsonElement value = sidecar.get(key);
+            if (key.equals("Summary") && value.isJsonObject()) {
+                out.add(key, oneFrameSummary(value.getAsJsonObject(), framesAveraged, source));
+                continue;
+            }
+            String rel = key.startsWith("Metadata-")
+                    ? key.substring("Metadata-".length())
+                    : key.startsWith("Coords-") ? key.substring("Coords-".length()) : null;
+            if (rel == null) {
+                out.add(key, value.deepCopy());
+                continue;
+            }
+            String base = rel.contains("/") ? rel.substring(rel.lastIndexOf('/') + 1) : rel;
+            if (!kept.contains(base)) continue;
+            JsonElement copy = value.deepCopy();
+            if (key.startsWith("Metadata-") && copy.isJsonObject()) {
+                copy.getAsJsonObject().addProperty("FramesAveraged", framesAveraged);
+            }
+            out.add(key, copy);
+        }
+        return out;
+    }
+
+    /** A copy of Summary describing one frame, with the averaging recorded in it. */
+    private static JsonObject oneFrameSummary(JsonObject summary, int framesAveraged, Path source) {
+        JsonObject s = summary.deepCopy();
+        s.addProperty("Frames", 1);
+        if (s.has("IntendedDimensions") && s.get("IntendedDimensions").isJsonObject()) {
+            s.getAsJsonObject("IntendedDimensions").addProperty("time", 1);
+        }
+        JsonObject avg = new JsonObject();
+        avg.addProperty("Source", source.toString());
+        avg.addProperty("FramesAveraged", framesAveraged);
+        avg.addProperty("Method", "mean over frames, rounded to the source bit depth");
+        s.add("FrameAveraging", avg);
+        return s;
     }
 
     private static void writeRecord(Path source, Result result) throws IOException {
