@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.9] - 2026-10-28
+
 ### Added
 - **Average time points before stitching (MicroManager).** An acquisition that takes several frames at each position -- SHG collected as a time series to average out noise -- stitched badly in both MicroManager layouts: an OME-TIFF per position stitched only its first frame, and a single-plane TIFF series stitched every frame as its own tile, stacked at the same stage position (a 500-position, 3-frame run placed 1500 tiles and kept the last frame of each). When the metadata reports more than one frame, the dialog now offers **Average the N time points of each position before stitching**. Each channel is averaged over its frames (mean, rounded to the source bit depth, summed in double precision so saturated frames cannot overflow) into `<folder>_averaged`, beside the acquisition, in the same MicroManager layout with `Frames` set to 1; that copy is then stitched, and the stitch record says how many frames were averaged. Frames are identified from MicroManager's per-page tag, the sidecar's frame keys, or (single-plane series) the file name. Checked on that 500-position SHG run: 500 tiles placed, and every averaged plane equal to an independent numpy mean. `MicroManagerFrameAverager` is public for scripts.
 
