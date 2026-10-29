@@ -16,10 +16,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -40,9 +42,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Averages the time points of a MicroManager multi-position acquisition, writing a copy with one
- * frame per position in the same layout, so {@link MicroManagerMetadataStrategy} stitches it like
- * any single-frame acquisition. Both MicroManager layouts are handled:
+ * Reduces each position of a MicroManager multi-position acquisition to one plane per channel
+ * before stitching: the time points are averaged, then the z-slices are max-intensity projected,
+ * in that order. The result is a copy in the same MicroManager layout, with one frame and (when
+ * projected) one slice per position, so {@link MicroManagerMetadataStrategy} stitches it like any
+ * single-plane acquisition. Both MicroManager layouts are handled:
  *
  * <ul>
  *   <li><b>One OME-TIFF per position</b> ({@code <prefix>_MMStack_<label>.ome.tif} plus
@@ -53,23 +57,24 @@ import org.slf4j.LoggerFactory;
  *   <li><b>Single-plane TIFF series</b> (a folder per position holding
  *       {@code img_channelCCC_positionPPP_timeTTTTTTTTT_zZZZ.tif} files and a
  *       {@code metadata.txt}). Channel, slice and frame come from the file name, or from the
- *       file's {@code Metadata-} block. The copy keeps each plane's frame-0 file name.</li>
+ *       file's {@code Metadata-} block. The copy keeps each plane's first-frame, first-slice file
+ *       name.</li>
  * </ul>
  *
- * <p>Each output plane is the mean of that channel and z-slice over every frame, rounded to the
- * source bit depth (float data stays float).
+ * <p>Averaging is the mean over frames; projection is the per-pixel maximum over slices of those
+ * means. Values are rounded to the source bit depth only when written (float data stays float).
  */
-public final class MicroManagerFrameAverager {
-    private static final Logger logger = LoggerFactory.getLogger(MicroManagerFrameAverager.class);
+public final class MicroManagerPreprocessor {
+    private static final Logger logger = LoggerFactory.getLogger(MicroManagerPreprocessor.class);
 
     /** The tag MicroManager writes on every page, holding that image's metadata as JSON. */
     static final int MM_METADATA_TAG = 51123;
 
     /** Written into the output folder; its presence is what allows a later run to overwrite it. */
-    public static final String RECORD_FILENAME = "frame_averaging.txt";
+    public static final String RECORD_FILENAME = "preprocessing.txt";
 
-    /** Suffix of the default output folder, beside the source folder. */
-    public static final String FOLDER_SUFFIX = "_averaged";
+    /** The record 0.7.9 wrote; a folder holding it was written by this class too. */
+    private static final String RECORD_FILENAME_0_7_9 = "frame_averaging.txt";
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Pattern FRAME_KEY = Pattern.compile("FrameKey-(\\d+)-(\\d+)-(\\d+)");
@@ -80,34 +85,82 @@ public final class MicroManagerFrameAverager {
     /** A continuation file MicroManager starts past 4 GB: {@code <label>_1.ome.tif}. */
     private static final Pattern CONTINUATION = Pattern.compile("^(.*)_(\\d+)$");
 
-    private MicroManagerFrameAverager() {}
+    private MicroManagerPreprocessor() {}
+
+    /**
+     * What to do to each position, applied in this order.
+     *
+     * @param averageFrames average the time points; when false and there are several, the first
+     *     frame is used
+     * @param maxProjectZ take the per-pixel maximum over the z-slices
+     */
+    public record Options(boolean averageFrames, boolean maxProjectZ) {
+        /** @return the default output folder's suffix: {@code _averaged}, {@code _mip} or both */
+        public String folderSuffix() {
+            if (averageFrames && maxProjectZ) return "_averaged_mip";
+            return maxProjectZ ? "_mip" : "_averaged";
+        }
+
+        /** @return the method in words, for records */
+        public String describe() {
+            String frames = averageFrames ? "mean over time points" : "first time point only";
+            String z = maxProjectZ ? ", then maximum intensity over z-slices" : "";
+            return frames + z + "; rounded to the source bit depth";
+        }
+    }
+
+    /**
+     * Frames and z-slices per position, from the acquisition's Summary.
+     *
+     * @param frames time points per position; 0 when the folder holds no MicroManager sidecar
+     * @param slices z-slices per position; 0 likewise
+     */
+    public record Shape(int frames, int slices) {}
 
     /**
      * What one run did.
      *
      * @param output the folder written
+     * @param options what was asked
      * @param positions positions written
-     * @param framesPerPosition frames averaged, per position label
-     * @param notes anything a reader of the stitch record should know (uneven frame counts, ...)
+     * @param framesPerPosition time points in the source, per position label
+     * @param slicesPerPosition z-slices in the source, per position label
+     * @param notes anything a reader of the stitch record should know (uneven counts, ...)
      */
-    public record Result(Path output, int positions, Map<String, Integer> framesPerPosition, List<String> notes) {
+    public record Result(
+            Path output,
+            Options options,
+            int positions,
+            Map<String, Integer> framesPerPosition,
+            Map<String, Integer> slicesPerPosition,
+            List<String> notes) {
         /** @return "12" or "10 to 12" */
         public String frameSummary() {
-            int min = framesPerPosition.values().stream().mapToInt(i -> i).min().orElse(0);
-            int max = framesPerPosition.values().stream().mapToInt(i -> i).max().orElse(0);
+            return range(framesPerPosition);
+        }
+
+        /** @return "5" or "4 to 5" */
+        public String sliceSummary() {
+            return range(slicesPerPosition);
+        }
+
+        private static String range(Map<String, Integer> counts) {
+            int min = counts.values().stream().mapToInt(i -> i).min().orElse(0);
+            int max = counts.values().stream().mapToInt(i -> i).max().orElse(0);
             return min == max ? String.valueOf(max) : min + " to " + max;
         }
     }
 
     /**
-     * Frames per position of the acquisition in {@code folder}, from the first sidecar's Summary.
+     * Frames and slices per position of the acquisition in {@code folder}, from the first sidecar's
+     * Summary.
      *
-     * @return the frame count, or 0 when the folder holds no MicroManager sidecar
+     * @return the shape; (0, 0) when the folder holds no MicroManager sidecar
      */
-    public static int countFrames(File folder) {
-        if (folder == null || !folder.isDirectory()) return 0;
+    public static Shape shape(File folder) {
+        if (folder == null || !folder.isDirectory()) return new Shape(0, 0);
         Path root = folder.toPath().toAbsolutePath().normalize();
-        if (root.getParent() == null) return 0;
+        if (root.getParent() == null) return new Shape(0, 0);
         try (var files = Files.list(root)) {
             for (Path p : (Iterable<Path>) files.sorted()::iterator) {
                 String name = p.getFileName().toString();
@@ -121,41 +174,43 @@ public final class MicroManagerFrameAverager {
                 }
                 JsonObject summary = summaryOf(readJson(sidecar));
                 if (summary != null) {
-                    return intOr(summary, "Frames", 1);
+                    return new Shape(intOr(summary, "Frames", 1), intOr(summary, "Slices", 1));
                 }
             }
         } catch (IOException | RuntimeException e) {
-            logger.debug("Could not read frame count under {}: {}", folder, e.toString());
+            logger.debug("Could not read the acquisition shape under {}: {}", folder, e.toString());
         }
-        return 0;
+        return new Shape(0, 0);
     }
 
-    /** @return the default output folder: {@code <source>_averaged} beside the source */
-    public static Path defaultOutput(Path source) {
+    /** @return the default output folder, beside the source: {@code <source><suffix>} */
+    public static Path defaultOutput(Path source, Options options) {
         Path abs = source.toAbsolutePath().normalize();
-        return abs.resolveSibling(abs.getFileName() + FOLDER_SUFFIX);
+        return abs.resolveSibling(abs.getFileName() + options.folderSuffix());
     }
 
     /**
-     * Average every position in {@code source} into {@code output}.
+     * Reduce every position in {@code source} into {@code output}.
      *
      * @param source the acquisition folder: {@code _MMStack_} files and their sidecars, or one
      *     sub-folder per position (single-plane TIFF series)
      * @param output folder to write; created if absent. An existing folder is written into only
      *     when it is empty or was written by this class (it holds {@link #RECORD_FILENAME}).
+     * @param options what to do, in order
      * @return what was written
-     * @throws IOException when nothing could be averaged, a file's page order cannot be
-     *     established, or the output folder belongs to something else
+     * @throws IOException when nothing could be read, a file's page order cannot be established,
+     *     or the output folder belongs to something else
      */
-    public static Result average(Path source, Path output) throws IOException {
+    public static Result run(Path source, Path output, Options options) throws IOException {
         Path src = source.toAbsolutePath().normalize();
         Path out = output.toAbsolutePath().normalize();
         if (src.equals(out)) {
-            throw new IOException("The averaged copy cannot be written over its source folder " + src);
+            throw new IOException("The reduced copy cannot be written over its source folder " + src);
         }
         prepareOutput(out);
 
         Map<String, Integer> frames = new LinkedHashMap<>();
+        Map<String, Integer> slices = new LinkedHashMap<>();
         List<String> notes = new ArrayList<>();
         Map<String, List<Path>> filesByPosition = positionFiles(src);
         List<Path> positionDirs = filesByPosition.isEmpty() ? singlePlaneDirs(src) : List.of();
@@ -164,7 +219,12 @@ public final class MicroManagerFrameAverager {
                     + " nor position folders holding a metadata.txt");
         }
         for (Path dir : positionDirs) {
-            averageSinglePlanePosition(dir, out.resolve(dir.getFileName().toString()), src, frames, notes);
+            Planes planes =
+                    singlePlanePosition(dir, out.resolve(dir.getFileName().toString()), src, options, notes);
+            if (planes != null) {
+                frames.put(dir.getFileName().toString(), planes.framesInSource);
+                slices.put(dir.getFileName().toString(), planes.slicesInSource);
+            }
         }
         for (String extra : ROOT_EXTRAS) {
             Path f = src.resolve(extra);
@@ -183,12 +243,9 @@ public final class MicroManagerFrameAverager {
                 notes.add(label + ": no sidecar " + sidecarIn.getFileName() + "; stage position from other sidecars");
             }
 
-            Planes planes = averagePosition(files, sidecar, null);
-            frames.put(label, planes.frames);
-            if (planes.missing > 0) {
-                notes.add(label + ": " + planes.missing + " of " + planes.frames * planes.planeCount()
-                        + " planes absent; those planes averaged over the frames present");
-            }
+            Planes planes = reduce(files, sidecar, null, options, label, notes);
+            frames.put(label, planes.framesInSource);
+            slices.put(label, planes.slicesInSource);
 
             String outName = stem + ".ome.tif";
             writeTiff(
@@ -203,38 +260,53 @@ public final class MicroManagerFrameAverager {
             if (sidecar != null) {
                 Files.writeString(
                         out.resolve(stem + "_metadata.txt"),
-                        GSON.toJson(averagedSidecar(sidecar, planes, outName, src)),
+                        GSON.toJson(reducedSidecar(sidecar, planes, outName, src, options)),
                         StandardCharsets.UTF_8);
             }
-            logger.info(
-                    "Averaged {} frame(s) of {} ({} channel(s), {} slice(s)) -> {}",
-                    planes.frames,
-                    label,
-                    planes.channels,
-                    planes.slices,
-                    outName);
+            logReduced(label, planes, options);
         }
 
-        int min = frames.values().stream().mapToInt(i -> i).min().orElse(0);
-        int max = frames.values().stream().mapToInt(i -> i).max().orElse(0);
-        if (min != max) {
-            notes.add(
-                    0,
-                    "positions have different frame counts (" + min + " to " + max
-                            + "); each was averaged over its own frames");
-        }
-        Result result = new Result(out, frames.size(), frames, notes);
+        noteUneven(notes, frames, "time point");
+        noteUneven(notes, slices, "z-slice");
+        Result result = new Result(out, options, frames.size(), frames, slices, notes);
         writeRecord(src, result);
         return result;
     }
 
-    /** One position's averaged planes, indexed {@code c + channels * z}. */
+    private static void noteUneven(List<String> notes, Map<String, Integer> counts, String what) {
+        int min = counts.values().stream().mapToInt(i -> i).min().orElse(0);
+        int max = counts.values().stream().mapToInt(i -> i).max().orElse(0);
+        if (min != max) {
+            notes.add(
+                    0,
+                    "positions have different " + what + " counts (" + min + " to " + max
+                            + "); each was reduced over its own");
+        }
+    }
+
+    private static void logReduced(String label, Planes p, Options options) {
+        logger.info(
+                "{}: {} time point(s) {}, {} z-slice(s) {}, {} channel(s)",
+                label,
+                p.framesInSource,
+                options.averageFrames() ? "averaged" : "(first used)",
+                p.slicesInSource,
+                p.slicesInSource > 1 && options.maxProjectZ() ? "max-projected" : "kept",
+                p.channels);
+    }
+
+    /** One position's planes, indexed {@code c + channels * z}. */
     static final class Planes {
         int width;
         int height;
         int channels;
+        /** Slices written: 1 after projection. */
         int slices;
+        /** Frames combined into each plane: the frame count when averaged, else 1. */
         int frames;
+
+        int framesInSource;
+        int slicesInSource;
         /** Bio-Formats pixel type of the source. */
         int pixelType;
         /** (channel, slice) pairs some frame did not provide. */
@@ -245,17 +317,44 @@ public final class MicroManagerFrameAverager {
         int planeCount() {
             return channels * slices;
         }
+
+        boolean projected() {
+            return slices < slicesInSource;
+        }
     }
 
     /** Page coordinates (channel, slice, frame). */
     private record Coord(int c, int z, int t) {}
 
+    /** Average (or take the first frame), then project if asked, noting missing planes. */
+    private static Planes reduce(
+            List<Path> files,
+            JsonObject sidecar,
+            Map<Path, Coord> fileCoords,
+            Options options,
+            String label,
+            List<String> notes)
+            throws IOException {
+        Planes p = combineFrames(files, sidecar, fileCoords, options.averageFrames());
+        if (p.missing > 0) {
+            notes.add(label + ": " + p.missing + " of " + p.frames * p.planeCount()
+                    + " planes absent; those planes averaged over the frames present");
+        }
+        if (options.maxProjectZ()) {
+            maxProject(p);
+        }
+        return p;
+    }
+
     /**
+     * Mean over frames for every (channel, slice); with {@code averageFrames} false, frame 0 only.
+     *
      * @param files the position's files, in the order MicroManager wrote them
      * @param sidecar the position's sidecar, for the frame-key fallback; may be null
      * @param fileCoords single-plane files' coordinates, or null to read them from each page
      */
-    private static Planes averagePosition(List<Path> files, JsonObject sidecar, Map<Path, Coord> fileCoords)
+    private static Planes combineFrames(
+            List<Path> files, JsonObject sidecar, Map<Path, Coord> fileCoords, boolean averageFrames)
             throws IOException {
         List<Coord> sidecarOrder = sidecar == null ? List.of() : frameKeyOrder(sidecar);
 
@@ -287,10 +386,16 @@ public final class MicroManagerFrameAverager {
                             }
                             coord = sidecarOrder.get(pageIndex);
                         }
+                        maxC = Math.max(maxC, coord.c);
+                        maxZ = Math.max(maxZ, coord.z);
+                        maxT = Math.max(maxT, coord.t);
+                        if (!averageFrames && coord.t > 0) {
+                            continue;
+                        }
                         Raster r = reader.read(i).getRaster();
                         if (r.getNumBands() != 1) {
                             throw new IOException(file.getFileName() + " page " + i + " has " + r.getNumBands()
-                                    + " samples per pixel; only single-sample (grayscale) frames can be averaged");
+                                    + " samples per pixel; only single-sample (grayscale) planes are supported");
                         }
                         if (p.width == 0) {
                             p.width = r.getWidth();
@@ -304,9 +409,6 @@ public final class MicroManagerFrameAverager {
                         double[] sum = sums.computeIfAbsent(key, k -> new double[p.width * p.height]);
                         accumulate(r, sum);
                         counts.merge(key, 1, Integer::sum);
-                        maxC = Math.max(maxC, coord.c);
-                        maxZ = Math.max(maxZ, coord.z);
-                        maxT = Math.max(maxT, coord.t);
                     }
                 } finally {
                     reader.dispose();
@@ -316,7 +418,9 @@ public final class MicroManagerFrameAverager {
 
         p.channels = maxC + 1;
         p.slices = maxZ + 1;
-        p.frames = maxT + 1;
+        p.slicesInSource = p.slices;
+        p.framesInSource = maxT + 1;
+        p.frames = averageFrames ? p.framesInSource : 1;
         p.mean = new double[p.planeCount()][];
         for (int z = 0; z < p.slices; z++) {
             for (int c = 0; c < p.channels; c++) {
@@ -324,7 +428,8 @@ public final class MicroManagerFrameAverager {
                 double[] sum = sums.get(key);
                 int n = counts.getOrDefault(key, 0);
                 if (sum == null || n == 0) {
-                    throw new IOException("Channel " + c + ", slice " + z + " has no frames in " + files.get(0));
+                    throw new IOException("Channel " + c + ", slice " + z + " has no "
+                            + (averageFrames ? "frames" : "first frame") + " in " + files.get(0));
                 }
                 p.missing += p.frames - n;
                 for (int k = 0; k < sum.length; k++) sum[k] /= n;
@@ -334,10 +439,28 @@ public final class MicroManagerFrameAverager {
         return p;
     }
 
+    /** Replace each channel's slices by their per-pixel maximum. */
+    static void maxProject(Planes p) {
+        if (p.slices <= 1) return;
+        double[][] out = new double[p.channels][];
+        for (int c = 0; c < p.channels; c++) {
+            double[] max = p.mean[c].clone();
+            for (int z = 1; z < p.slices; z++) {
+                double[] plane = p.mean[c + p.channels * z];
+                for (int k = 0; k < max.length; k++) {
+                    if (plane[k] > max[k]) max[k] = plane[k];
+                }
+            }
+            out[c] = max;
+        }
+        p.mean = out;
+        p.slices = 1;
+    }
+
     /**
      * Add a page to the running sum. Sums are doubles, exact for integers up to 2^53, so 16-bit
      * frames cannot wrap or lose precision below about 10^11 frames; the type's range is applied
-     * only to the final mean, in {@link #pack}.
+     * only to the final value, in {@link #pack}.
      */
     private static void accumulate(Raster r, double[] sum) {
         int w = r.getWidth();
@@ -397,7 +520,7 @@ public final class MicroManagerFrameAverager {
         };
     }
 
-    /** Pack one averaged plane little-endian in the source type, rounding integer types. */
+    /** Pack one plane little-endian in the source type, rounding integer types. */
     static byte[] pack(double[] plane, int pixelType) {
         int bpp = FormatTools.getBytesPerPixel(pixelType);
         ByteBuffer buf = ByteBuffer.allocate(plane.length * bpp).order(ByteOrder.LITTLE_ENDIAN);
@@ -474,12 +597,13 @@ public final class MicroManagerFrameAverager {
         }
     }
 
-    /** The source sidecar reshaped for one frame: Summary says 1 frame, one FrameKey per (c, z). */
-    private static JsonObject averagedSidecar(JsonObject sidecar, Planes p, String outName, Path source) {
+    /** The source sidecar reshaped to what was written: one FrameKey per written (c, z). */
+    private static JsonObject reducedSidecar(
+            JsonObject sidecar, Planes p, String outName, Path source, Options options) {
         JsonObject out = new JsonObject();
         JsonObject summary = summaryOf(sidecar);
         if (summary != null) {
-            out.add("Summary", oneFrameSummary(summary, p.frames, source));
+            out.add("Summary", reducedSummary(summary, p, source, options));
         }
         Map<String, JsonObject> earliest = new LinkedHashMap<>();
         for (String key : sidecar.keySet()) {
@@ -501,11 +625,19 @@ public final class MicroManagerFrameAverager {
                 if (block == null) continue;
                 block.remove("__t");
                 block.addProperty("FileName", outName);
-                block.addProperty("FramesAveraged", p.frames);
+                annotate(block, p);
                 out.add("FrameKey-0-" + c + "-" + z, block);
             }
         }
         return out;
+    }
+
+    /** Per-plane note of what went into the plane. */
+    private static void annotate(JsonObject block, Planes p) {
+        block.addProperty("FramesAveraged", p.frames);
+        if (p.projected()) {
+            block.addProperty("SlicesMaxProjected", p.slicesInSource);
+        }
     }
 
     /** Summary.ChNames, or an empty list. */
@@ -534,11 +666,13 @@ public final class MicroManagerFrameAverager {
     }
 
     /**
-     * Average one position folder of a single-plane TIFF series into {@code outDir}: one file per
-     * channel and slice, named as that plane's earliest frame, and a metadata.txt for one frame.
+     * Reduce one position folder of a single-plane TIFF series into {@code outDir}: one file per
+     * written channel and slice, named as that plane's first frame, and a matching metadata.txt.
+     *
+     * @return the planes written, or null when the folder held no TIFFs
      */
-    private static void averageSinglePlanePosition(
-            Path dir, Path outDir, Path src, Map<String, Integer> frames, List<String> notes) throws IOException {
+    private static Planes singlePlanePosition(Path dir, Path outDir, Path src, Options options, List<String> notes)
+            throws IOException {
         String label = dir.getFileName().toString();
         JsonObject sidecar = readJson(dir.resolve("metadata.txt"));
         if (sidecar == null) {
@@ -565,18 +699,13 @@ public final class MicroManagerFrameAverager {
         }
         if (coords.isEmpty()) {
             notes.add(label + ": no TIFF files; skipped");
-            return;
+            return null;
         }
-        Planes planes = averagePosition(new ArrayList<>(coords.keySet()), null, coords);
-        frames.put(label, planes.frames);
-        if (planes.missing > 0) {
-            notes.add(label + ": " + planes.missing + " of " + planes.frames * planes.planeCount()
-                    + " planes absent; those planes averaged over the frames present");
-        }
+        Planes planes = reduce(new ArrayList<>(coords.keySet()), null, coords, options, label, notes);
 
         Files.createDirectories(outDir);
         List<String> names = channelNames(sidecar);
-        java.util.Set<String> kept = new java.util.HashSet<>();
+        Set<String> kept = new HashSet<>();
         for (int z = 0; z < planes.slices; z++) {
             for (int c = 0; c < planes.channels; c++) {
                 Path first = earliest.get(((long) z << 32) | c);
@@ -597,14 +726,10 @@ public final class MicroManagerFrameAverager {
         }
         Files.writeString(
                 outDir.resolve("metadata.txt"),
-                GSON.toJson(averagedSinglePlaneSidecar(sidecar, label, kept, planes.frames, src)),
+                GSON.toJson(reducedSinglePlaneSidecar(sidecar, kept, planes, src, options)),
                 StandardCharsets.UTF_8);
-        logger.info(
-                "Averaged {} frame(s) of {} ({} channel(s), {} slice(s))",
-                planes.frames,
-                label,
-                planes.channels,
-                planes.slices);
+        logReduced(label, planes, options);
+        return planes;
     }
 
     /** Channel, slice and frame from a single-plane file's name, else from its Metadata- block. */
@@ -623,16 +748,16 @@ public final class MicroManagerFrameAverager {
     }
 
     /**
-     * The position's metadata.txt for one frame: Summary says 1 frame, and only the per-file
-     * blocks of the files written are kept.
+     * The position's metadata.txt for what was written: Summary describes the reduced shape, and
+     * only the per-file blocks of the files written are kept.
      */
-    private static JsonObject averagedSinglePlaneSidecar(
-            JsonObject sidecar, String label, java.util.Set<String> kept, int framesAveraged, Path source) {
+    private static JsonObject reducedSinglePlaneSidecar(
+            JsonObject sidecar, Set<String> kept, Planes p, Path source, Options options) {
         JsonObject out = new JsonObject();
         for (String key : sidecar.keySet()) {
             JsonElement value = sidecar.get(key);
             if (key.equals("Summary") && value.isJsonObject()) {
-                out.add(key, oneFrameSummary(value.getAsJsonObject(), framesAveraged, source));
+                out.add(key, reducedSummary(value.getAsJsonObject(), p, source, options));
                 continue;
             }
             String rel = key.startsWith("Metadata-")
@@ -646,55 +771,71 @@ public final class MicroManagerFrameAverager {
             if (!kept.contains(base)) continue;
             JsonElement copy = value.deepCopy();
             if (key.startsWith("Metadata-") && copy.isJsonObject()) {
-                copy.getAsJsonObject().addProperty("FramesAveraged", framesAveraged);
+                annotate(copy.getAsJsonObject(), p);
             }
             out.add(key, copy);
         }
         return out;
     }
 
-    /** A copy of Summary describing one frame, with the averaging recorded in it. */
-    private static JsonObject oneFrameSummary(JsonObject summary, int framesAveraged, Path source) {
+    /** A copy of Summary describing one frame (and one slice when projected), recording the method. */
+    private static JsonObject reducedSummary(JsonObject summary, Planes p, Path source, Options options) {
         JsonObject s = summary.deepCopy();
         s.addProperty("Frames", 1);
-        if (s.has("IntendedDimensions") && s.get("IntendedDimensions").isJsonObject()) {
-            s.getAsJsonObject("IntendedDimensions").addProperty("time", 1);
+        JsonObject intended =
+                s.has("IntendedDimensions") && s.get("IntendedDimensions").isJsonObject()
+                        ? s.getAsJsonObject("IntendedDimensions")
+                        : null;
+        if (intended != null) intended.addProperty("time", 1);
+        if (p.projected()) {
+            s.addProperty("Slices", 1);
+            if (intended != null) intended.addProperty("z", 1);
         }
-        JsonObject avg = new JsonObject();
-        avg.addProperty("Source", source.toString());
-        avg.addProperty("FramesAveraged", framesAveraged);
-        avg.addProperty("Method", "mean over frames, rounded to the source bit depth");
-        s.add("FrameAveraging", avg);
+        JsonObject rec = new JsonObject();
+        rec.addProperty("Source", source.toString());
+        rec.addProperty("Method", options.describe());
+        rec.addProperty("FramesInSource", p.framesInSource);
+        rec.addProperty("FramesAveraged", p.frames);
+        rec.addProperty("SlicesInSource", p.slicesInSource);
+        rec.addProperty("SlicesMaxProjected", p.projected() ? p.slicesInSource : 0);
+        s.add("Preprocessing", rec);
         return s;
     }
 
     private static void writeRecord(Path source, Result result) throws IOException {
         StringBuilder sb = new StringBuilder();
-        sb.append("Frame averaging (tiles-to-pyramid)\n");
+        sb.append("MicroManager preprocessing (tiles-to-pyramid)\n");
         sb.append("source: ").append(source).append('\n');
         sb.append("written: ")
                 .append(java.time.OffsetDateTime.now().withNano(0))
                 .append('\n');
-        sb.append("method: mean over frames, rounded to the source bit depth\n");
+        sb.append("method: ").append(result.options().describe()).append('\n');
         sb.append("positions: ").append(result.positions()).append('\n');
-        sb.append("frames per position: ").append(result.frameSummary()).append('\n');
+        sb.append("time points per position: ").append(result.frameSummary()).append('\n');
+        sb.append("z-slices per position: ").append(result.sliceSummary()).append('\n');
         for (String note : result.notes()) sb.append("note: ").append(note).append('\n');
         result.framesPerPosition()
-                .forEach((k, v) ->
-                        sb.append("  ").append(k).append(": ").append(v).append('\n'));
+                .forEach((k, v) -> sb.append("  ")
+                        .append(k)
+                        .append(": ")
+                        .append(v)
+                        .append(" t, ")
+                        .append(result.slicesPerPosition().get(k))
+                        .append(" z\n"));
         Files.writeString(result.output().resolve(RECORD_FILENAME), sb.toString(), StandardCharsets.US_ASCII);
     }
 
     private static void prepareOutput(Path out) throws IOException {
         if (Files.isDirectory(out)) {
-            boolean ours = Files.isRegularFile(out.resolve(RECORD_FILENAME));
+            boolean ours = Files.isRegularFile(out.resolve(RECORD_FILENAME))
+                    || Files.isRegularFile(out.resolve(RECORD_FILENAME_0_7_9));
             boolean empty;
             try (var s = Files.list(out)) {
                 empty = s.findAny().isEmpty();
             }
             if (!ours && !empty) {
-                throw new IOException(out + " already exists and was not written by frame averaging;"
-                        + " move it or choose another folder");
+                throw new IOException(out + " already exists and was not written by tiles-to-pyramid"
+                        + " preprocessing; move it or choose another folder");
             }
         } else {
             Files.createDirectories(out);

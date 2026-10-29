@@ -220,8 +220,8 @@ dialog -- the strategy detects it. Detail on each:
 Common to both:
 - Falls back to `Summary.StagePositions` labels if a per-tile block is missing or malformed
 - Auto-detects pixel size from the metadata's `PixelSizeUm`
-- **Channels:** A single-channel acquisition stitches into one output named after the folder. A multi-channel acquisition emits one tile per channel, each named after its channel (from `Summary.ChNames`), so the workflow's existing per-channel-folder stitching combines them with the channel merger. Splitting only happens when the file's page count equals the channel count; a z-stack or time series interleaves those axes into the same pages and reads the first page only, unless the time points are averaged first (see [Averaging time points](#averaging-time-points-micromanager)).
-- **Time series per position (averaging):** when the acquisition has more than one frame per position (either layout), the dialog offers **Average the N time points of each position before stitching**. See [Averaging time points](#averaging-time-points-micromanager).
+- **Channels:** A single-channel acquisition stitches into one output named after the folder. A multi-channel acquisition emits one tile per channel, each named after its channel (from `Summary.ChNames`), so the workflow's existing per-channel-folder stitching combines them with the channel merger. Splitting only happens when the file's page count equals the channel count; a z-stack or time series interleaves those axes into the same pages and reads the first page only, unless the time points are averaged and the z-slices projected first (see [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager)).
+- **Time series and z-stacks per position:** when the acquisition has more than one frame or z-slice per position (either layout), the dialog offers **Average the N time points of each position before stitching** and **Max-intensity project the N z-slices of each position**. See [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager).
 - **Registration limit:** Seam measurement on MicroManager input is always performed on the first channel only, because all channels in a position come from the same file. The dialog's "Align-on" choice has no effect for MicroManager input. See [Tile registration](#tile-registration).
 - **Stage axes:** the sidecars record absolute stage coordinates, and whether a rising stage coordinate moves right and down in the camera image depends on how the stage is wired and the camera mounted. The strategy cannot infer that, so it assumes rising stage equals rising pixel. Where that is wrong, tick **Invert X axis** / **Invert Y axis** -- see [If the mosaic comes out mirrored](#if-the-mosaic-comes-out-mirrored).
 - No additional configuration files required
@@ -308,7 +308,8 @@ input_folder/             Method: Filename[x,y]; sub-folder text: slide
 | **Output format** | **OME-TIFF (single file)**: one pyramidal `.ome.tif` with OME-XML metadata, widely readable. **OME-Zarr (NGFF 0.4, Zarr v2)**: an `.ome.zarr` directory of chunks, written in parallel, suited to cloud storage; the versions written are what QuPath's bundled reader opens, so check what your other tools accept | Last-used (initially OME-TIFF) |
 | **Sub-folders to stitch (\* = all)** | Which folders are stitched, and how many images come out. **Empty** stitches the selected folder itself, and only that folder -- one image. **`*`** stitches every sub-folder, one image each. **Any other text** stitches the sub-folders whose name contains it, one image each; matching is case-sensitive. Not used by the MicroManager method, which finds its own positions | Last-used (initially empty) |
 | **Stage axes: Invert X axis / Invert Y axis** | Shown for the two methods whose tile positions are stage coordinates -- MicroManager and TileConfiguration.txt. Negates stage X and/or Y before converting to pixels, for a scope whose stage runs opposite to its camera on that axis. Leave both clear for a Fiji-written TileConfiguration.txt, which is already in image space. See [If the mosaic comes out mirrored](#if-the-mosaic-comes-out-mirrored). Remembered, since it describes the microscope | Off, off |
-| **Average the N time points of each position before stitching** | Shown only for the MicroManager method when the acquisition has more than one frame per position. Averages each position's frames into a `<folder>_averaged` copy and stitches that. See [Averaging time points](#averaging-time-points-micromanager). Choice is remembered | On |
+| **Average the N time points of each position before stitching** | Shown only for the MicroManager method when the acquisition has more than one frame per position. Averages each position's frames into a copy beside the folder and stitches that. See [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager). Choice is remembered | On |
+| **Max-intensity project the N z-slices of each position** | Shown only for the MicroManager method when the acquisition has more than one z-slice per position. Takes the per-pixel maximum over each channel's slices, after averaging the time points when that is ticked too, into the same copy. Choice is remembered | On |
 | **Merge the N channel stitches into one multichannel image** | Shown only when 2+ matching sub-folders of single-channel (non-RGB) tiles will be stitched, or when a MicroManager acquisition has multiple channels. Combines the per-channel stitches into one multichannel `<folder>_merged` image; the per-channel images are kept. See [Merging channels in the dialog](#merging-channels-in-the-dialog). Choice is remembered | On |
 | **Z-Spacing (um)** | Scripts only (`StitchingConfig`); the dialog always records 1.0 | 1.0 |
 | **Solve tile overlaps (content-based registration)** | Checkbox to enable overlap measurement and correction. When enabled, measures the real overlap between neighboring tiles and corrects their positions before stitching, closing seams caused by stage backlash and drift. Writes a `TileRegistration.txt` solution file beside the tiles. Choice is remembered between sessions. See [Tile registration](#tile-registration) for details. | Off (faster, nominal positions) |
@@ -804,46 +805,54 @@ Two limits worth stating plainly:
   the acquisition reports several channels and the page count disagrees, the log says so; a
   single-channel z-stack is collapsed silently. To preserve those dimensions, export the
   acquisition to the separate-file `z{nn}/` / `t{nn}/` layout and use the TileConfiguration.txt
-  strategy. A time series can instead be averaged, below.
-
-### Averaging time points (MicroManager)
-
-For acquisitions that take several frames at each position to average out noise, as SHG and other
-laser-scanning modalities often do. Both MicroManager layouts work: **separate image files per
-position** (`<prefix>_MMStack_<label>.ome.tif` plus `_metadata.txt`) and the **single-plane TIFF
-series** (a folder per position holding one `img_channelCCC_positionPPP_timeTTTTTTTTT_zZZZ.tif` per
-plane and a `metadata.txt`). Without averaging, the second layout stitches every frame as its own
-tile, stacked on the others at the same stage position, and the last one wins.
-
-When the selected folder's metadata reports more than one frame, the dialog shows **Average the N
-time points of each position before stitching** (on by default, remembered). When ticked:
-
-1. Each channel and z-slice of each position is averaged over its frames: the mean, rounded to the
-   original bit depth (8- or 16-bit stay 8- or 16-bit; 32-bit float stays float). Sums are kept in
-   double precision, so bright or saturated frames cannot overflow; the mean is clamped to the
-   type's range.
-2. The result is written to `<folder>_averaged`, beside the acquisition folder, in the same
-   MicroManager layout: one `_MMStack_<label>.ome.tif` per position with one page per channel, or
-   (single-plane series) one folder per position holding one file per channel and slice, named
-   as its `time000000000` frame. Each position's `_metadata.txt` / `metadata.txt` has
-   `Summary.Frames` 1 and keeps the stage coordinates and pixel size. `Summary.FrameAveraging` and `frame_averaging.txt` record the source
-   and how many frames were averaged. The originals are not changed.
-3. That copy is stitched as usual. The output is named after it (`<folder>_averaged.ome.tif`) and
-   written where the stitch would otherwise write; the `.stitch-info.txt` record has a
-   *frame averaging* section.
-
-Which frame a page belongs to is read from the MicroManager tag on every page, or, for a file
-without it, from the order of the `FrameKey-t-c-z` entries in its sidecar; in a single-plane series
-it is read from the file name, or the file's `Metadata-` block. A file matching none of these is
-refused rather than guessed. On a 500-position, 3-frame 16-bit SHG acquisition (512 x 512 tiles)
-averaging took about 2 minutes over a network-mounted drive, and every averaged plane matched an
-independent numpy mean exactly. Positions with different frame counts are each averaged over
-their own frames and the record says so. A re-run overwrites a `<folder>_averaged` folder that
-frame averaging wrote, and refuses one that holds anything else. RGB frames are not supported.
+  strategy. A MicroManager time series or z-stack can instead be averaged and projected, below.
 
 Directory names must be a `z` or `t` followed by digits and nothing else -- `z0`, `z00` and `z000`
 all match, case-insensitively;
 the two levels are matched independently, so `z{nn}/t{nn}/` nesting works as well as `t{nn}/z{nn}/`.
+
+### Averaging time points and projecting z-stacks (MicroManager)
+
+For acquisitions that take several frames at each position to average out noise, as SHG and other
+laser-scanning modalities often do, and for z-stacks to be flattened by maximum intensity
+projection. Both MicroManager layouts work: **separate image files per position**
+(`<prefix>_MMStack_<label>.ome.tif` plus `_metadata.txt`) and the **single-plane TIFF series** (a
+folder per position holding one `img_channelCCC_positionPPP_timeTTTTTTTTT_zZZZ.tif` per plane and a
+`metadata.txt`). Without this step, the first layout stitches page 0 of each file, and the second
+stitches every frame and slice as its own tile, stacked at the same stage position, with the last
+one winning.
+
+When the selected folder's metadata reports more than one frame, the dialog shows **Average the N
+time points of each position before stitching**; more than one z-slice, **Max-intensity project the
+N z-slices of each position**. Both are on by default and remembered. When either is ticked, in
+this order:
+
+1. **Average:** each channel and z-slice of each position is averaged over its frames. Sums are
+   kept in double precision, so bright or saturated frames cannot overflow. With averaging clear
+   and projection ticked, the first time point is used instead.
+2. **Project:** each channel's z-slices are reduced to their per-pixel maximum.
+3. **Round:** values are rounded to the original bit depth only when written (8- or 16-bit stay 8-
+   or 16-bit, clamped to the type's range; 32-bit float stays float).
+4. **Write:** the result goes to a copy beside the acquisition folder, named `<folder>_averaged`,
+   `<folder>_mip` or `<folder>_averaged_mip` after what was done, in the same MicroManager layout:
+   one `_MMStack_<label>.ome.tif` per position with one page per channel (and slice, when not
+   projected), or (single-plane series) one folder per position holding one file per channel (and
+   slice), named as its `time000000000` / `z000` file. Each position's `_metadata.txt` /
+   `metadata.txt` has `Summary.Frames` 1 (and `Slices` 1 when projected) and keeps the stage
+   coordinates and pixel size. `Summary.Preprocessing` and `preprocessing.txt` record the source,
+   the method, and the frame and slice counts. The originals are not changed.
+5. **Stitch:** that copy is stitched as usual. The output is named after it and written where the
+   stitch would otherwise write; the `.stitch-info.txt` record has a *preprocessing* section.
+
+Which frame and slice a page belongs to is read from the MicroManager tag on every page, or, for a
+file without it, from the order of the `FrameKey-t-c-z` entries in its sidecar; in a single-plane
+series it is read from the file name, or the file's `Metadata-` block. A file matching none of these
+is refused rather than guessed. On a 500-position, 3-frame 16-bit SHG acquisition (512 x 512 tiles)
+averaging took about 2 minutes over a network-mounted drive, and every averaged plane matched an
+independent numpy mean exactly; projection is checked by unit tests on synthetic stacks, not yet on
+a real z-stack. Positions with different frame or slice counts are each reduced over their own and
+the record says so. A re-run overwrites a copy folder this step wrote (including one 0.7.9's frame
+averaging wrote), and refuses one that holds anything else. RGB frames are not supported.
 
 </details>
 
@@ -992,7 +1001,7 @@ Configuration class for stitching operations.
 - `TileConfigurationTxtStrategy`: Read ImageJ/Fiji tile configurations (and the `z{nn}/`/`t{nn}/` layouts)
 - `VectraMetadataStrategy`: Extract Vectra TIFF metadata
 - `MicroManagerMetadataStrategy`: Read MicroManager sidecar metadata (MMStack or single-plane TIFF series)
-- `MicroManagerFrameAverager`: Average each position's time points into a one-frame copy before stitching (`average(source, output)`, `countFrames(folder)`, `defaultOutput(source)`); see [Averaging time points](#averaging-time-points-micromanager)
+- `MicroManagerPreprocessor`: Average each position's time points, then max-project its z-slices, into a copy before stitching (`run(source, output, Options)`, `shape(folder)`, `defaultOutput(source, options)`); see [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager)
 
 ### Extension points
 The extension supports custom stitching strategies by implementing the `StitchingStrategy` interface:

@@ -366,7 +366,8 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
             logger.warn(
                     "{} has {} page(s) but the acquisition reports {} channel(s)"
                             + " ({} z-slice(s), {} timepoint(s)); stitching its first page only."
-                            + " Per-channel stitching supports one plane per channel.",
+                            + " Per-channel stitching supports one plane per channel; average the time points"
+                            + " and max-project the z-slices first (MicroManagerPreprocessor, offered in the dialog).",
                     filename,
                     pages,
                     nChannels,

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Max-intensity projection of z-stacks before stitching (MicroManager).** A z-stack per position used to stitch only page 0 of an OME-TIFF per position, or every slice as its own stacked tile in a single-plane TIFF series. When the metadata reports more than one z-slice, the dialog now offers **Max-intensity project the N z-slices of each position**. It runs after time-point averaging when both are ticked (average first, then the per-pixel maximum over the averaged slices, rounded to the source bit depth once at the end), writes the same MicroManager layout with `Slices` set to 1, and the copy is named after what was done (`_averaged`, `_mip`, `_averaged_mip`). Projection with averaging clear uses the first time point.
+
+### Changed
+- `MicroManagerFrameAverager` (0.7.9) is now `MicroManagerPreprocessor`: `run(source, output, Options)`, `shape(folder)` and `defaultOutput(source, options)` replace `average`, `countFrames` and `defaultOutput(source)`. The copy's record file is `preprocessing.txt` and the sidecar key `Summary.Preprocessing`; a folder 0.7.9 wrote (holding `frame_averaging.txt`) is still recognized and may be overwritten. The stitch record's section is *preprocessing*.
+
 ## [0.7.9] - 2026-10-28
 
 ### Added

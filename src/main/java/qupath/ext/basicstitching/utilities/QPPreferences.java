@@ -78,6 +78,9 @@ public class QPPreferences {
     private static final BooleanProperty averageFramesSaved =
             PathPrefs.createPersistentPreference("basicstitching.dialog.averageFrames", true);
 
+    private static final BooleanProperty maxProjectZSaved =
+            PathPrefs.createPersistentPreference("basicstitching.dialog.maxProjectZ", true);
+
     private static final BooleanProperty mergeChannelsSaved =
             PathPrefs.createPersistentPreference("basicstitching.dialog.mergeChannels", true);
 
@@ -200,6 +203,14 @@ public class QPPreferences {
 
     public static void setAverageFramesSaved(final boolean average) {
         averageFramesSaved.setValue(average);
+    }
+
+    public static boolean getMaxProjectZSaved() {
+        return maxProjectZSaved.getValue();
+    }
+
+    public static void setMaxProjectZSaved(final boolean project) {
+        maxProjectZSaved.setValue(project);
     }
 
     public static boolean getMergeChannelsSaved() {
