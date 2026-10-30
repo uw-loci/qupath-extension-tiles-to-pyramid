@@ -81,6 +81,12 @@ public class QPPreferences {
     private static final BooleanProperty maxProjectZSaved =
             PathPrefs.createPersistentPreference("basicstitching.dialog.maxProjectZ", true);
 
+    private static final BooleanProperty applyFlatfieldSaved =
+            PathPrefs.createPersistentPreference("basicstitching.dialog.applyFlatfield", false);
+
+    private static final StringProperty flatfieldProfileSaved =
+            PathPrefs.createPersistentPreference("basicstitching.dialog.flatfieldProfile", "");
+
     private static final BooleanProperty mergeChannelsSaved =
             PathPrefs.createPersistentPreference("basicstitching.dialog.mergeChannels", true);
 
@@ -211,6 +217,22 @@ public class QPPreferences {
 
     public static void setMaxProjectZSaved(final boolean project) {
         maxProjectZSaved.setValue(project);
+    }
+
+    public static boolean getApplyFlatfieldSaved() {
+        return applyFlatfieldSaved.getValue();
+    }
+
+    public static void setApplyFlatfieldSaved(final boolean apply) {
+        applyFlatfieldSaved.setValue(apply);
+    }
+
+    public static String getFlatfieldProfileSaved() {
+        return flatfieldProfileSaved.getValue();
+    }
+
+    public static void setFlatfieldProfileSaved(final String folder) {
+        flatfieldProfileSaved.setValue(folder);
     }
 
     public static boolean getMergeChannelsSaved() {

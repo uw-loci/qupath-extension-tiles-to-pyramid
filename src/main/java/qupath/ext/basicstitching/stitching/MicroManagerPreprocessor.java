@@ -92,20 +92,21 @@ public final class MicroManagerPreprocessor {
      *
      * @param averageFrames average the time points; when false and there are several, the first
      *     frame is used
+     * @param flatfield corrects each plane before any projection; null for none
      * @param maxProjectZ take the per-pixel maximum over the z-slices
      */
-    public record Options(boolean averageFrames, boolean maxProjectZ) {
-        /** @return the default output folder's suffix: {@code _averaged}, {@code _mip} or both */
+    public record Options(boolean averageFrames, FlatfieldProfile flatfield, boolean maxProjectZ) {
+        /** @return the default output folder's suffix: any of {@code _averaged}, {@code _ff}, {@code _mip} */
         public String folderSuffix() {
-            if (averageFrames && maxProjectZ) return "_averaged_mip";
-            return maxProjectZ ? "_mip" : "_averaged";
+            return (averageFrames ? "_averaged" : "") + (flatfield != null ? "_ff" : "") + (maxProjectZ ? "_mip" : "");
         }
 
         /** @return the method in words, for records */
         public String describe() {
             String frames = averageFrames ? "mean over time points" : "first time point only";
+            String shading = flatfield != null ? ", then " + flatfield.describe() : "";
             String z = maxProjectZ ? ", then maximum intensity over z-slices" : "";
-            return frames + z + "; rounded to the source bit depth";
+            return frames + shading + z + "; rounded to the source bit depth";
         }
     }
 
@@ -326,7 +327,11 @@ public final class MicroManagerPreprocessor {
     /** Page coordinates (channel, slice, frame). */
     private record Coord(int c, int z, int t) {}
 
-    /** Average (or take the first frame), then project if asked, noting missing planes. */
+    /**
+     * Average (or take the first frame), correct the shading, then project if asked, noting missing
+     * planes. The correction must come before the projection: a sum would otherwise take the offset
+     * off once for many planes, and averaging is unaffected either way.
+     */
     private static Planes reduce(
             List<Path> files,
             JsonObject sidecar,
@@ -339,6 +344,15 @@ public final class MicroManagerPreprocessor {
         if (p.missing > 0) {
             notes.add(label + ": " + p.missing + " of " + p.frames * p.planeCount()
                     + " planes absent; those planes averaged over the frames present");
+        }
+        if (options.flatfield() != null) {
+            for (int z = 0; z < p.slices; z++) {
+                for (int c = 0; c < p.channels; c++) {
+                    if (options.flatfield().appliesTo(c)) {
+                        options.flatfield().correct(p.mean[c + p.channels * z], p.width, p.height);
+                    }
+                }
+            }
         }
         if (options.maxProjectZ()) {
             maxProject(p);
@@ -473,7 +487,7 @@ public final class MicroManagerPreprocessor {
         }
     }
 
-    private static ImageReader tiffReader(ImageInputStream in, Path file) throws IOException {
+    static ImageReader tiffReader(ImageInputStream in, Path file) throws IOException {
         if (in == null) throw new IOException("Cannot open " + file);
         var readers = ImageIO.getImageReaders(in);
         if (!readers.hasNext()) throw new IOException("No TIFF reader for " + file);

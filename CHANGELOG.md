@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Correct uneven brightness with a flat-field profile** (MicroManager method). For a detector with no background image, such as a PMT: each plane is corrected with a profile fitted from tiles, after averaging and before any z projection, and the background keeps its value. The stitched copy gets `_ff` in its name and the stitch record names the profile.
+
 ### Changed
 - **Zoomed-out levels leave the empty canvas out of their averages** (non-RGB OME-TIFF). Zero is where no tile landed; averaging it in pulled every zoomed-out pixel along a mosaic's edges and gaps toward black, and put a row of spikes at fixed fractions of the background into QuPath's histogram, which is built from the smallest level. Each level is now made from the one before it by `NoDataPyramidServer`, averaging only non-zero pixels at full bit depth; a block of only zeros stays zero. On the SHG MIP from the LC-PolScope project the smallest level had 3,505 pixels between 0 and the background; it now has none. Full resolution is unchanged, and RGB images still use QuPath's pyramid. OME-Zarr output is not changed.
 

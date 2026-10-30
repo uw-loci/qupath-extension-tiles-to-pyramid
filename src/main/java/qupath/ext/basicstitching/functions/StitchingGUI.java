@@ -31,6 +31,7 @@ import javafx.scene.control.CheckBox;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Modality;
@@ -47,6 +48,7 @@ import qupath.ext.basicstitching.registration.RegistrationMode;
 import qupath.ext.basicstitching.registration.RegistrationReference;
 import qupath.ext.basicstitching.registration.RegistrationSettings;
 import qupath.ext.basicstitching.registration.TileRegistrationSolution;
+import qupath.ext.basicstitching.stitching.FlatfieldProfile;
 import qupath.ext.basicstitching.stitching.FolderDiagnosis;
 import qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy;
 import qupath.ext.basicstitching.stitching.MicroManagerPreprocessor;
@@ -142,6 +144,9 @@ public class StitchingGUI {
     private final Label yFudgeLabel = new Label("Y fudge factor:");
 
     // Map to hold the positions of each GUI element
+    private final CheckBox flatfieldCheckbox = new CheckBox("Correct uneven brightness with a flat-field profile");
+    private final TextField flatfieldField = new TextField();
+    private final HBox flatfieldRow = new HBox(8);
     private final Map<Node, Integer> guiElementPositions = new HashMap<>();
 
     /**
@@ -329,8 +334,16 @@ public class StitchingGUI {
             if (maxProjectCheckbox.isVisible()) {
                 QPPreferences.setMaxProjectZSaved(maxProjectCheckbox.isSelected());
             }
-            MicroManagerPreprocessor.Options preprocess = averageFrames || maxProject
-                    ? new MicroManagerPreprocessor.Options(averageFrames, maxProject)
+            boolean applyFlatfield = flatfieldRow.isVisible() && flatfieldCheckbox.isSelected();
+            if (flatfieldRow.isVisible()) {
+                QPPreferences.setApplyFlatfieldSaved(flatfieldCheckbox.isSelected());
+                QPPreferences.setFlatfieldProfileSaved(flatfieldField.getText().trim());
+            }
+            FlatfieldProfile flatfield = applyFlatfield
+                    ? FlatfieldProfile.load(Paths.get(flatfieldField.getText().trim()))
+                    : null;
+            MicroManagerPreprocessor.Options preprocess = averageFrames || maxProject || applyFlatfield
+                    ? new MicroManagerPreprocessor.Options(averageFrames, flatfield, maxProject)
                     : null;
             runInBackground(config, mergeOffered && mergeChannelsCheckbox.isSelected(), preprocess, invertX, invertY);
 
@@ -647,12 +660,37 @@ public class StitchingGUI {
                         + "projection), after the time points are averaged if that is ticked too,\n"
                         + "and written to the copy that is stitched.\n"
                         + "With time points present and averaging clear, the first time point is used."));
-        for (CheckBox box : List.of(averageFramesCheckbox, maxProjectCheckbox)) {
-            Integer row = guiElementPositions.get(box);
+        flatfieldCheckbox.setSelected(QPPreferences.getApplyFlatfieldSaved());
+        flatfieldCheckbox.setTooltip(new Tooltip("For a detector with no background image, such as a PMT. Each plane\n"
+                + "is corrected with a profile fitted from tiles in QP Scope, before any\n"
+                + "z projection, and written to the copy that is stitched. A profile fits\n"
+                + "one detector, objective, zoom and channel. Corrected corners carry more\n"
+                + "noise: this evens out brightness, it does not improve signal to noise."));
+        flatfieldField.setText(QPPreferences.getFlatfieldProfileSaved());
+        flatfieldField.setPromptText("profile folder");
+        flatfieldField
+                .disableProperty()
+                .bind(flatfieldCheckbox.selectedProperty().not());
+        HBox.setHgrow(flatfieldField, Priority.ALWAYS);
+        Button flatfieldBrowse = new Button("Browse...");
+        flatfieldBrowse
+                .disableProperty()
+                .bind(flatfieldCheckbox.selectedProperty().not());
+        flatfieldBrowse.setOnAction(e -> {
+            DirectoryChooser chooser = new DirectoryChooser();
+            chooser.setTitle("Flat-field profile folder");
+            File dir = chooser.showDialog(flatfieldBrowse.getScene().getWindow());
+            if (dir != null) {
+                flatfieldField.setText(dir.getAbsolutePath());
+            }
+        });
+        flatfieldRow.getChildren().addAll(flatfieldCheckbox, flatfieldField, flatfieldBrowse);
+        for (Node node : List.of(averageFramesCheckbox, flatfieldRow, maxProjectCheckbox)) {
+            Integer row = guiElementPositions.get(node);
             if (row != null) {
-                pane.add(box, 0, row, 2, 1);
+                pane.add(node, 0, row, 2, 1);
             } else {
-                logger.error("Row index not found for {}", box.getText());
+                logger.error("Row index not found for {}", node);
             }
         }
         folderField.textProperty().addListener((obs, o, n) -> refreshPreprocessVisibility());
@@ -665,6 +703,7 @@ public class StitchingGUI {
                 method != null && method.startsWith("MicroManager") && path != null && !path.isBlank()
                         ? MicroManagerPreprocessor.shape(new File(path.trim()))
                         : new MicroManagerPreprocessor.Shape(0, 0);
+        flatfieldRow.setVisible(shape.frames() > 0);
         averageFramesCheckbox.setVisible(shape.frames() > 1);
         if (shape.frames() > 1) {
             averageFramesCheckbox.setText(
@@ -990,6 +1029,7 @@ public class StitchingGUI {
         guiElementPositions.put(matchStringLabel, currentPosition++);
         guiElementPositions.put(invertLabel, currentPosition++);
         guiElementPositions.put(averageFramesCheckbox, currentPosition++);
+        guiElementPositions.put(flatfieldRow, currentPosition++);
         guiElementPositions.put(maxProjectCheckbox, currentPosition++);
         guiElementPositions.put(mergeChannelsCheckbox, currentPosition++);
         guiElementPositions.put(resolveOverlapsCheckbox, currentPosition++);

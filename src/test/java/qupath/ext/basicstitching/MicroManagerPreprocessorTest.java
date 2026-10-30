@@ -35,11 +35,11 @@ import qupath.ext.basicstitching.stitching.TileMapping;
  */
 class MicroManagerPreprocessorTest {
 
-    private static final int W = 12;
-    private static final int H = 8;
+    private static int W = 12;
+    private static int H = 8;
     private static final double PIXEL_UM = 0.5;
-    private static final Options AVERAGE = new Options(true, false);
-    private static final Options BOTH = new Options(true, true);
+    private static final Options AVERAGE = new Options(true, null, false);
+    private static final Options BOTH = new Options(true, null, true);
 
     /** Frames 0..3 of a plane differ by 0, 1, 3, 7. */
     private static final int[] T_STEP = {0, 1, 3, 7};
@@ -165,7 +165,7 @@ class MicroManagerPreprocessorTest {
     void projectionAloneUsesTheFirstTimePoint(@TempDir Path tmp) throws IOException {
         Path src = Files.createDirectories(tmp.resolve("shg"));
         writePosition(src, "Pos0", 0, 0.0, 0.0, 1, 3, 4, true);
-        Options mipOnly = new Options(false, true);
+        Options mipOnly = new Options(false, null, true);
         Path out = MicroManagerPreprocessor.defaultOutput(src, mipOnly);
         assertEquals(tmp.resolve("shg_mip"), out);
         var result = MicroManagerPreprocessor.run(src, out, mipOnly);
@@ -395,7 +395,12 @@ class MicroManagerPreprocessorTest {
     }
 
     /** One position: pages written frame by frame, slice by slice, channel fastest, as MicroManager does. */
-    private static void writePosition(
+    static void setSize(int width, int height) {
+        W = width;
+        H = height;
+    }
+
+    static void writePosition(
             Path dir, String label, int p, double xUm, double yUm, int channels, int slices, int frames, boolean tag)
             throws IOException {
         String file = "acq_MMStack_" + label + ".ome.tif";
@@ -472,7 +477,7 @@ class MicroManagerPreprocessorTest {
         Files.writeString(dir.resolve("acq_MMStack_" + label + "_metadata.txt"), sb.toString());
     }
 
-    private static List<int[]> readPages(Path tif) throws IOException {
+    static List<int[]> readPages(Path tif) throws IOException {
         List<int[]> out = new ArrayList<>();
         try (var in = ImageIO.createImageInputStream(tif.toFile())) {
             ImageReader reader = ImageIO.getImageReaders(in).next();

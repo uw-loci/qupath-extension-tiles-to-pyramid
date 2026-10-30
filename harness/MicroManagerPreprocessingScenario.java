@@ -32,7 +32,7 @@ public final class MicroManagerPreprocessingScenario {
         var shape = MicroManagerPreprocessor.shape(src.toFile());
         System.out.println("[....] shape reported by metadata: " + shape);
         if (expectFrames > 0) check(shape.frames() == expectFrames, "frames = " + expectFrames);
-        var options = new MicroManagerPreprocessor.Options(shape.frames() > 1, shape.slices() > 1);
+        var options = new MicroManagerPreprocessor.Options(shape.frames() > 1, null, shape.slices() > 1);
 
         long t0 = System.nanoTime();
         var result = MicroManagerPreprocessor.run(src, MicroManagerPreprocessor.defaultOutput(src, options), options);
