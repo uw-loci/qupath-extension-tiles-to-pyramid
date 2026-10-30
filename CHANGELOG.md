@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Rebuild pyramid levels...** (Extensions > Tiles to Pyramid) repairs 16-bit OME-TIFFs written by 0.2.0 through 0.7.10 without stitching them again. It checks each chosen file (are its zoomed-out values multiples of 257?), and writes each damaged one to a new `_rebuilt.ome.tif` with full resolution copied and every zoomed-out level made again from it; the original is not changed. Checked on real LC-PolScope retardance and SHG images by `harness/PyramidRebuildScenario.java`: full resolution identical, every rebuilt level's mean equal to full resolution (retardance: 92.5, where the damaged levels read 6.6).
+
 ## [0.8.0] - 2026-10-29
 
 > **IMPORTANT -- if you stitched 16-bit images with an earlier version, read this.**

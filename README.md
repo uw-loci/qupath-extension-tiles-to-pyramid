@@ -3,10 +3,11 @@
 > **Part of the [QPSC (QuPath Scope Control)](https://github.com/uw-loci/qupath-extension-qpsc) system.**
 > For complete installation and setup instructions, see the [QPSC Installation Guide](https://github.com/uw-loci/qupath-extension-qpsc/blob/main/documentation/INSTALLATION.md).
 
-> **Upgrading from 0.7.10 or earlier? Re-stitch your 16-bit images.** Versions 0.2.0 through
+> **Upgrading from 0.7.10 or earlier? Repair your 16-bit images.** Versions 0.2.0 through
 > 0.7.10 wrote every zoomed-out pyramid level of a 16-bit OME-TIFF with only 8 bits of data. Full
 > resolution was correct, but the zoomed-out view and any analysis at a downsample were not. Fixed
-> in 0.8.0; see the [CHANGELOG](CHANGELOG.md#080---2026-10-29).
+> in 0.8.0; see the [CHANGELOG](CHANGELOG.md#080---2026-10-29). Stitch them again, or run
+> [Rebuild pyramid levels](#rebuild-pyramid-levels) on the existing files.
 
 Stitches a folder of microscope image tiles into one pyramidal whole-slide image that QuPath can
 open. Point it at the folder, say how the tile positions are recorded, and it writes an OME-TIFF or
@@ -884,6 +885,26 @@ averaging wrote), and refuses one that holds anything else. RGB frames are not s
 - **Optimal Range**: 2048-4096 pixels per tile dimension
 
 </details>
+
+## Rebuild pyramid levels
+
+**Extensions > Tiles to Pyramid > Rebuild pyramid levels...** repairs 16-bit OME-TIFFs stitched with
+0.2.0 through 0.7.10, whose zoomed-out levels hold only 8 bits (every value a multiple of 257; in
+QuPath, black/gray/white posterization once zoomed out and a histogram of a few spikes).
+
+1. Choose one or more `.ome.tif` files.
+2. Each is checked first by sampling its first zoomed-out level: *damaged*, *not damaged*, or *not
+   affected* (RGB or 8-bit images, or no zoomed-out levels). Only damaged files are offered.
+3. Each damaged file is written to a new `<name>_rebuilt.ome.tif` beside it. Full resolution is
+   copied unchanged; every zoomed-out level is made again from it by averaging, LZW-compressed. The
+   original is not touched. A `<name>_rebuilt.stitch-info.txt` records the rebuild and carries the
+   original stitch record.
+
+To use the result in a QuPath project, add the new file, or replace the original with it once
+QuPath has closed the image. On the LC-PolScope test data a 31,623 x 14,951 retardance image took
+94 s, and a 17,065 x 10,043 SHG image 51 s, on a local disk.
+
+![A 16-bit retardance mosaic stitched with 0.7.10 at full resolution, one level zoomed out, and its histogram](documentation/images/0.8.0-16bit-pyramid-fix.png)
 
 <details>
 <summary><b>Troubleshooting</b> -- common failures, debug logging, what to check first</summary>

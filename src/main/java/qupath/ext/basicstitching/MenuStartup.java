@@ -7,6 +7,7 @@ import java.util.ResourceBundle;
 import javafx.scene.control.MenuItem;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.basicstitching.functions.RebuildPyramidCommand;
 import qupath.ext.basicstitching.functions.StitchingGUI;
 import qupath.ext.basicstitching.utilities.RegistrationPreferences;
 import qupath.lib.common.Version;
@@ -58,5 +59,8 @@ public class MenuStartup implements QuPathExtension {
             StitchingGUI.createGUI();
         });
         menu.getItems().add(fileNameStitching);
+        var rebuild = new MenuItem("Rebuild pyramid levels...");
+        rebuild.setOnAction(e -> RebuildPyramidCommand.run());
+        menu.getItems().add(rebuild);
     }
 }
