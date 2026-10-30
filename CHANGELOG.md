@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **16-bit pyramids kept only 8 bits below full resolution.** The stitched image's downsampled reads were scaled with Java2D, which renders a 16-bit grayscale image through 8 bits, so every value in the first downsampled pyramid level was a multiple of 257, and every coarser level, built from that one, inherited the loss. Full resolution was always correct. Zoomed out, an LC-PolScope retardance image of a few hundred counts went 99% black and an SHG image showed 16 gray levels; any analysis run at a downsample saw the same values. Present since the direct stitcher (0.2.0) in every 16-bit OME-TIFF; RGB images are unaffected. The downsampled reads now average the covered pixels on the raster at full bit depth. Images stitched before this keep the damaged levels until they are stitched again. Checked end to end by `harness/Pyramid16BitScenario.java` (fails on 0.7.10, passes now).
+
 ## [0.7.10] - 2026-10-29
 
 ### Added

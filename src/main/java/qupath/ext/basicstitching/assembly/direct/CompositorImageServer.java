@@ -186,6 +186,9 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
             return fullRes;
         }
 
+        if (!isRGB) {
+            return areaAverage(fullRes, outW, outH);
+        }
         BufferedImage scaled = new BufferedImage(outW, outH, fullRes.getType());
         var g = scaled.createGraphics();
         try {
@@ -197,6 +200,58 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
         }
 
         return scaled;
+    }
+
+    /**
+     * Downscale a non-RGB image by averaging the source pixels each output pixel covers, on
+     * the raster, so every sample keeps its full bit depth.
+     *
+     * <p>Not {@code Graphics2D.drawImage}: Java2D renders a {@code TYPE_USHORT_GRAY} image
+     * through 8 bits, so every downsampled value came back as a multiple of 257. QuPath builds
+     * the first pyramid level from this read and every coarser level from that one, so all
+     * zoomed-out levels of every 16-bit stitch were posterized: an LC-PolScope retardance image
+     * (0..430 counts) became 99% zeros below full resolution, and an SHG image kept 16
+     * distinct values (2026-10-29).
+     */
+    static BufferedImage areaAverage(BufferedImage src, int outW, int outH) {
+        java.awt.image.WritableRaster in = src.getRaster();
+        int w = in.getWidth();
+        int h = in.getHeight();
+        java.awt.image.WritableRaster out = in.createCompatibleWritableRaster(outW, outH);
+        int[] x0 = new int[outW];
+        int[] x1 = new int[outW];
+        for (int ox = 0; ox < outW; ox++) {
+            x0[ox] = Math.min(w - 1, (int) ((long) ox * w / outW));
+            x1[ox] = Math.max(x0[ox] + 1, Math.min(w, (int) ((long) (ox + 1) * w / outW)));
+        }
+        int[] y0 = new int[outH];
+        int[] y1 = new int[outH];
+        for (int oy = 0; oy < outH; oy++) {
+            y0[oy] = Math.min(h - 1, (int) ((long) oy * h / outH));
+            y1[oy] = Math.max(y0[oy] + 1, Math.min(h, (int) ((long) (oy + 1) * h / outH)));
+        }
+        int type = in.getDataBuffer().getDataType();
+        boolean floating =
+                type == java.awt.image.DataBuffer.TYPE_FLOAT || type == java.awt.image.DataBuffer.TYPE_DOUBLE;
+        for (int b = 0; b < in.getNumBands(); b++) {
+            double[] samples = in.getSamples(0, 0, w, h, b, (double[]) null);
+            double[] result = new double[outW * outH];
+            for (int oy = 0; oy < outH; oy++) {
+                for (int ox = 0; ox < outW; ox++) {
+                    double sum = 0;
+                    for (int y = y0[oy]; y < y1[oy]; y++) {
+                        int row = y * w;
+                        for (int x = x0[ox]; x < x1[ox]; x++) {
+                            sum += samples[row + x];
+                        }
+                    }
+                    double mean = sum / ((y1[oy] - y0[oy]) * (x1[ox] - x0[ox]));
+                    result[oy * outW + ox] = floating ? mean : Math.rint(mean);
+                }
+            }
+            out.setSamples(0, 0, outW, outH, b, result);
+        }
+        return new BufferedImage(src.getColorModel(), out, src.isAlphaPremultiplied(), null);
     }
 
     @Override
