@@ -896,7 +896,8 @@ QuPath, black/gray/white posterization once zoomed out and a histogram of a few 
 2. Each is checked first by sampling its first zoomed-out level: *damaged*, *not damaged*, or *not
    affected* (RGB or 8-bit images, or no zoomed-out levels). Only damaged files are offered.
 3. Each damaged file is written to a new `<name>_rebuilt.ome.tif` beside it. Full resolution is
-   copied unchanged; every zoomed-out level is made again from it by averaging, LZW-compressed. The
+   copied unchanged; every zoomed-out level is made again from it by averaging (the empty, zero
+   canvas left out, as a new stitch does), LZW-compressed. The
    original is not touched. A `<name>_rebuilt.stitch-info.txt` records the rebuild and carries the
    original stitch record.
 

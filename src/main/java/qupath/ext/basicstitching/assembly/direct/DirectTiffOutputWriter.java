@@ -59,8 +59,8 @@ import qupath.lib.regions.RegionRequest;
  * (fresh, non-colliding) output path, which the caller deletes.
  *
  * <p>The pixel data is read from the supplied server through
- * {@link ImageServers#pyramidalizeTiled} so downsampled levels are generated in
- * bounded, tiled reads. The Bio-Formats writer still performs a single
+ * {@link NoDataPyramidServer} (non-RGB) or {@link ImageServers#pyramidalizeTiled} (RGB),
+ * so downsampled levels are generated in bounded, tiled reads. The Bio-Formats writer still performs a single
  * close-time reopen of the finished file to patch in the OME-XML footer; that
  * is internal to Bio-Formats and is not the rename failure addressed above.
  */
@@ -135,8 +135,11 @@ public final class DirectTiffOutputWriter {
         // Pyramidalize the source so downsampled levels are produced in bounded
         // tiled reads (a single high-level tile would otherwise read a huge
         // full-resolution region from the compositor).
-        ImageServer<BufferedImage> pyramidServer =
-                ImageServers.pyramidalizeTiled(source, tileSize, tileSize, downsamples);
+        // Non-RGB images get NoDataPyramidServer: every level made from the one before at full
+        // bit depth, with the mosaic's empty (zero) canvas left out of the averages.
+        ImageServer<BufferedImage> pyramidServer = exportRGB || source.isRGB()
+                ? ImageServers.pyramidalizeTiled(source, tileSize, tileSize, downsamples)
+                : new NoDataPyramidServer(source, tileSize, tileSize, downsamples);
         String serverPath = pyramidServer.getPath();
 
         IMetadata meta = MetadataTools.createOMEXMLMetadata();

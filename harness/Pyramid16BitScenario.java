@@ -14,7 +14,8 @@ import qupath.lib.regions.RegionRequest;
  * <p>Until 2026-10-29 the first downsampled level of every 16-bit OME-TIFF was rendered through
  * Java2D's 8-bit path: every value came back as a multiple of 257, so a retardance image of a few
  * hundred counts read as zero once zoomed out. Stitch tiles of low 16-bit values and compare each
- * level's mean with full resolution, and count the values that are multiples of 257.
+ * level's mean of non-zero pixels with full resolution, and count the values that are multiples
+ * of 257.
  *
  * <p>args: tileFolder (holding subfolder {@code ret} with TileConfiguration.txt) outputFolder
  */
@@ -54,11 +55,12 @@ public final class Pyramid16BitScenario {
                 BufferedImage img = server.readRegion(
                         RegionRequest.createInstance(server.getPath(), d, 0, 0, server.getWidth(), server.getHeight()));
                 int[] v = img.getRaster().getSamples(0, 0, img.getWidth(), img.getHeight(), 0, (int[]) null);
-                double mean = Arrays.stream(v).average().orElse(0);
+                // Zeros are the empty canvas, left out of the zoomed-out averages; compare the rest.
+                double mean = Arrays.stream(v).filter(x -> x > 0).average().orElse(0);
                 long nonzero = Arrays.stream(v).filter(x -> x > 0).count();
                 long mult257 = Arrays.stream(v).filter(x -> x > 0 && x % 257 == 0).count();
                 System.out.printf(
-                        "[....] level %d (downsample %.0f): mean %.1f, multiples of 257 %.1f%%%n",
+                        "[....] level %d (downsample %.0f): mean of non-zero %.1f, multiples of 257 %.1f%%%n",
                         level, d, mean, 100.0 * mult257 / Math.max(1, nonzero));
                 if (level == 0) {
                     base = mean;

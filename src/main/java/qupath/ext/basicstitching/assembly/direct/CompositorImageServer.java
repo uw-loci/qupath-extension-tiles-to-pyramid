@@ -214,6 +214,16 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
      * distinct values (2026-10-29).
      */
     static BufferedImage areaAverage(BufferedImage src, int outW, int outH) {
+        return areaAverage(src, outW, outH, false);
+    }
+
+    /**
+     * As {@link #areaAverage(BufferedImage, int, int)}; with {@code zeroIsNoData}, zero samples are
+     * left out of each mean (a block of only zeros stays zero). In a stitched mosaic zero is the
+     * canvas where no tile landed, and averaging it in darkens every zoomed-out pixel along the
+     * mosaic's edges and gaps.
+     */
+    static BufferedImage areaAverage(BufferedImage src, int outW, int outH, boolean zeroIsNoData) {
         java.awt.image.WritableRaster in = src.getRaster();
         int w = in.getWidth();
         int h = in.getHeight();
@@ -239,13 +249,18 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
             for (int oy = 0; oy < outH; oy++) {
                 for (int ox = 0; ox < outW; ox++) {
                     double sum = 0;
+                    int count = 0;
                     for (int y = y0[oy]; y < y1[oy]; y++) {
                         int row = y * w;
                         for (int x = x0[ox]; x < x1[ox]; x++) {
-                            sum += samples[row + x];
+                            double v = samples[row + x];
+                            if (!zeroIsNoData || v != 0) {
+                                sum += v;
+                                count++;
+                            }
                         }
                     }
-                    double mean = sum / ((y1[oy] - y0[oy]) * (x1[ox] - x0[ox]));
+                    double mean = count == 0 ? 0 : sum / count;
                     result[oy * outW + ox] = floating ? mean : Math.rint(mean);
                 }
             }

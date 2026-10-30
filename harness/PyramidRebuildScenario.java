@@ -12,7 +12,7 @@ import qupath.lib.regions.RegionRequest;
  * 0.7.10 or earlier, whose zoomed-out levels hold only 8 bits.
  *
  * <p>Checks the input is diagnosed as damaged, the output as not, full resolution is identical,
- * and each rebuilt level's mean matches full resolution.
+ * and each rebuilt level's mean of non-zero pixels matches full resolution.
  *
  * <p>args: damagedImage.ome.tif outputFolder
  */
@@ -57,11 +57,12 @@ public final class PyramidRebuildScenario {
             int y = (a.getHeight() - h) / 2;
             int[] full = read(a, 1, x, y, w, h);
             check(Arrays.equals(full, read(b, 1, x, y, w, h)), "full resolution identical (4096 px square)");
-            double base = Arrays.stream(full).average().orElse(0);
+            // Zeros are the empty canvas, left out of the zoomed-out averages; compare the rest.
+            double base = Arrays.stream(full).filter(v -> v > 0).average().orElse(0);
             for (int level = 1; level < b.nResolutions(); level++) {
                 double d = b.getDownsampleForResolution(level);
-                double m = Arrays.stream(read(b, d, x, y, w, h)).average().orElse(0);
-                double old = Arrays.stream(read(a, d, x, y, w, h)).average().orElse(0);
+                double m = Arrays.stream(read(b, d, x, y, w, h)).filter(v -> v > 0).average().orElse(0);
+                double old = Arrays.stream(read(a, d, x, y, w, h)).filter(v -> v > 0).average().orElse(0);
                 System.out.printf("[....] level %d: mean %.1f (was %.1f; full resolution %.1f)%n", level, m, old, base);
                 check(Math.abs(m - base) <= Math.max(1.0, 0.05 * base), "level " + level + " mean matches full resolution");
             }

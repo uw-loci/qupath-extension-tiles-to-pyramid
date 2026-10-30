@@ -152,7 +152,9 @@ public final class PyramidRebuilder {
         rebuild.put("file", output.toString());
         rebuild.put("written", OffsetDateTime.now().withNano(0).toString());
         rebuild.put("from", input.toString());
-        rebuild.put("method", "full resolution copied; every downsampled level made again from it by averaging");
+        rebuild.put(
+                "method",
+                "full resolution copied; every downsampled level made again from it by averaging, zeros (empty canvas) left out");
         rebuild.put("why", "16-bit downsampled levels written by tiles-to-pyramid 0.2.0 to 0.7.10 held only 8 bits");
         rebuild.put("compression", "LZW");
         sections.add(StitchInfoFile.Section.of("pyramid rebuild", rebuild));

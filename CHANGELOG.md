@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Zoomed-out levels leave the empty canvas out of their averages** (non-RGB OME-TIFF). Zero is where no tile landed; averaging it in pulled every zoomed-out pixel along a mosaic's edges and gaps toward black, and put a row of spikes at fixed fractions of the background into QuPath's histogram, which is built from the smallest level. Each level is now made from the one before it by `NoDataPyramidServer`, averaging only non-zero pixels at full bit depth; a block of only zeros stays zero. On the SHG MIP from the LC-PolScope project the smallest level had 3,505 pixels between 0 and the background; it now has none. Full resolution is unchanged, and RGB images still use QuPath's pyramid. OME-Zarr output is not changed.
+
 ### Added
 - **Rebuild pyramid levels...** (Extensions > Tiles to Pyramid) repairs 16-bit OME-TIFFs written by 0.2.0 through 0.7.10 without stitching them again. It checks each chosen file (are its zoomed-out values multiples of 257?), and writes each damaged one to a new `_rebuilt.ome.tif` with full resolution copied and every zoomed-out level made again from it; the original is not changed. Checked on real LC-PolScope retardance and SHG images by `harness/PyramidRebuildScenario.java`: full resolution identical, every rebuilt level's mean equal to full resolution (retardance: 92.5, where the damaged levels read 6.6).
 

@@ -46,4 +46,25 @@ class CompositorDownscaleTest {
         assertEquals(65535, out.getSample(0, 0, 0));
         assertEquals(65535, out.getSample(1, 0, 0));
     }
+
+    @Test
+    @DisplayName("zero as no data: an edge block keeps the tissue value instead of fading to black")
+    void zeroIsLeftOutOfTheMean() {
+        // Half canvas (0), half background (6800): plain averaging gives 3400, a value no pixel had.
+        BufferedImage src = ushort(2, 2, 0, 6800, 0, 6800);
+        assertEquals(
+                3400, CompositorImageServer.areaAverage(src, 1, 1).getRaster().getSample(0, 0, 0));
+        assertEquals(
+                6800,
+                CompositorImageServer.areaAverage(src, 1, 1, true).getRaster().getSample(0, 0, 0));
+    }
+
+    @Test
+    @DisplayName("zero as no data: an all-zero block stays zero")
+    void emptyStaysEmpty() {
+        BufferedImage src = ushort(2, 2, 0, 0, 0, 0);
+        assertEquals(
+                0,
+                CompositorImageServer.areaAverage(src, 1, 1, true).getRaster().getSample(0, 0, 0));
+    }
 }
