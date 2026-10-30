@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-29
+
+> **IMPORTANT -- if you stitched 16-bit images with an earlier version, read this.**
+> **Every 16-bit OME-TIFF written by tiles-to-pyramid 0.2.0 through 0.7.10 has damaged pyramid levels below full resolution.** The full-resolution level is correct; every zoomed-out level holds only 8 bits of the data (every value a multiple of 257). What you saw in QuPath when zoomed out, and **any analysis run at a downsample** (pixel classifiers, thresholders or measurements at a lower resolution), used the damaged values. **Stitch those images again with 0.8.0** to repair them. RGB images and OME-Zarr output are not affected.
+
 ### Fixed
-- **16-bit pyramids kept only 8 bits below full resolution.** The stitched image's downsampled reads were scaled with Java2D, which renders a 16-bit grayscale image through 8 bits, so every value in the first downsampled pyramid level was a multiple of 257, and every coarser level, built from that one, inherited the loss. Full resolution was always correct. Zoomed out, an LC-PolScope retardance image of a few hundred counts went 99% black and an SHG image showed 16 gray levels; any analysis run at a downsample saw the same values. Present since the direct stitcher (0.2.0) in every 16-bit OME-TIFF; RGB images are unaffected. The downsampled reads now average the covered pixels on the raster at full bit depth. Images stitched before this keep the damaged levels until they are stitched again. Checked end to end by `harness/Pyramid16BitScenario.java` (fails on 0.7.10, passes now).
+- **16-bit pyramids kept only 8 bits below full resolution.** The stitched image's downsampled reads were scaled with Java2D, which renders a 16-bit grayscale image through 8 bits, so every value in the first downsampled pyramid level was a multiple of 257, and every coarser level, built from that one, inherited the loss. Zoomed out, an LC-PolScope retardance image of a few hundred counts went 99% black, and an SHG image showed 16 gray levels where full resolution had over 2,000. The downsampled reads now average the covered pixels on the raster at full bit depth. Checked end to end by `harness/Pyramid16BitScenario.java`: on 0.7.10 the first downsampled level's mean was 9.5 against 27.8 at full resolution, with 100% of its values multiples of 257; now every level matches full resolution.
 
 ## [0.7.10] - 2026-10-29
 

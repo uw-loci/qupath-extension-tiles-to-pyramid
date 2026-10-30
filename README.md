@@ -3,6 +3,11 @@
 > **Part of the [QPSC (QuPath Scope Control)](https://github.com/uw-loci/qupath-extension-qpsc) system.**
 > For complete installation and setup instructions, see the [QPSC Installation Guide](https://github.com/uw-loci/qupath-extension-qpsc/blob/main/documentation/INSTALLATION.md).
 
+> **Upgrading from 0.7.10 or earlier? Re-stitch your 16-bit images.** Versions 0.2.0 through
+> 0.7.10 wrote every zoomed-out pyramid level of a 16-bit OME-TIFF with only 8 bits of data. Full
+> resolution was correct, but the zoomed-out view and any analysis at a downsample were not. Fixed
+> in 0.8.0; see the [CHANGELOG](CHANGELOG.md#080---2026-10-29).
+
 Stitches a folder of microscope image tiles into one pyramidal whole-slide image that QuPath can
 open. Point it at the folder, say how the tile positions are recorded, and it writes an OME-TIFF or
 OME-Zarr beside the tiles.
