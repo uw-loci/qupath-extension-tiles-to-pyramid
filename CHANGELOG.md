@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-31
+
 ### Added
 - **Correct uneven brightness with a flat-field profile** (MicroManager method). For a detector with no background image, such as a PMT: each plane is corrected with a profile fitted from tiles, after averaging and before any z projection, and the background keeps its value. The stitched copy gets `_ff` in its name and the stitch record names the profile.
 
