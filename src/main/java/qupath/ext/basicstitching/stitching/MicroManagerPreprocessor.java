@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -38,18 +39,20 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Reduces each position of a MicroManager multi-position acquisition to one plane per channel
- * before stitching: the time points are averaged, then the z-slices are max-intensity projected,
- * in that order. The result is a copy in the same MicroManager layout, with one frame and (when
- * projected) one slice per position, so {@link MicroManagerMetadataStrategy} stitches it like any
- * single-plane acquisition. Both MicroManager layouts are handled:
+ * Reduces each position of a MicroManager multi-position acquisition before stitching: the time
+ * points are averaged (or each kept), each plane is flat-field corrected if asked, then the
+ * z-slices are max-intensity projected, in that order. Without averaging every time point is
+ * reduced on its own and kept. The result is a copy in the same MicroManager layout, with one
+ * frame (when averaged) and one slice (when projected) per position, which
+ * {@link MicroManagerMetadataStrategy} stitches. Both MicroManager layouts are handled:
  *
  * <ul>
  *   <li><b>One OME-TIFF per position</b> ({@code <prefix>_MMStack_<label>.ome.tif} plus
  *       {@code _metadata.txt}, and any {@code <label>_1.ome.tif} continuation).</li>
  *   <li><b>Single-plane TIFF series</b> (a folder per position holding
  *       {@code img_channelCCC_positionPPP_timeTTTTTTTTT_zZZZ.tif} files and a
- *       {@code metadata.txt}). The copy keeps each plane's first-frame, first-slice file name.</li>
+ *       {@code metadata.txt}). The copy keeps each written plane's source file name (its first
+ *       frame's when averaged, its first slice's when projected).</li>
  * </ul>
  *
  * <p>Which channel, slice and frame each page holds is read by {@link MicroManagerPlanes}, the
@@ -77,8 +80,8 @@ public final class MicroManagerPreprocessor {
     /**
      * What to do to each position, applied in this order.
      *
-     * @param averageFrames average the time points; when false and there are several, the first
-     *     frame is used
+     * @param averageFrames average the time points; when false, each time point is reduced on its
+     *     own and kept
      * @param flatfield corrects each plane before any projection; null for none
      * @param maxProjectZ take the per-pixel maximum over the z-slices
      */
@@ -90,7 +93,7 @@ public final class MicroManagerPreprocessor {
 
         /** @return the method in words, for records */
         public String describe() {
-            String frames = averageFrames ? "mean over time points" : "first time point only";
+            String frames = averageFrames ? "mean over time points" : "each time point kept";
             String shading = flatfield != null ? ", then " + flatfield.describe() : "";
             String z = maxProjectZ ? ", then maximum intensity over z-slices" : "";
             return frames + shading + z + "; rounded to the source bit depth";
@@ -235,24 +238,39 @@ public final class MicroManagerPreprocessor {
 
             List<MicroManagerPlanes.Plane> pagePlanes = MicroManagerPlanes.stackPlanes(
                     files, () -> sidecar, MicroManagerPlanes.Dims.of(summaryOf(sidecar)));
-            Planes planes = reduce(pagePlanes, false, options, label, notes);
+            List<Integer> outFrames = outputFrames(pagePlanes, options, label, notes);
+            Planes planes = reduce(pagePlanes, false, options, label, notes, outFrames.get(0));
             frames.put(label, planes.framesInSource);
             slices.put(label, planes.slicesInSource);
 
             String outName = stem + ".ome.tif";
+            Planes firstFrame = planes;
             writeTiff(
                     out.resolve(outName),
                     planes,
-                    java.util.Arrays.asList(planes.mean),
                     planes.channels,
                     planes.slices,
+                    outFrames.size(),
+                    t -> {
+                        Planes p = t == 0
+                                ? firstFrame
+                                : reduce(pagePlanes, false, options, label, notes, outFrames.get(t));
+                        if (p.channels != firstFrame.channels
+                                || p.slices != firstFrame.slices
+                                || p.width != firstFrame.width
+                                || p.height != firstFrame.height) {
+                            throw new IOException(label + ": time point " + outFrames.get(t)
+                                    + " has a different shape from time point " + outFrames.get(0));
+                        }
+                        return java.util.Arrays.asList(p.mean);
+                    },
                     channelNames(sidecar),
                     firstFrameBlock(sidecar),
                     label);
             if (sidecar != null) {
                 Files.writeString(
                         out.resolve(stem + "_metadata.txt"),
-                        GSON.toJson(reducedSidecar(sidecar, planes, outName, src, options)),
+                        GSON.toJson(reducedSidecar(sidecar, planes, outFrames, outName, src, options)),
                         StandardCharsets.UTF_8);
             }
             logReduced(label, planes, options);
@@ -281,7 +299,7 @@ public final class MicroManagerPreprocessor {
                 "{}: {} time point(s) {}, {} z-slice(s) {}, {} channel(s)",
                 label,
                 p.framesInSource,
-                options.averageFrames() ? "averaged" : "(first used)",
+                options.averageFrames() ? "averaged" : "kept",
                 p.slicesInSource,
                 p.slicesInSource > 1 && options.maxProjectZ() ? "max-projected" : "kept",
                 p.channels);
@@ -315,19 +333,64 @@ public final class MicroManagerPreprocessor {
         }
     }
 
+    /** Frame selection meaning every time point, averaged. */
+    private static final int ALL_FRAMES = -1;
+
     /**
-     * Average (or take the first frame), correct the shading, then project if asked, noting missing
+     * The time points one position is written with: {@link #ALL_FRAMES} once when averaging, else
+     * each time point from the first while every channel and slice has a plane in it. A time point
+     * an acquisition stopped part way through, and any after it, is left out and noted.
+     *
+     * @return frame selections, one per output time point
+     */
+    private static List<Integer> outputFrames(
+            List<MicroManagerPlanes.Plane> planes, Options options, String label, List<String> notes) {
+        if (options.averageFrames()) {
+            return List.of(ALL_FRAMES);
+        }
+        TreeMap<Integer, Set<Long>> byFrame = new TreeMap<>();
+        Set<Long> all = new HashSet<>();
+        for (MicroManagerPlanes.Plane plane : planes) {
+            long key = ((long) plane.coord().z() << 32) | plane.coord().c();
+            byFrame.computeIfAbsent(plane.coord().t(), k -> new HashSet<>()).add(key);
+            all.add(key);
+        }
+        int frames = byFrame.isEmpty() ? 1 : byFrame.lastKey() + 1;
+        List<Integer> out = new ArrayList<>();
+        for (int t = 0; t < frames; t++) {
+            Set<Long> have = byFrame.get(t);
+            if (have == null || !have.containsAll(all)) {
+                if (t == 0) {
+                    // Refused when it is read, naming the missing plane.
+                    out.add(0);
+                } else {
+                    notes.add(label + ": time point " + t + " has " + (have == null ? 0 : have.size()) + " of "
+                            + all.size() + " planes; it and the " + (frames - t - 1)
+                            + " after it were left out");
+                }
+                break;
+            }
+            out.add(t);
+        }
+        return out;
+    }
+
+    /**
+     * Average (or take one time point), correct the shading, then project if asked, noting missing
      * planes. The correction must come before the projection: a sum would otherwise take the offset
      * off once for many planes, and averaging is unaffected either way.
+     *
+     * @param frame the time point to reduce, or {@link #ALL_FRAMES} to average them
      */
     private static Planes reduce(
             List<MicroManagerPlanes.Plane> planes,
             boolean singlePlane,
             Options options,
             String label,
-            List<String> notes)
+            List<String> notes,
+            int frame)
             throws IOException {
-        Planes p = combineFrames(planes, singlePlane, options.averageFrames());
+        Planes p = combineFrames(planes, singlePlane, frame);
         if (p.missing > 0) {
             notes.add(label + ": " + p.missing + " of " + p.frames * p.planeCount()
                     + " planes absent; those planes averaged over the frames present");
@@ -348,13 +411,15 @@ public final class MicroManagerPreprocessor {
     }
 
     /**
-     * Mean over frames for every (channel, slice); with {@code averageFrames} false, frame 0 only.
+     * Mean over frames for every (channel, slice), or one time point's planes.
      *
      * @param planes the position's planes, in the order MicroManager wrote them
      * @param singlePlane each file is a single-plane TIFF series file and must hold one page
+     * @param frame the time point to take, or {@link #ALL_FRAMES} to average them all
      */
-    private static Planes combineFrames(
-            List<MicroManagerPlanes.Plane> planes, boolean singlePlane, boolean averageFrames) throws IOException {
+    private static Planes combineFrames(List<MicroManagerPlanes.Plane> planes, boolean singlePlane, int frame)
+            throws IOException {
+        boolean averageFrames = frame == ALL_FRAMES;
         Map<Path, List<MicroManagerPlanes.Plane>> byFile = new LinkedHashMap<>();
         for (MicroManagerPlanes.Plane plane : planes) {
             byFile.computeIfAbsent(plane.file(), k -> new ArrayList<>()).add(plane);
@@ -383,7 +448,7 @@ public final class MicroManagerPreprocessor {
                         maxC = Math.max(maxC, coord.c());
                         maxZ = Math.max(maxZ, coord.z());
                         maxT = Math.max(maxT, coord.t());
-                        if (!averageFrames && coord.t() > 0) {
+                        if (!averageFrames && coord.t() != frame) {
                             continue;
                         }
                         Raster r = reader.read(i).getRaster();
@@ -423,7 +488,7 @@ public final class MicroManagerPreprocessor {
                 int n = counts.getOrDefault(key, 0);
                 if (sum == null || n == 0) {
                     throw new IOException("Channel " + c + ", slice " + z + " has no "
-                            + (averageFrames ? "frames" : "first frame") + " in "
+                            + (averageFrames ? "frames" : "plane at time point " + frame) + " in "
                             + planes.get(0).file());
                 }
                 p.missing += p.frames - n;
@@ -506,16 +571,25 @@ public final class MicroManagerPreprocessor {
         return Math.max(lo, Math.min(hi, Math.round(v)));
     }
 
+    /** One output time point's planes, channel fastest then z; reduced only when it is written. */
+    @FunctionalInterface
+    private interface FramePlanes {
+        List<double[]> get(int t) throws IOException;
+    }
+
     /**
-     * Write planes (channel fastest, then z) as one TIFF; {@code .ome.tif} gets OME-XML, a plain
-     * {@code .tif} is a plain TIFF.
+     * Write planes (channel fastest, then z, then time) as one TIFF, one time point at a time;
+     * {@code .ome.tif} gets OME-XML, a plain {@code .tif} is a plain TIFF.
+     *
+     * @param p the size and pixel type of every plane
      */
     private static void writeTiff(
             Path path,
             Planes p,
-            List<double[]> planes,
             int sizeC,
             int sizeZ,
+            int sizeT,
+            FramePlanes planes,
             List<String> names,
             JsonObject block,
             String label)
@@ -533,7 +607,7 @@ public final class MicroManagerPreprocessor {
                 p.height,
                 sizeZ,
                 sizeC,
-                1,
+                sizeT,
                 1);
         for (int c = 0; c < sizeC; c++) {
             if (c < names.size() && names.get(c) != null) meta.setChannelName(names.get(c), 0, c);
@@ -555,29 +629,39 @@ public final class MicroManagerPreprocessor {
             writer.setWriteSequentially(true);
             writer.setMetadataRetrieve(meta);
             writer.setId(path.toString());
-            for (int i = 0; i < planes.size(); i++) {
-                writer.saveBytes(i, pack(planes.get(i), p.pixelType));
+            int i = 0;
+            for (int t = 0; t < sizeT; t++) {
+                for (double[] plane : planes.get(t)) {
+                    writer.saveBytes(i++, pack(plane, p.pixelType));
+                }
             }
         } catch (FormatException e) {
             throw new IOException("Could not write " + path, e);
         }
     }
 
-    /** The source sidecar reshaped to what was written: one FrameKey per written (c, z). */
+    /**
+     * The source sidecar reshaped to what was written: one FrameKey per written (t, c, z), in page
+     * order, each the source block of that time point (the earliest one when averaged).
+     *
+     * @param frames the frame selection of each written time point
+     */
     private static JsonObject reducedSidecar(
-            JsonObject sidecar, Planes p, String outName, Path source, Options options) {
+            JsonObject sidecar, Planes p, List<Integer> frames, String outName, Path source, Options options) {
         JsonObject out = new JsonObject();
         JsonObject summary = summaryOf(sidecar);
         if (summary != null) {
-            out.add("Summary", reducedSummary(summary, p, source, options));
+            out.add("Summary", reducedSummary(summary, p, frames.size(), source, options));
         }
         Map<String, JsonObject> earliest = new LinkedHashMap<>();
+        Map<String, JsonObject> byKey = new HashMap<>();
         for (String key : sidecar.keySet()) {
             Matcher m = FRAME_KEY.matcher(key);
             if (!m.matches() || !sidecar.get(key).isJsonObject()) continue;
             String cz = m.group(2) + "-" + m.group(3);
             int t = Integer.parseInt(m.group(1));
             JsonObject block = sidecar.getAsJsonObject(key);
+            byKey.put(t + "-" + cz, block);
             JsonObject have = earliest.get(cz);
             if (have == null || t < have.get("__t").getAsInt()) {
                 JsonObject copy = block.deepCopy();
@@ -585,14 +669,19 @@ public final class MicroManagerPreprocessor {
                 earliest.put(cz, copy);
             }
         }
-        for (int z = 0; z < p.slices; z++) {
-            for (int c = 0; c < p.channels; c++) {
-                JsonObject block = earliest.get(c + "-" + z);
-                if (block == null) continue;
-                block.remove("__t");
-                block.addProperty("FileName", outName);
-                annotate(block, p);
-                out.add("FrameKey-0-" + c + "-" + z, block);
+        for (int ti = 0; ti < frames.size(); ti++) {
+            int frame = frames.get(ti);
+            for (int z = 0; z < p.slices; z++) {
+                for (int c = 0; c < p.channels; c++) {
+                    JsonObject own = frame == ALL_FRAMES ? null : byKey.get(frame + "-" + c + "-" + z);
+                    JsonObject block = own != null ? own : earliest.get(c + "-" + z);
+                    if (block == null) continue;
+                    block = block.deepCopy();
+                    block.remove("__t");
+                    block.addProperty("FileName", outName);
+                    annotate(block, p);
+                    out.add("FrameKey-" + ti + "-" + c + "-" + z, block);
+                }
             }
         }
         return out;
@@ -633,9 +722,9 @@ public final class MicroManagerPreprocessor {
 
     /**
      * Reduce one position folder of a single-plane TIFF series into {@code outDir}: one file per
-     * written channel and slice, named as that plane's first frame, and a matching metadata.txt.
+     * written channel, slice and time point, named as that plane's source file, and a matching metadata.txt.
      *
-     * @return the planes written, or null when the folder held no TIFFs
+     * @return the first written time point's planes, or null when the folder held no TIFFs
      */
     private static Planes singlePlanePosition(Path dir, Path outDir, Path src, Options options, List<String> notes)
             throws IOException {
@@ -646,6 +735,7 @@ public final class MicroManagerPreprocessor {
         }
         Map<Path, MicroManagerPlanes.Coord> coords = new LinkedHashMap<>();
         Map<Long, Path> earliest = new TreeMap<>();
+        Map<String, Path> byTzc = new HashMap<>();
         try (var s = Files.list(dir)) {
             for (Path f : (Iterable<Path>) s.sorted()::iterator) {
                 String name = f.getFileName().toString();
@@ -661,6 +751,7 @@ public final class MicroManagerPreprocessor {
                             + " and metadata.txt has no Metadata- or Coords- block for it");
                 }
                 coords.put(f, c);
+                byTzc.put(c.t() + "-" + c.z() + "-" + c.c(), f);
                 long key = ((long) c.z() << 32) | c.c();
                 Path have = earliest.get(key);
                 if (have == null || c.t() < coords.get(have).t()) earliest.put(key, f);
@@ -672,35 +763,46 @@ public final class MicroManagerPreprocessor {
         }
         List<MicroManagerPlanes.Plane> filePlanes = new ArrayList<>();
         coords.forEach((f, c) -> filePlanes.add(new MicroManagerPlanes.Plane(f, 0, c)));
-        Planes planes = reduce(filePlanes, true, options, label, notes);
+        List<Integer> outFrames = outputFrames(filePlanes, options, label, notes);
 
         Files.createDirectories(outDir);
         List<String> names = channelNames(sidecar);
         Set<String> kept = new HashSet<>();
-        for (int z = 0; z < planes.slices; z++) {
-            for (int c = 0; c < planes.channels; c++) {
-                Path first = earliest.get(((long) z << 32) | c);
-                if (first == null) continue;
-                String name = first.getFileName().toString();
-                kept.add(name);
-                JsonElement block = sidecar.get("Metadata-" + label + "/" + name);
-                writeTiff(
-                        outDir.resolve(name),
-                        planes,
-                        List.of(planes.mean[c + planes.channels * z]),
-                        1,
-                        1,
-                        c < names.size() ? java.util.Collections.singletonList(names.get(c)) : List.of(),
-                        block != null && block.isJsonObject() ? block.getAsJsonObject() : null,
-                        label);
+        Planes firstPlanes = null;
+        for (int frame : outFrames) {
+            Planes planes = reduce(filePlanes, true, options, label, notes, frame);
+            if (firstPlanes == null) firstPlanes = planes;
+            for (int z = 0; z < planes.slices; z++) {
+                for (int c = 0; c < planes.channels; c++) {
+                    // Named as the plane's own source file: its time point's, or its first frame's
+                    // when averaged (the first slice's when projected).
+                    Path from = frame == ALL_FRAMES
+                            ? earliest.get(((long) z << 32) | c)
+                            : byTzc.get(frame + "-" + z + "-" + c);
+                    if (from == null) continue;
+                    String name = from.getFileName().toString();
+                    kept.add(name);
+                    JsonElement block = sidecar.get("Metadata-" + label + "/" + name);
+                    double[] plane = planes.mean[c + planes.channels * z];
+                    writeTiff(
+                            outDir.resolve(name),
+                            planes,
+                            1,
+                            1,
+                            1,
+                            t -> List.of(plane),
+                            c < names.size() ? java.util.Collections.singletonList(names.get(c)) : List.of(),
+                            block != null && block.isJsonObject() ? block.getAsJsonObject() : null,
+                            label);
+                }
             }
         }
         Files.writeString(
                 outDir.resolve("metadata.txt"),
-                GSON.toJson(reducedSinglePlaneSidecar(sidecar, kept, planes, src, options)),
+                GSON.toJson(reducedSinglePlaneSidecar(sidecar, kept, firstPlanes, outFrames.size(), src, options)),
                 StandardCharsets.UTF_8);
-        logReduced(label, planes, options);
-        return planes;
+        logReduced(label, firstPlanes, options);
+        return firstPlanes;
     }
 
     /**
@@ -708,12 +810,12 @@ public final class MicroManagerPreprocessor {
      * only the per-file blocks of the files written are kept.
      */
     private static JsonObject reducedSinglePlaneSidecar(
-            JsonObject sidecar, Set<String> kept, Planes p, Path source, Options options) {
+            JsonObject sidecar, Set<String> kept, Planes p, int framesOut, Path source, Options options) {
         JsonObject out = new JsonObject();
         for (String key : sidecar.keySet()) {
             JsonElement value = sidecar.get(key);
             if (key.equals("Summary") && value.isJsonObject()) {
-                out.add(key, reducedSummary(value.getAsJsonObject(), p, source, options));
+                out.add(key, reducedSummary(value.getAsJsonObject(), p, framesOut, source, options));
                 continue;
             }
             String rel = key.startsWith("Metadata-")
@@ -734,15 +836,16 @@ public final class MicroManagerPreprocessor {
         return out;
     }
 
-    /** A copy of Summary describing one frame (and one slice when projected), recording the method. */
-    private static JsonObject reducedSummary(JsonObject summary, Planes p, Path source, Options options) {
+    /** A copy of Summary describing the frames written (and one slice when projected), recording the method. */
+    private static JsonObject reducedSummary(
+            JsonObject summary, Planes p, int framesOut, Path source, Options options) {
         JsonObject s = summary.deepCopy();
-        s.addProperty("Frames", 1);
+        s.addProperty("Frames", framesOut);
         JsonObject intended =
                 s.has("IntendedDimensions") && s.get("IntendedDimensions").isJsonObject()
                         ? s.getAsJsonObject("IntendedDimensions")
                         : null;
-        if (intended != null) intended.addProperty("time", 1);
+        if (intended != null) intended.addProperty("time", framesOut);
         if (p.projected()) {
             s.addProperty("Slices", 1);
             if (intended != null) intended.addProperty("z", 1);

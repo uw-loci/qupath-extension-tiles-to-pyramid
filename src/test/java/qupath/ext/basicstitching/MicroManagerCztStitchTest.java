@@ -143,7 +143,9 @@ class MicroManagerCztStitchTest {
         assertEquals(CHANNELS, result.outputs().size(), "one output per channel: " + result.outputs());
 
         int zOut = opt.project ? 1 : slices;
-        int tOut = opt.average || opt.project ? 1 : frames;
+        // Projection without averaging projects each time point and keeps it (before 2026-11 it kept
+        // only the first).
+        int tOut = opt.average ? 1 : frames;
 
         // Merge as the dialog does: outputs in acquisition order, named by file stem.
         assertTrue(result.acquisitionOrder(), "outputs follow Summary.ChNames");
@@ -202,13 +204,13 @@ class MicroManagerCztStitchTest {
 
     /** The value a plane of the output must hold, given what was asked for. */
     private static int expected(int c, int z, int t, int slices, int frames, Opt opt) {
-        // Projection alone uses the first time point; averaging takes the mean over all of them.
+        // Averaging takes the mean over the time points; otherwise each is kept.
         int zSrc = opt.project ? slices - 1 : z;
         int base = 1000 * (c + 1) + 100 * zSrc + 1;
         if (opt.average) {
             return base + 10 * (frames - 1) / 2;
         }
-        return base + 10 * (opt.project ? 0 : t);
+        return base + 10 * t;
     }
 
     private static double nonZeroMean(Raster r, int band) {

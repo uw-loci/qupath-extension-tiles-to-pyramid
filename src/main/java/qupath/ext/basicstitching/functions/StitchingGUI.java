@@ -689,7 +689,8 @@ public class StitchingGUI {
     /**
      * Adds the preprocessing options for a MicroManager acquisition with several time points or
      * z-slices per position (e.g. SHG collected as a short time series, or a z-stack), in either
-     * MicroManager layout. Time points are averaged first, then z-slices max-projected; the result
+     * MicroManager layout. Time points are averaged first (or each kept), then z-slices
+     * max-projected; the result
      * is written beside the folder ({@code <folder>_averaged}, {@code _mip} or {@code _averaged_mip})
      * in the same MicroManager layout, and that copy is what gets stitched.
      */
@@ -701,15 +702,16 @@ public class StitchingGUI {
                         + "depth) and written to a copy of the acquisition beside the original, in\n"
                         + "the same MicroManager layout. That copy is stitched.\n"
                         + "When clear, nothing is averaged: each time point is stitched as a time\n"
-                        + "point of the output image (with max-intensity projection ticked, only the\n"
-                        + "first time point is used)."));
+                        + "point of the output image (with max-intensity projection ticked, each\n"
+                        + "time point is projected on its own)."));
         maxProjectCheckbox.setSelected(QPPreferences.getMaxProjectZSaved());
         maxProjectCheckbox.setTooltip(
                 new Tooltip("Each position holds a z-stack. When ticked, each channel is reduced to\n"
                         + "the brightest value at every pixel over its z-slices (maximum intensity\n"
                         + "projection), after the time points are averaged if that is ticked too,\n"
                         + "and written to the copy that is stitched.\n"
-                        + "With time points present and averaging clear, the first time point is used.\n"
+                        + "With time points present and averaging clear, each time point is\n"
+                        + "projected on its own and kept as a time point of the output image.\n"
                         + "When clear, each z-slice is stitched as a z-slice of the output image."));
         flatfieldCheckbox.setSelected(QPPreferences.getApplyFlatfieldSaved());
         flatfieldCheckbox.setTooltip(new Tooltip("For a detector with no background image, such as a PMT. Each plane\n"

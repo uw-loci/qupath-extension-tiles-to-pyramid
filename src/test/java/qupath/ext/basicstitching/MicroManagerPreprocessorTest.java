@@ -166,22 +166,107 @@ class MicroManagerPreprocessorTest {
         assertEquals(4, after.size(), "after: both channels of both positions");
     }
 
-    /** Projection without averaging takes the first time point, and says so in the method. */
+    /**
+     * Projection without averaging projects every time point on its own and keeps them all. Until
+     * 2026-11 it used the first time point and dropped the rest.
+     */
     @Test
-    void projectionAloneUsesTheFirstTimePoint(@TempDir Path tmp) throws IOException {
+    void projectionAloneProjectsEachTimePoint(@TempDir Path tmp) throws IOException {
         Path src = Files.createDirectories(tmp.resolve("shg"));
-        writePosition(src, "Pos0", 0, 0.0, 0.0, 1, 3, 4, true);
+        writePosition(src, "Pos0", 0, 0.0, 0.0, 2, 3, 4, true);
+        writePosition(src, "Pos1", 1, 4.0, 0.0, 2, 3, 4, true);
         Options mipOnly = new Options(false, null, true);
         Path out = MicroManagerPreprocessor.defaultOutput(src, mipOnly);
         assertEquals(tmp.resolve("shg_mip"), out);
         var result = MicroManagerPreprocessor.run(src, out, mipOnly);
-        assertTrue(mipOnly.describe().startsWith("first time point only"));
+        assertTrue(mipOnly.describe().startsWith("each time point kept"), mipOnly.describe());
+        assertEquals("4", result.frameSummary());
+
         int[] zBonus = {40, 70, 50};
-        int[] px = readPages(out.resolve("acq_MMStack_Pos0.ome.tif")).get(0);
-        for (int i = 0; i < px.length; i++) {
-            assertEquals(1000 + zBonus[(i % W) % 3], px[i], "frame 0 only, no T_STEP added");
+        List<int[]> pages = readPages(out.resolve("acq_MMStack_Pos1.ome.tif"));
+        assertEquals(2 * 4, pages.size(), "channel x time point pages, slices projected");
+        for (int t = 0; t < 4; t++) {
+            for (int c = 0; c < 2; c++) {
+                int[] px = pages.get(c + 2 * t);
+                for (int i = 0; i < px.length; i++) {
+                    assertEquals(2000 + 100 * c + T_STEP[t] + zBonus[(i % W) % 3], px[i], "c" + c + " t" + t);
+                }
+            }
         }
-        assertEquals("4", result.frameSummary(), "the source's time points are still reported");
+        JsonObject side = JsonParser.parseString(Files.readString(out.resolve("acq_MMStack_Pos1_metadata.txt")))
+                .getAsJsonObject();
+        assertEquals(4, side.getAsJsonObject("Summary").get("Frames").getAsInt());
+        assertEquals(1, side.getAsJsonObject("Summary").get("Slices").getAsInt());
+        assertTrue(side.has("FrameKey-3-1-0"));
+        assertFalse(side.has("FrameKey-0-0-1"), "slices are projected");
+
+        // The copy stitches with its time points: 2 positions x 2 channels x 4 time points.
+        List<TileMapping> after =
+                new MicroManagerMetadataStrategy().prepareStitching(out.toString(), PIXEL_UM, 1.0, "");
+        assertEquals(16, after.size());
+        assertEquals(
+                java.util.Set.of(0, 1, 2, 3),
+                after.stream().map(m -> m.region.getT()).collect(java.util.stream.Collectors.toSet()));
+        for (TileMapping m : after) {
+            int c = m.subdirName.equals("SHG") ? 0 : 1;
+            assertEquals(0, m.region.getZ());
+            assertEquals(c + 2 * m.region.getT(), m.ifdIndex, "page of " + m.region);
+        }
+    }
+
+    /** The same in a single-plane TIFF series: one projected file per time point, each named after it. */
+    @Test
+    void singlePlaneSeriesProjectionAloneKeepsEachTimePoint(@TempDir Path tmp) throws IOException {
+        Path src = Files.createDirectories(tmp.resolve("shg"));
+        writeSinglePlanePosition(src, "Tile_R0_C0", 0, 0.0, 0.0, 3, 2);
+        writeSinglePlanePosition(src, "Tile_R0_C1", 1, 4.0, 0.0, 3, 2);
+        Options mipOnly = new Options(false, null, true);
+        Path out = MicroManagerPreprocessor.defaultOutput(src, mipOnly);
+        MicroManagerPreprocessor.run(src, out, mipOnly);
+        Path pos = out.resolve("Tile_R0_C0");
+        try (var files = Files.list(pos)) {
+            assertEquals(
+                    List.of(
+                            "img_channel000_position000_time000000000_z000.tif",
+                            "img_channel000_position000_time000000001_z000.tif",
+                            "metadata.txt"),
+                    files.map(p -> p.getFileName().toString()).sorted().toList());
+        }
+        int[] zBonus = {40, 70, 50};
+        for (int t = 0; t < 2; t++) {
+            String name = String.format("img_channel000_position000_time%09d_z000.tif", t);
+            int[] px = readPages(pos.resolve(name)).get(0);
+            for (int i = 0; i < px.length; i++) {
+                assertEquals(1000 + T_STEP[t] + zBonus[(i % W) % 3], px[i], name);
+            }
+        }
+        JsonObject summary = JsonParser.parseString(Files.readString(pos.resolve("metadata.txt")))
+                .getAsJsonObject()
+                .getAsJsonObject("Summary");
+        assertEquals(2, summary.get("Frames").getAsInt());
+        assertEquals(1, summary.get("Slices").getAsInt());
+        List<TileMapping> after =
+                new MicroManagerMetadataStrategy().prepareStitching(out.toString(), PIXEL_UM, 1.0, "");
+        assertEquals(4, after.size(), "2 positions x 2 time points");
+        assertEquals(
+                java.util.Set.of(0, 1),
+                after.stream().map(m -> m.region.getT()).collect(java.util.stream.Collectors.toSet()));
+    }
+
+    /** A time point an acquisition stopped part way through is left out, and the record says so. */
+    @Test
+    void anIncompleteLastTimePointIsLeftOutWhenTimePointsAreKept(@TempDir Path tmp) throws IOException {
+        Path src = Files.createDirectories(tmp.resolve("shg"));
+        writeSinglePlanePosition(src, "Tile_R0_C0", 0, 0.0, 0.0, 3, 2);
+        Files.delete(src.resolve("Tile_R0_C0/img_channel000_position000_time000000001_z002.tif"));
+        Options mipOnly = new Options(false, null, true);
+        var result = MicroManagerPreprocessor.run(src, tmp.resolve("out"), mipOnly);
+        assertTrue(
+                result.notes().stream().anyMatch(n -> n.contains("time point 1 has 2 of 3 planes")),
+                result.notes().toString());
+        try (var files = Files.list(tmp.resolve("out/Tile_R0_C0"))) {
+            assertEquals(2, files.count(), "time point 0 and metadata.txt");
+        }
     }
 
     @Test
