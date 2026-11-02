@@ -95,14 +95,18 @@ public class StitchingWorkflow {
      * successful path. {@code outputs} preserves insertion order; it is
      * never null but may be empty when the entire workflow failed.
      * {@code warnings} are the strategy's {@link StitchingStrategy#warnings()}: tiles it left out
-     * or read only in part, which a caller should show to the user.
+     * or read only in part, which a caller should show to the user. {@code acquisitionOrder} is
+     * true when {@code outputs} follow the order the input recorded for its groups
+     * ({@link StitchingStrategy#groupOrder()}, Micro-Manager's channel order); otherwise their
+     * order means nothing.
      */
     public record StitchingResult(
             List<String> outputs,
             int successCount,
             int failureCount,
             List<String> failedSubdirs,
-            List<String> warnings) {
+            List<String> warnings,
+            boolean acquisitionOrder) {
         public StitchingResult {
             outputs = List.copyOf(outputs);
             failedSubdirs = List.copyOf(failedSubdirs);
@@ -126,7 +130,7 @@ public class StitchingWorkflow {
 
         /** A result with no outputs and no failures that still reports the strategy's warnings. */
         static StitchingResult withWarnings(List<String> warnings) {
-            return new StitchingResult(Collections.emptyList(), 0, 0, Collections.emptyList(), warnings);
+            return new StitchingResult(Collections.emptyList(), 0, 0, Collections.emptyList(), warnings, false);
         }
     }
 
@@ -196,6 +200,10 @@ public class StitchingWorkflow {
             // 3. Group tiles by subdirectory
             Map<String, List<TileMapping>> groupedMappings =
                     allMappings.stream().collect(Collectors.groupingBy(mapping -> mapping.subdirName));
+            List<String> groupOrder = strategy.groupOrder();
+            if (!groupOrder.isEmpty()) {
+                groupedMappings = inGroupOrder(groupedMappings, groupOrder);
+            }
 
             logger.info("Tiles grouped into {} subdirectories:", groupedMappings.size());
             groupedMappings.forEach((subdir, tiles) -> logger.info("  - '{}': {} tiles", subdir, tiles.size()));
@@ -272,12 +280,32 @@ public class StitchingWorkflow {
                 logger.warn("Failed subdirectories: {}", failedSubdirs);
             }
 
-            return new StitchingResult(outputs, successCount, failureCount, failedSubdirs, warnings);
+            return new StitchingResult(
+                    outputs, successCount, failureCount, failedSubdirs, warnings, !groupOrder.isEmpty());
 
         } catch (Exception e) {
             logger.error("Critical exception in StitchingWorkflow", e);
             return StitchingResult.empty();
         }
+    }
+
+    /**
+     * The groups in the order the input recorded, then any it did not name, by name.
+     *
+     * @param groups tiles by group
+     * @param order group names in acquisition order
+     * @return the same groups, iterated in that order
+     */
+    static Map<String, List<TileMapping>> inGroupOrder(Map<String, List<TileMapping>> groups, List<String> order) {
+        Map<String, List<TileMapping>> out = new java.util.LinkedHashMap<>();
+        for (String name : order) {
+            List<TileMapping> tiles = groups.get(name);
+            if (tiles != null) {
+                out.put(name, tiles);
+            }
+        }
+        groups.keySet().stream().filter(k -> !out.containsKey(k)).sorted().forEach(k -> out.put(k, groups.get(k)));
+        return out;
     }
 
     /**

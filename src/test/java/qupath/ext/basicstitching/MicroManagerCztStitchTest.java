@@ -9,7 +9,6 @@ import java.awt.image.Raster;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.io.TempDir;
@@ -146,15 +145,15 @@ class MicroManagerCztStitchTest {
         int zOut = opt.project ? 1 : slices;
         int tOut = opt.average || opt.project ? 1 : frames;
 
-        // Merge exactly as the dialog does: outputs sorted, named by file stem.
-        List<String> sorted = new ArrayList<>(result.outputs());
-        Collections.sort(sorted);
-        List<String> names = sorted.stream()
+        // Merge as the dialog does: outputs in acquisition order, named by file stem.
+        assertTrue(result.acquisitionOrder(), "outputs follow Summary.ChNames");
+        List<String> ordered = result.outputs();
+        List<String> names = ordered.stream()
                 .map(p -> Path.of(p).getFileName().toString().replace(".ome.tif", ""))
                 .toList();
         assertEquals(List.of("DAPI", "FITC", "TRITC"), names);
         String merged = ChannelMerger.merge(
-                sorted, names, out.toString(), "MDA_region_merged", "LZW", StitchingConfig.OutputFormat.OME_TIFF);
+                ordered, names, out.toString(), "MDA_region_merged", "LZW", StitchingConfig.OutputFormat.OME_TIFF);
         assertNotNull(merged, "merge");
 
         try (ImageServer<BufferedImage> server =

@@ -457,7 +457,7 @@ public class StitchingGUI {
                                 String merged = null;
                                 String reason = "See the log for details.";
                                 try {
-                                    merged = mergeChannelOutputs(outputs, config);
+                                    merged = mergeChannelOutputs(outputs, result.acquisitionOrder(), config);
                                 } catch (Exception e) {
                                     logger.error("Channel merge failed", e);
                                     if (e.getMessage() != null) {
@@ -541,19 +541,25 @@ public class StitchingGUI {
 
     /**
      * Combine the per-subdirectory stitches into one multichannel image named after the selected
-     * folder. Channels are ordered and named by their subdirectory (the output file stem).
+     * folder, each channel named by its output's file stem.
+     *
+     * @param acquisitionOrder the outputs are in the acquisition's channel order (Micro-Manager's
+     *     {@code Summary.ChNames}) and are merged in that order; otherwise they are merged in file
+     *     name order, since channel folders record no acquisition order
      */
-    private static String mergeChannelOutputs(List<String> outputs, StitchingConfig config) {
-        List<String> sorted = new ArrayList<>(outputs);
-        Collections.sort(sorted);
+    private static String mergeChannelOutputs(List<String> outputs, boolean acquisitionOrder, StitchingConfig config) {
+        List<String> ordered = new ArrayList<>(outputs);
+        if (!acquisitionOrder) {
+            Collections.sort(ordered);
+        }
         List<String> names =
-                sorted.stream().map(p -> channelNameOf(new File(p).getName())).toList();
+                ordered.stream().map(p -> channelNameOf(new File(p).getName())).toList();
         String stem = new File(config.folderPath).getName() + "_merged";
-        logger.info("Merging {} channel stitches {} into {}", sorted.size(), names, stem);
+        logger.info("Merging {} channel stitches {} into {}", ordered.size(), names, stem);
         String merged = ChannelMerger.merge(
-                sorted, names, config.outputPath, stem, config.compressionType, config.outputFormat);
+                ordered, names, config.outputPath, stem, config.compressionType, config.outputFormat);
         if (merged != null) {
-            tidyChannelStitches(sorted, config, stem);
+            tidyChannelStitches(ordered, config, stem);
         }
         return merged;
     }
@@ -633,6 +639,8 @@ public class StitchingGUI {
                 new Tooltip("Each matching sub-folder is stitched to its own single-channel image.\n"
                         + "When ticked, those images are also combined into one multichannel image\n"
                         + "named <folder>_merged, with channels named after the sub-folders.\n"
+                        + "MicroManager channels keep the acquisition's channel order; channel\n"
+                        + "folders are merged in alphabetical order.\n"
                         + "The per-channel images are kept, in a <folder>_channels sub-folder.\n"
                         + "Not offered for RGB tiles."));
         Integer row = guiElementPositions.get(mergeChannelsCheckbox);

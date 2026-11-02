@@ -178,11 +178,20 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
         return List.copyOf(warnings);
     }
 
+    /** The channel outputs of the last {@link #prepareStitching}, in acquisition order; empty for one channel. */
+    private List<String> groupOrder = List.of();
+
+    @Override
+    public List<String> groupOrder() {
+        return groupOrder;
+    }
+
     @Override
     public List<TileMapping> prepareStitching(
             String folderPath, double pixelSizeInMicrons, double baseDownsample, String matchingString) {
         logger.info("Preparing stitching using MicroManager metadata for folder: {}", folderPath);
         warnings.clear();
+        groupOrder = List.of();
         List<TileMapping> mappings = new ArrayList<>();
         Path rootdir = Paths.get(folderPath).toAbsolutePath().normalize();
         if (!Files.isDirectory(rootdir)) {
@@ -338,6 +347,9 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
         int channelsSeen =
                 pending.stream().mapToInt(t -> t.plane.coord().c() + 1).max().orElse(0);
         List<String> channelNames = channelGroupNames(pm.channelNames, Math.max(nChannels, channelsSeen));
+        if (channelNames.size() > 1) {
+            groupOrder = List.copyOf(channelNames);
+        }
         for (PendingTile t : pending) {
             MicroManagerPlanes.Coord k = t.plane.coord();
             String subdir = channelNames.size() > 1 ? channelNames.get(k.c()) : folderName;

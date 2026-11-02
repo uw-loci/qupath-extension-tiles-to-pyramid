@@ -49,6 +49,8 @@ final class MicroManagerFixture {
     int rolloverAfter = 0;
     /** Write only {@code FrameKey-0-0-0} in an MMStack sidecar, as a minimal sidecar does. */
     boolean firstFrameKeyOnly = false;
+    /** Channel names in acquisition order ({@code Summary.ChNames}). */
+    String[] names = NAMES;
 
     private MicroManagerFixture(Layout layout, int channels, int slices, int frames) {
         this.layout = layout;
@@ -91,6 +93,12 @@ final class MicroManagerFixture {
 
     MicroManagerFixture rolloverAfter(int pages) {
         rolloverAfter = pages;
+        return this;
+    }
+
+    /** Channel names in acquisition order, e.g. not alphabetical. */
+    MicroManagerFixture names(String... channelNames) {
+        names = channelNames;
         return this;
     }
 
@@ -233,7 +241,7 @@ final class MicroManagerFixture {
                     .append(",\"PositionIndex\":")
                     .append(p)
                     .append(",\"Channel\":\"")
-                    .append(NAMES[c])
+                    .append(names[c])
                     .append("\",\"XPositionUm\":")
                     .append(xUm)
                     .append(",\"YPositionUm\":")
@@ -250,9 +258,9 @@ final class MicroManagerFixture {
 
     /** The acquisition's Summary; as Micro-Manager writes it, the same in every sidecar, listing every position. */
     private String summary() {
-        StringBuilder names = new StringBuilder();
+        StringBuilder chNames = new StringBuilder();
         for (int c = 0; c < channels; c++) {
-            names.append(c > 0 ? "," : "").append('"').append(NAMES[c]).append('"');
+            chNames.append(c > 0 ? "," : "").append('"').append(names[c]).append('"');
         }
         StringBuilder positions = new StringBuilder();
         for (int p = 0; p < POSITIONS; p++) {
@@ -269,7 +277,7 @@ final class MicroManagerFixture {
         String axes = zFastest ? "\"z\",\"channel\"" : "\"channel\",\"z\"";
         return "{\"MicroManagerVersion\":\"2.0.3\",\"Channels\":" + channels + ",\"Slices\":" + slices
                 + ",\"Frames\":" + frames + ",\"z-step_um\":" + (slices > 1 ? "2.5" : "0.0")
-                + ",\"Positions\":4,\"ChNames\":[" + names + "],\"ChannelGroup\":\"Filter\""
+                + ",\"Positions\":4,\"ChNames\":[" + chNames + "],\"ChannelGroup\":\"Filter\""
                 + ",\"AxisOrder\":[" + axes + ",\"time\",\"position\"],\"IntendedDimensions\":{\"time\":"
                 + frames + ",\"position\":4,\"z\":" + slices + ",\"channel\":" + channels + "}"
                 + ",\"StagePositions\":[" + positions + "]}";

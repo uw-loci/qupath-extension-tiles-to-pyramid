@@ -84,9 +84,10 @@ public final class MicroManagerChannelMergeScenario {
 
         String image = result.outputs().isEmpty() ? null : result.outputs().get(0);
         if (channels > 1 && result.outputs().size() >= 2) {
-            Method merge = StitchingGUI.class.getDeclaredMethod("mergeChannelOutputs", List.class, StitchingConfig.class);
+            Method merge = StitchingGUI.class.getDeclaredMethod(
+                    "mergeChannelOutputs", List.class, boolean.class, StitchingConfig.class);
             merge.setAccessible(true);
-            image = (String) merge.invoke(null, result.outputs(), config);
+            image = (String) merge.invoke(null, result.outputs(), result.acquisitionOrder(), config);
             check(image != null, "the dialog's merge wrote " + image);
         }
         if (image == null) {

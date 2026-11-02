@@ -19,4 +19,15 @@ public interface StitchingStrategy {
     default List<String> warnings() {
         return List.of();
     }
+
+    /**
+     * The order of the groups ({@link TileMapping#subdirName}) the last {@link #prepareStitching}
+     * call produced, when the input records one: Micro-Manager's channel order. Folder-based
+     * inputs record none.
+     *
+     * @return group names in acquisition order; empty when the input records no order
+     */
+    default List<String> groupOrder() {
+        return List.of();
+    }
 }
