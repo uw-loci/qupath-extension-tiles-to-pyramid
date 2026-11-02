@@ -21,7 +21,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.stream.Stream;
 import javafx.application.Platform;
 import javafx.geometry.Rectangle2D;
 import javafx.scene.Node;
@@ -48,6 +47,7 @@ import qupath.ext.basicstitching.registration.RegistrationMode;
 import qupath.ext.basicstitching.registration.RegistrationReference;
 import qupath.ext.basicstitching.registration.RegistrationSettings;
 import qupath.ext.basicstitching.registration.TileRegistrationSolution;
+import qupath.ext.basicstitching.stitching.FileScanner;
 import qupath.ext.basicstitching.stitching.FlatfieldProfile;
 import qupath.ext.basicstitching.stitching.FolderDiagnosis;
 import qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy;
@@ -231,7 +231,13 @@ public class StitchingGUI {
             double downsample = parseDoubleField(downsampleField.getText(), 1.0);
             String matchingString = matchStringField.getText();
             String stitchingType = stitchingGridBox.getValue();
+            // A MicroManager sidecar records the z-step; with none, 0 leaves the output's z spacing
+            // unset rather than claiming a value nobody measured.
             double zSpacingMicrons = 1.0;
+            if (stitchingType != null && stitchingType.startsWith("MicroManager")) {
+                Double step = MicroManagerMetadataStrategy.detectZStepUm(new File(folderPath.trim()));
+                zSpacingMicrons = step != null ? step : 0.0;
+            }
 
             QPPreferences.setFolderLocationSaved(folderPath);
             QPPreferences.setStitchingMethodSaved(stitchingType);
@@ -345,7 +351,8 @@ public class StitchingGUI {
             MicroManagerPreprocessor.Options preprocess = averageFrames || maxProject || applyFlatfield
                     ? new MicroManagerPreprocessor.Options(averageFrames, flatfield, maxProject)
                     : null;
-            runInBackground(config, mergeOffered && mergeChannelsCheckbox.isSelected(), preprocess, invertX, invertY);
+            boolean merge = mergeOffered && mergeChannelsCheckbox.isSelected();
+            runInBackground(config, merge, merge ? countChannelFolders() : 0, preprocess, invertX, invertY);
 
         } catch (Exception e) {
             logger.error("Error processing dialog result", e);
@@ -357,6 +364,7 @@ public class StitchingGUI {
      * Run the stitch (and the optional channel merge) off the FX thread so QuPath stays responsive,
      * reporting the outcome in a dialog when it finishes.
      *
+     * @param expectedChannels channel stitches the dialog said it would merge; 0 when not merging
      * @param preprocess reduce each MicroManager position (average time points, then max-project
      *     z-slices) into a copy first, and stitch the copy; null for neither
      * @param invertX negate stage X before placing MicroManager tiles
@@ -365,6 +373,7 @@ public class StitchingGUI {
     private static void runInBackground(
             StitchingConfig requested,
             boolean mergeChannels,
+            int expectedChannels,
             MicroManagerPreprocessor.Options preprocess,
             boolean invertX,
             boolean invertY) {
@@ -406,11 +415,16 @@ public class StitchingGUI {
                             message.append(reduced).append("\n\n");
                         }
                         List<String> outputs = result.outputs();
+                        // Tiles the strategy left out or read only in part change what was
+                        // stitched; the log alone is where nobody looks.
+                        for (String w : result.warnings()) {
+                            message.append("WARNING: ").append(w).append("\n\n");
+                        }
                         if (outputs.isEmpty()) {
                             nothing[0] = true;
                             message.append(explainNoTiles(config));
                         } else {
-                            ok = true;
+                            ok = result.warnings().isEmpty();
                             // Geometry that cannot be right does not fail the stitch, so the
                             // result is demoted to a warning and the reason put at the top,
                             // where it is read before the list of files.
@@ -430,6 +444,12 @@ public class StitchingGUI {
                             if (!result.failedSubdirs().isEmpty()) {
                                 ok = false;
                                 message.append("\n\nFailed: ").append(result.failedSubdirs());
+                            }
+                            String shortfall = mergeShortfall(mergeChannels, expectedChannels, outputs.size());
+                            if (shortfall != null) {
+                                ok = false;
+                                logger.warn(shortfall);
+                                message.append("\n\nWARNING: ").append(shortfall);
                             }
                             if (mergeChannels && outputs.size() >= 2) {
                                 // A size or pixel-type mismatch throws from ChannelMergeImageServer; catch
@@ -473,6 +493,28 @@ public class StitchingGUI {
                 "tiles-to-pyramid-stitch");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    /**
+     * What to tell the user when a merge was asked for and the stitch did not produce one output per
+     * channel.
+     *
+     * @param mergeChannels whether the merge was asked for
+     * @param expectedChannels channels the dialog offered to merge
+     * @param outputs stitched outputs
+     * @return the message, or null when there is nothing to say
+     */
+    static String mergeShortfall(boolean mergeChannels, int expectedChannels, int outputs) {
+        if (!mergeChannels || outputs >= expectedChannels) {
+            return null;
+        }
+        if (outputs < 2) {
+            return "Channels not merged: the acquisition has " + expectedChannels
+                    + " channels, but the stitch produced " + outputs + " image" + (outputs == 1 ? "" : "s")
+                    + ", so there was nothing to merge.";
+        }
+        return "Only " + outputs + " of the " + expectedChannels + " channels were stitched, so the merged image has "
+                + outputs + " channels.";
     }
 
     /**
@@ -650,16 +692,17 @@ public class StitchingGUI {
                         + "and z-slice is averaged over them (mean, rounded to the original bit\n"
                         + "depth) and written to a copy of the acquisition beside the original, in\n"
                         + "the same MicroManager layout. That copy is stitched.\n"
-                        + "When clear, nothing is averaged: an OME-TIFF per position stitches its\n"
-                        + "first time point, and a single-plane TIFF series stitches every time\n"
-                        + "point as its own tile, stacked at the same position."));
+                        + "When clear, nothing is averaged: each time point is stitched as a time\n"
+                        + "point of the output image (with max-intensity projection ticked, only the\n"
+                        + "first time point is used)."));
         maxProjectCheckbox.setSelected(QPPreferences.getMaxProjectZSaved());
         maxProjectCheckbox.setTooltip(
                 new Tooltip("Each position holds a z-stack. When ticked, each channel is reduced to\n"
                         + "the brightest value at every pixel over its z-slices (maximum intensity\n"
                         + "projection), after the time points are averaged if that is ticked too,\n"
                         + "and written to the copy that is stitched.\n"
-                        + "With time points present and averaging clear, the first time point is used."));
+                        + "With time points present and averaging clear, the first time point is used.\n"
+                        + "When clear, each z-slice is stitched as a z-slice of the output image."));
         flatfieldCheckbox.setSelected(QPPreferences.getApplyFlatfieldSaved());
         flatfieldCheckbox.setTooltip(new Tooltip("For a detector with no background image, such as a PMT. Each plane\n"
                 + "is corrected with a profile fitted from tiles in QP Scope, before any\n"
@@ -752,18 +795,20 @@ public class StitchingGUI {
         }
     }
 
-    private static File firstTiff(Path dir) throws IOException {
-        try (Stream<Path> files = Files.list(dir)) {
-            return files.filter(Files::isRegularFile)
-                    .filter(p -> {
-                        String n = p.getFileName().toString().toLowerCase(Locale.ROOT);
-                        return n.endsWith(".tif") || n.endsWith(".tiff");
-                    })
-                    .sorted()
-                    .findFirst()
-                    .map(Path::toFile)
-                    .orElse(null);
-        }
+    /**
+     * The first TIFF in a channel folder, looking two levels down as well: an acquisition that kept
+     * its z-slices and time points puts the tiles in {@code t000/z000/} sub-folders.
+     */
+    static File firstTiff(Path dir) {
+        return FileScanner.find(dir, 2, p -> {
+                    String n = p.getFileName().toString().toLowerCase(Locale.ROOT);
+                    return !n.contains(":") && (n.endsWith(".tif") || n.endsWith(".tiff"));
+                })
+                .stream()
+                .sorted(java.util.Comparator.comparingInt(Path::getNameCount).thenComparing(p -> p))
+                .findFirst()
+                .map(Path::toFile)
+                .orElse(null);
     }
 
     /**
