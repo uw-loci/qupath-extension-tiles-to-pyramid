@@ -273,4 +273,65 @@ class TileRegistrationStepTest {
             assertArrayEquals(new double[] {0, 0}, applied(before, after, i), 1e-9);
         }
     }
+
+    /**
+     * A Micro-Manager single-plane series writes every channel, z-slice and time point of a tile to
+     * its own file. Those files were captured at one stage position, so they are one tile to solve
+     * and must all move by that tile's correction, in every channel -- not be solved as extra tiles
+     * stacked on top of each other, or left at nominal because their names differ.
+     */
+    @Test
+    void planesInSeparateFilesShareTheirPositionsCorrection() throws IOException {
+        Path dir = Files.createDirectories(tempDir.resolve("Pos"));
+        SyntheticGridFixture.Grid g = SyntheticGridFixture.write(dir, 3, 3, TILE_W, TILE_H, OVERLAP, 3.0, 42);
+
+        List<TileMapping> before = new ArrayList<>();
+        String[] channels = {"DAPI", "FITC"};
+        for (int c = 0; c < channels.length; c++) {
+            for (int z = 0; z < 2; z++) {
+                for (TileNode t : g.nominal()) {
+                    Path plane = t.file()
+                            .toPath()
+                            .resolveSibling("c" + c + "_z" + z + "_" + t.file().getName());
+                    Files.copy(t.file().toPath(), plane);
+                    before.add(new TileMapping(
+                            plane.toFile(),
+                            ImageRegion.createInstance(
+                                    (int) Math.round(t.xPx()),
+                                    (int) Math.round(t.yPx()),
+                                    t.widthPx(),
+                                    t.heightPx(),
+                                    z,
+                                    0),
+                            channels[c]));
+                }
+            }
+        }
+
+        StitchingConfig config = config(tempDir);
+        config.setRegistrationMode(new RegistrationMode.Solve(
+                tempDir.resolve(TileRegistrationSolution.DEFAULT_FILENAME),
+                RegistrationSettings.defaults().withThreads(1),
+                new RegistrationReference.Single("DAPI")));
+        List<TileMapping> after = TileRegistrationStep.applyTo(before, config);
+
+        int tiles = g.nominal().size();
+        boolean anyMoved = false;
+        for (int i = 0; i < tiles; i++) {
+            double[] reference = applied(before, after, i);
+            anyMoved |= reference[0] != 0 || reference[1] != 0;
+            for (int plane = 1; plane < 4; plane++) {
+                assertArrayEquals(
+                        reference,
+                        applied(before, after, plane * tiles + i),
+                        1e-9,
+                        "plane " + plane + " of tile " + i + " must move with its position");
+            }
+        }
+        assertTrue(anyMoved, "the solve produced no corrections, so the check proves nothing");
+        List<String> solved = Files.readAllLines(tempDir.resolve(TileRegistrationSolution.DEFAULT_FILENAME)).stream()
+                .filter(l -> !l.startsWith("#") && !l.isBlank())
+                .toList();
+        assertEquals(tiles, solved.size(), "one solved tile per position: " + solved);
+    }
 }

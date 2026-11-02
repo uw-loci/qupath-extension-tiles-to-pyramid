@@ -357,14 +357,27 @@ public final class TileRegistrationStep {
      *
      * <p>Keyed by filename, so a tile that appears once per Z-slice or timepoint receives the same
      * correction on every plane -- which is right, since they were all captured at one stage
-     * position. Positions round to whole pixels because {@link ImageRegion} is integer-only; at
-     * sub-micron pixel sizes that is well under the stage error being corrected.
+     * position. A tile whose file has no correction of its own takes the one solved for its nominal
+     * stage position: a Micro-Manager single-plane series writes each channel, slice and time point
+     * to its own file, and those were captured at one position too. Positions round to whole pixels
+     * because {@link ImageRegion} is integer-only; at sub-micron pixel sizes that is well under the
+     * stage error being corrected.
      */
     private static List<TileMapping> applyDeltas(List<TileMapping> mappings, Map<String, double[]> deltas) {
+        Map<String, double[]> byPosition = new java.util.HashMap<>();
+        for (TileMapping m : mappings) {
+            double[] d = deltas.get(m.file.getName());
+            if (d != null) {
+                byPosition.putIfAbsent(positionKey(m.region), d);
+            }
+        }
         List<TileMapping> out = new ArrayList<>(mappings.size());
         int shifted = 0;
         for (TileMapping m : mappings) {
             double[] d = deltas.get(m.file.getName());
+            if (d == null) {
+                d = byPosition.get(positionKey(m.region));
+            }
             if (d == null || (d[0] == 0 && d[1] == 0)) {
                 out.add(m);
                 continue;
@@ -399,14 +412,37 @@ public final class TileRegistrationStep {
      * plane under {@code z*}/{@code t*} directories, and those are all the same stage position. The
      * grid must be solved once, not once per plane.
      */
+    /**
+     * One node per stage position. A tile seen once per z-slice or time point is still one tile to
+     * register, whether its planes share a file (MMStack, QPSC's t/z folders) or each have their own
+     * (Micro-Manager single-plane series); the first slice of the first time point stands for it.
+     */
     private static List<TileNode> toNodes(List<TileMapping> tiles) {
-        Map<String, TileNode> byName = new LinkedHashMap<>();
+        Map<String, TileMapping> byPosition = new LinkedHashMap<>();
+        java.util.Set<String> names = new java.util.HashSet<>();
         for (TileMapping m : tiles) {
-            ImageRegion r = m.region;
-            byName.computeIfAbsent(
-                    m.file.getName(),
-                    name -> new TileNode(name, m.file, r.getX(), r.getY(), r.getWidth(), r.getHeight()));
+            if (!names.add(m.file.getName())) {
+                continue;
+            }
+            String at = positionKey(m.region);
+            TileMapping have = byPosition.get(at);
+            if (have == null || planeOrder(m.region) < planeOrder(have.region)) {
+                byPosition.put(at, m);
+            }
         }
-        return new ArrayList<>(byName.values());
+        List<TileNode> out = new ArrayList<>(byPosition.size());
+        for (TileMapping m : byPosition.values()) {
+            ImageRegion r = m.region;
+            out.add(new TileNode(m.file.getName(), m.file, r.getX(), r.getY(), r.getWidth(), r.getHeight()));
+        }
+        return out;
+    }
+
+    private static String positionKey(ImageRegion r) {
+        return r.getX() + "," + r.getY();
+    }
+
+    private static long planeOrder(ImageRegion r) {
+        return ((long) r.getT() << 32) | r.getZ();
     }
 }
