@@ -118,13 +118,19 @@ class MicroManagerPreprocessorTest {
         writePosition(src, "Pos0", 0, 0.0, 0.0, 2, 3, 3, true);
         writePosition(src, "Pos1", 1, 4.0, 0.0, 2, 3, 3, true);
         assertEquals(new MicroManagerPreprocessor.Shape(3, 3), MicroManagerPreprocessor.shape(src.toFile()));
-        assertEquals(
-                1,
-                new MicroManagerMetadataStrategy()
-                        .prepareStitching(src.toString(), PIXEL_UM, 1.0, "").stream()
-                                .filter(m -> m.file.getName().contains("Pos0"))
-                                .count(),
-                "before: 18 pages are not 2 channels, so only page 0 is stitched");
+        // Unreduced, every page is placed by its own tag: 2 channels x 3 slices x 3 frames.
+        List<TileMapping> before = new MicroManagerMetadataStrategy()
+                .prepareStitching(src.toString(), PIXEL_UM, 1.0, "").stream()
+                        .filter(m -> m.file.getName().contains("Pos0"))
+                        .toList();
+        assertEquals(18, before.size(), "before: all 18 pages, not page 0 only");
+        assertEquals(9, before.stream().filter(m -> m.subdirName.equals("SHG")).count());
+        assertEquals(9, before.stream().filter(m -> m.subdirName.equals("TPEF")).count());
+        for (TileMapping m : before) {
+            // Pages run channel fastest, then slice, then frame.
+            int c = m.subdirName.equals("SHG") ? 0 : 1;
+            assertEquals(c + 2 * m.region.getZ() + 6 * m.region.getT(), m.ifdIndex, "page of " + m.region);
+        }
 
         Path out = MicroManagerPreprocessor.defaultOutput(src, BOTH);
         assertEquals(tmp.resolve("shg_averaged_mip"), out);

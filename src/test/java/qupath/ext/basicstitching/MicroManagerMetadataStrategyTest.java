@@ -439,10 +439,10 @@ class MicroManagerMetadataStrategyTest {
     }
 
     /**
-     * The split only happens when pages and channels agree exactly. A z-stack or time
-     * series interleaves those axes into the same pages, and guessing the order would
-     * mis-assign planes -- so the strategy reads page 0 and says so, rather than
-     * producing a confidently wrong mosaic.
+     * With no tag on the pages and a sidecar that lists only the first frame, the pages are read as
+     * channels only when there is one per channel. Here there are not, and guessing the order would
+     * mis-assign planes -- so the strategy reads page 0 (always the first channel, slice and time
+     * point) and reports it for the result dialog, rather than producing a confidently wrong mosaic.
      */
     @Test
     void pageCountDisagreeingWithChannelCountFallsBackToOnePage(@TempDir Path tmp) throws IOException {
@@ -455,10 +455,39 @@ class MicroManagerMetadataStrategyTest {
                 0,
                 List.of("DAPI", "FITC", "TRITC"));
 
-        List<TileMapping> mappings = new MicroManagerMetadataStrategy().prepareStitching(tmp.toString(), 1.0, 1.0, "");
+        MicroManagerMetadataStrategy strategy = new MicroManagerMetadataStrategy();
+        List<TileMapping> mappings = strategy.prepareStitching(tmp.toString(), 1.0, 1.0, "");
 
         assertEquals(1, mappings.size(), "ambiguous page layout must not be split");
         assertEquals(0, mappings.get(0).ifdIndex);
+        assertEquals("DAPI", mappings.get(0).subdirName, "page 0 is the first channel");
+        assertEquals(1, strategy.warnings().size(), "the fallback is reported, not only logged");
+    }
+
+    /**
+     * A position labeled {@code Tile_1} beside one labeled {@code Tile} looks like a file Micro-Manager
+     * continued past 4 GB; it is a position of its own when the acquisition lists it as one.
+     */
+    @Test
+    void aPositionNamedLikeAContinuationIsStillAPosition(@TempDir Path tmp) throws IOException {
+        List<String> labels = List.of("Tile", "Tile_1");
+        List<double[]> xy = List.of(new double[] {0, 0}, new double[] {8, 0});
+        for (int i = 0; i < 2; i++) {
+            String file = "acq_MMStack_" + labels.get(i) + ".ome.tif";
+            writeTile(tmp.resolve(file));
+            writeSidecar(
+                    tmp.resolve("acq_MMStack_" + labels.get(i) + "_metadata.txt"),
+                    file,
+                    xy.get(i)[0],
+                    xy.get(i)[1],
+                    labels,
+                    xy);
+        }
+        List<TileMapping> mappings =
+                new MicroManagerMetadataStrategy().prepareStitching(tmp.toString(), PIXEL_SIZE_UM, DOWNSAMPLE, "");
+        assertEquals(2, mappings.size(), "both positions are tiles");
+        assertEquals(
+                16, findByName(mappings, "acq_MMStack_Tile_1.ome.tif").region.getX());
     }
 
     /** A single-channel acquisition keeps stitching into one output named after the folder. */

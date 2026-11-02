@@ -9,4 +9,14 @@ import java.util.List;
 public interface StitchingStrategy {
     List<TileMapping> prepareStitching(
             String folderPath, double pixelSizeInMicrons, double baseDownsample, String matchingString);
+
+    /**
+     * Problems the last {@link #prepareStitching} call found that change what gets stitched (tiles
+     * left out, planes read only in part), in words for the person who started the stitch.
+     *
+     * @return the problems; empty when there were none
+     */
+    default List<String> warnings() {
+        return List.of();
+    }
 }

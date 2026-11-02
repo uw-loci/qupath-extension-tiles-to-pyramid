@@ -94,12 +94,19 @@ public class StitchingWorkflow {
      * legacy {@link #run(StitchingConfig)} which only returns the last
      * successful path. {@code outputs} preserves insertion order; it is
      * never null but may be empty when the entire workflow failed.
+     * {@code warnings} are the strategy's {@link StitchingStrategy#warnings()}: tiles it left out
+     * or read only in part, which a caller should show to the user.
      */
     public record StitchingResult(
-            List<String> outputs, int successCount, int failureCount, List<String> failedSubdirs) {
+            List<String> outputs,
+            int successCount,
+            int failureCount,
+            List<String> failedSubdirs,
+            List<String> warnings) {
         public StitchingResult {
             outputs = List.copyOf(outputs);
             failedSubdirs = List.copyOf(failedSubdirs);
+            warnings = List.copyOf(warnings);
         }
 
         /** True if at least one subdirectory was stitched successfully. */
@@ -114,7 +121,12 @@ public class StitchingWorkflow {
 
         /** An empty result (no outputs, no failures), used for early-exit paths. */
         public static StitchingResult empty() {
-            return new StitchingResult(Collections.emptyList(), 0, 0, Collections.emptyList());
+            return withWarnings(List.of());
+        }
+
+        /** A result with no outputs and no failures that still reports the strategy's warnings. */
+        static StitchingResult withWarnings(List<String> warnings) {
+            return new StitchingResult(Collections.emptyList(), 0, 0, Collections.emptyList(), warnings);
         }
     }
 
@@ -169,9 +181,10 @@ public class StitchingWorkflow {
             List<TileMapping> allMappings = strategy.prepareStitching(
                     config.folderPath, config.pixelSizeInMicrons, config.baseDownsample, config.matchingString);
 
+            List<String> warnings = strategy.warnings();
             if (allMappings == null || allMappings.isEmpty()) {
                 logger.error("No tile mappings produced by strategy");
-                return StitchingResult.empty();
+                return StitchingResult.withWarnings(warnings);
             }
             logger.info("Total tile mappings created: {}", allMappings.size());
 
@@ -222,7 +235,7 @@ public class StitchingWorkflow {
                         logger.info("Successfully wrote: {}", written);
                         StitchInfoFile.write(
                                 java.nio.file.Path.of(written),
-                                stitchRecord(config, strategy, subdirName, subdirMappings, written));
+                                stitchRecord(config, strategy, subdirName, subdirMappings, written, warnings));
                         outputs.add(written);
                         successCount++;
                     } else {
@@ -259,7 +272,7 @@ public class StitchingWorkflow {
                 logger.warn("Failed subdirectories: {}", failedSubdirs);
             }
 
-            return new StitchingResult(outputs, successCount, failureCount, failedSubdirs);
+            return new StitchingResult(outputs, successCount, failureCount, failedSubdirs, warnings);
 
         } catch (Exception e) {
             logger.error("Critical exception in StitchingWorkflow", e);
@@ -328,7 +341,8 @@ public class StitchingWorkflow {
             StitchingStrategy strategy,
             String subdirName,
             List<TileMapping> tiles,
-            String written) {
+            String written,
+            List<String> warnings) {
         Map<String, String> image = new java.util.LinkedHashMap<>();
         image.put("file", written);
         image.put("written", java.time.OffsetDateTime.now().withNano(0).toString());
@@ -374,7 +388,9 @@ public class StitchingWorkflow {
                 config.pixelSizeInMicrons + (config.isManualPixelSizeOverride() ? " (manual override)" : ""));
         stitching.put("downsample", String.valueOf(config.baseDownsample));
         if (zs.size() > 1) {
-            stitching.put("z spacing (um)", String.valueOf(config.zSpacingMicrons));
+            stitching.put(
+                    "z spacing (um)",
+                    config.zSpacingMicrons > 0 ? String.valueOf(config.zSpacingMicrons) : "unknown (not written)");
         }
         stitching.put("stage axes negated (X, Y)", flipX + ", " + flipY);
         // Report the blend that was USED, not the one that was asked for. The old wording appended
@@ -412,7 +428,10 @@ public class StitchingWorkflow {
 
         List<StitchInfoFile.Section> sections = new ArrayList<>();
         sections.add(StitchInfoFile.Section.of("image", image));
-        sections.add(StitchInfoFile.Section.of("source tiles", source));
+        sections.add(new StitchInfoFile.Section(
+                "source tiles",
+                source,
+                warnings.stream().map(w -> "warning: " + w).toList()));
         if (config.getPreprocessingRecord() != null) {
             sections.add(config.getPreprocessingRecord());
         }
