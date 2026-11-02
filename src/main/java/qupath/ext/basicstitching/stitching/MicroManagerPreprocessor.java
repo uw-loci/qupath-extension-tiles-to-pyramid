@@ -4,12 +4,10 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import java.awt.image.DataBuffer;
 import java.awt.image.Raster;
 import java.io.File;
 import java.io.IOException;
-import java.io.Reader;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -27,8 +25,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
-import javax.imageio.plugins.tiff.TIFFDirectory;
-import javax.imageio.plugins.tiff.TIFFField;
 import javax.imageio.stream.ImageInputStream;
 import loci.formats.FormatException;
 import loci.formats.FormatTools;
@@ -50,25 +46,20 @@ import org.slf4j.LoggerFactory;
  *
  * <ul>
  *   <li><b>One OME-TIFF per position</b> ({@code <prefix>_MMStack_<label>.ome.tif} plus
- *       {@code _metadata.txt}). A page's channel, slice and frame come from the MicroManager tag
- *       (51123) on every page; when a file lacks it, the order of the {@code FrameKey-t-c-z}
- *       blocks in the sidecar is used, and a file matching neither is refused rather than
- *       guessed.</li>
+ *       {@code _metadata.txt}, and any {@code <label>_1.ome.tif} continuation).</li>
  *   <li><b>Single-plane TIFF series</b> (a folder per position holding
  *       {@code img_channelCCC_positionPPP_timeTTTTTTTTT_zZZZ.tif} files and a
- *       {@code metadata.txt}). Channel, slice and frame come from the file name, or from the
- *       file's {@code Metadata-} block. The copy keeps each plane's first-frame, first-slice file
- *       name.</li>
+ *       {@code metadata.txt}). The copy keeps each plane's first-frame, first-slice file name.</li>
  * </ul>
+ *
+ * <p>Which channel, slice and frame each page holds is read by {@link MicroManagerPlanes}, the
+ * same reading the stitch uses; a page whose plane cannot be established is refused, not guessed.
  *
  * <p>Averaging is the mean over frames; projection is the per-pixel maximum over slices of those
  * means. Values are rounded to the source bit depth only when written (float data stays float).
  */
 public final class MicroManagerPreprocessor {
     private static final Logger logger = LoggerFactory.getLogger(MicroManagerPreprocessor.class);
-
-    /** The tag MicroManager writes on every page, holding that image's metadata as JSON. */
-    static final int MM_METADATA_TAG = 51123;
 
     /** Written into the output folder; its presence is what allows a later run to overwrite it. */
     public static final String RECORD_FILENAME = "preprocessing.txt";
@@ -77,13 +68,9 @@ public final class MicroManagerPreprocessor {
     private static final String RECORD_FILENAME_0_7_9 = "frame_averaging.txt";
 
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static final Pattern FRAME_KEY = Pattern.compile("FrameKey-(\\d+)-(\\d+)-(\\d+)");
-    private static final Pattern SINGLE_PLANE =
-            Pattern.compile("img_channel(\\d+)_position\\d+_time(\\d+)_z(\\d+)\\.tiff?", Pattern.CASE_INSENSITIVE);
+    private static final Pattern FRAME_KEY = MicroManagerPlanes.FRAME_KEY;
     /** Root files MicroManager writes beside the position folders, copied so the copy matches. */
     private static final List<String> ROOT_EXTRAS = List.of("comments.txt", "DisplaySettings.json");
-    /** A continuation file MicroManager starts past 4 GB: {@code <label>_1.ome.tif}. */
-    private static final Pattern CONTINUATION = Pattern.compile("^(.*)_(\\d+)$");
 
     private MicroManagerPreprocessor() {}
 
@@ -173,9 +160,11 @@ public final class MicroManagerPreprocessor {
                 } else {
                     continue;
                 }
-                JsonObject summary = summaryOf(readJson(sidecar));
+                JsonObject summary = summaryOf(MicroManagerPlanes.readJson(sidecar));
                 if (summary != null) {
-                    return new Shape(intOr(summary, "Frames", 1), intOr(summary, "Slices", 1));
+                    return new Shape(
+                            MicroManagerPlanes.intOr(summary, "Frames", 1),
+                            MicroManagerPlanes.intOr(summary, "Slices", 1));
                 }
             }
         } catch (IOException | RuntimeException e) {
@@ -237,14 +226,16 @@ public final class MicroManagerPreprocessor {
             String label = entry.getKey();
             List<Path> files = entry.getValue();
             Path first = files.get(0);
-            String stem = stemOf(first.getFileName().toString());
+            String stem = MicroManagerPlanes.stemOf(first.getFileName().toString());
             Path sidecarIn = first.resolveSibling(stem + "_metadata.txt");
-            JsonObject sidecar = Files.isRegularFile(sidecarIn) ? readJson(sidecarIn) : null;
+            JsonObject sidecar = Files.isRegularFile(sidecarIn) ? MicroManagerPlanes.readJson(sidecarIn) : null;
             if (sidecar == null) {
                 notes.add(label + ": no sidecar " + sidecarIn.getFileName() + "; stage position from other sidecars");
             }
 
-            Planes planes = reduce(files, sidecar, null, options, label, notes);
+            List<MicroManagerPlanes.Plane> pagePlanes = MicroManagerPlanes.stackPlanes(
+                    files, () -> sidecar, MicroManagerPlanes.Dims.of(summaryOf(sidecar)));
+            Planes planes = reduce(pagePlanes, false, options, label, notes);
             frames.put(label, planes.framesInSource);
             slices.put(label, planes.slicesInSource);
 
@@ -324,23 +315,19 @@ public final class MicroManagerPreprocessor {
         }
     }
 
-    /** Page coordinates (channel, slice, frame). */
-    private record Coord(int c, int z, int t) {}
-
     /**
      * Average (or take the first frame), correct the shading, then project if asked, noting missing
      * planes. The correction must come before the projection: a sum would otherwise take the offset
      * off once for many planes, and averaging is unaffected either way.
      */
     private static Planes reduce(
-            List<Path> files,
-            JsonObject sidecar,
-            Map<Path, Coord> fileCoords,
+            List<MicroManagerPlanes.Plane> planes,
+            boolean singlePlane,
             Options options,
             String label,
             List<String> notes)
             throws IOException {
-        Planes p = combineFrames(files, sidecar, fileCoords, options.averageFrames());
+        Planes p = combineFrames(planes, singlePlane, options.averageFrames());
         if (p.missing > 0) {
             notes.add(label + ": " + p.missing + " of " + p.frames * p.planeCount()
                     + " planes absent; those planes averaged over the frames present");
@@ -363,14 +350,15 @@ public final class MicroManagerPreprocessor {
     /**
      * Mean over frames for every (channel, slice); with {@code averageFrames} false, frame 0 only.
      *
-     * @param files the position's files, in the order MicroManager wrote them
-     * @param sidecar the position's sidecar, for the frame-key fallback; may be null
-     * @param fileCoords single-plane files' coordinates, or null to read them from each page
+     * @param planes the position's planes, in the order MicroManager wrote them
+     * @param singlePlane each file is a single-plane TIFF series file and must hold one page
      */
     private static Planes combineFrames(
-            List<Path> files, JsonObject sidecar, Map<Path, Coord> fileCoords, boolean averageFrames)
-            throws IOException {
-        List<Coord> sidecarOrder = sidecar == null ? List.of() : frameKeyOrder(sidecar);
+            List<MicroManagerPlanes.Plane> planes, boolean singlePlane, boolean averageFrames) throws IOException {
+        Map<Path, List<MicroManagerPlanes.Plane>> byFile = new LinkedHashMap<>();
+        for (MicroManagerPlanes.Plane plane : planes) {
+            byFile.computeIfAbsent(plane.file(), k -> new ArrayList<>()).add(plane);
+        }
 
         Map<Long, double[]> sums = new TreeMap<>();
         Map<Long, Integer> counts = new TreeMap<>();
@@ -378,32 +366,24 @@ public final class MicroManagerPreprocessor {
         Planes p = new Planes();
         p.pixelType = -1;
 
-        int pageIndex = 0;
-        for (Path file : files) {
+        for (var entry : byFile.entrySet()) {
+            Path file = entry.getKey();
             try (ImageInputStream in = ImageIO.createImageInputStream(file.toFile())) {
                 ImageReader reader = tiffReader(in, file);
                 try {
                     reader.setInput(in, false, false);
                     int pages = reader.getNumImages(true);
-                    for (int i = 0; i < pages; i++, pageIndex++) {
-                        if (fileCoords != null && pages > 1) {
-                            throw new IOException(file.getFileName() + " has " + pages
-                                    + " pages; a single-plane TIFF series file holds one");
-                        }
-                        Coord coord = fileCoords != null ? fileCoords.get(file) : tagCoord(reader, i);
-                        if (coord == null) {
-                            // No tag: the sidecar's frame keys are in the order the pages were written.
-                            if (pageIndex >= sidecarOrder.size()) {
-                                throw new IOException("Cannot tell which channel, slice and frame page " + i
-                                        + " of " + file.getFileName() + " holds: it carries no MicroManager tag"
-                                        + " and the sidecar lists only " + sidecarOrder.size() + " frame key(s)");
-                            }
-                            coord = sidecarOrder.get(pageIndex);
-                        }
-                        maxC = Math.max(maxC, coord.c);
-                        maxZ = Math.max(maxZ, coord.z);
-                        maxT = Math.max(maxT, coord.t);
-                        if (!averageFrames && coord.t > 0) {
+                    if (singlePlane && pages > 1) {
+                        throw new IOException(file.getFileName() + " has " + pages
+                                + " pages; a single-plane TIFF series file holds one");
+                    }
+                    for (MicroManagerPlanes.Plane plane : entry.getValue()) {
+                        MicroManagerPlanes.Coord coord = plane.coord();
+                        int i = plane.page();
+                        maxC = Math.max(maxC, coord.c());
+                        maxZ = Math.max(maxZ, coord.z());
+                        maxT = Math.max(maxT, coord.t());
+                        if (!averageFrames && coord.t() > 0) {
                             continue;
                         }
                         Raster r = reader.read(i).getRaster();
@@ -419,7 +399,7 @@ public final class MicroManagerPreprocessor {
                             throw new IOException(file.getFileName() + " page " + i + " is " + r.getWidth() + " x "
                                     + r.getHeight() + ", not " + p.width + " x " + p.height);
                         }
-                        long key = ((long) coord.z << 32) | coord.c;
+                        long key = ((long) coord.z() << 32) | coord.c();
                         double[] sum = sums.computeIfAbsent(key, k -> new double[p.width * p.height]);
                         accumulate(r, sum);
                         counts.merge(key, 1, Integer::sum);
@@ -443,7 +423,8 @@ public final class MicroManagerPreprocessor {
                 int n = counts.getOrDefault(key, 0);
                 if (sum == null || n == 0) {
                     throw new IOException("Channel " + c + ", slice " + z + " has no "
-                            + (averageFrames ? "frames" : "first frame") + " in " + files.get(0));
+                            + (averageFrames ? "frames" : "first frame") + " in "
+                            + planes.get(0).file());
                 }
                 p.missing += p.frames - n;
                 for (int k = 0; k < sum.length; k++) sum[k] /= n;
@@ -492,35 +473,6 @@ public final class MicroManagerPreprocessor {
         var readers = ImageIO.getImageReaders(in);
         if (!readers.hasNext()) throw new IOException("No TIFF reader for " + file);
         return readers.next();
-    }
-
-    /** Channel, slice and frame from the page's MicroManager tag, or null when it has none. */
-    private static Coord tagCoord(ImageReader reader, int page) {
-        try {
-            TIFFDirectory dir = TIFFDirectory.createFromMetadata(reader.getImageMetadata(page));
-            TIFFField field = dir.getTIFFField(MM_METADATA_TAG);
-            if (field == null) return null;
-            JsonObject json = JsonParser.parseString(field.getAsString(0)).getAsJsonObject();
-            if (!json.has("ChannelIndex") || !json.has("FrameIndex")) return null;
-            return new Coord(
-                    intOr(json, "ChannelIndex", 0), intOr(json, "SliceIndex", 0), intOr(json, "FrameIndex", 0));
-        } catch (Exception e) {
-            logger.debug("No MicroManager tag on page {}: {}", page, e.toString());
-            return null;
-        }
-    }
-
-    /** The sidecar's {@code FrameKey-t-c-z} blocks in file order, which is the order pages were written. */
-    private static List<Coord> frameKeyOrder(JsonObject sidecar) {
-        List<Coord> out = new ArrayList<>();
-        for (String key : sidecar.keySet()) {
-            Matcher m = FRAME_KEY.matcher(key);
-            if (m.matches()) {
-                out.add(new Coord(
-                        Integer.parseInt(m.group(2)), Integer.parseInt(m.group(3)), Integer.parseInt(m.group(1))));
-            }
-        }
-        return out;
     }
 
     private static int pixelType(int dataType, Path file) throws IOException {
@@ -573,7 +525,7 @@ public final class MicroManagerPreprocessor {
         MetadataTools.populateMetadata(
                 meta,
                 0,
-                stemOf(path.getFileName().toString()),
+                MicroManagerPlanes.stemOf(path.getFileName().toString()),
                 true,
                 DimensionOrder.XYCZT.getValue(),
                 FormatTools.getPixelTypeString(p.pixelType),
@@ -688,34 +640,39 @@ public final class MicroManagerPreprocessor {
     private static Planes singlePlanePosition(Path dir, Path outDir, Path src, Options options, List<String> notes)
             throws IOException {
         String label = dir.getFileName().toString();
-        JsonObject sidecar = readJson(dir.resolve("metadata.txt"));
+        JsonObject sidecar = MicroManagerPlanes.readJson(dir.resolve("metadata.txt"));
         if (sidecar == null) {
             throw new IOException("Empty metadata.txt in " + dir);
         }
-        Map<Path, Coord> coords = new LinkedHashMap<>();
+        Map<Path, MicroManagerPlanes.Coord> coords = new LinkedHashMap<>();
         Map<Long, Path> earliest = new TreeMap<>();
         try (var s = Files.list(dir)) {
             for (Path f : (Iterable<Path>) s.sorted()::iterator) {
                 String name = f.getFileName().toString();
                 String lower = name.toLowerCase(Locale.ROOT);
                 if (name.contains(":") || !(lower.endsWith(".tif") || lower.endsWith(".tiff"))) continue;
-                Coord c = singlePlaneCoord(name, sidecar.get("Metadata-" + label + "/" + name));
+                MicroManagerPlanes.Coord c = MicroManagerPlanes.singlePlaneCoord(
+                        name,
+                        sidecar.get("Metadata-" + label + "/" + name),
+                        sidecar.get("Coords-" + label + "/" + name));
                 if (c == null) {
                     throw new IOException("Cannot tell which channel, slice and frame " + label + "/" + name
                             + " holds: its name is not img_channelCCC_positionPPP_timeTTTTTTTTT_zZZZ.tif"
-                            + " and metadata.txt has no Metadata- block for it");
+                            + " and metadata.txt has no Metadata- or Coords- block for it");
                 }
                 coords.put(f, c);
-                long key = ((long) c.z << 32) | c.c;
+                long key = ((long) c.z() << 32) | c.c();
                 Path have = earliest.get(key);
-                if (have == null || c.t < coords.get(have).t) earliest.put(key, f);
+                if (have == null || c.t() < coords.get(have).t()) earliest.put(key, f);
             }
         }
         if (coords.isEmpty()) {
             notes.add(label + ": no TIFF files; skipped");
             return null;
         }
-        Planes planes = reduce(new ArrayList<>(coords.keySet()), null, coords, options, label, notes);
+        List<MicroManagerPlanes.Plane> filePlanes = new ArrayList<>();
+        coords.forEach((f, c) -> filePlanes.add(new MicroManagerPlanes.Plane(f, 0, c)));
+        Planes planes = reduce(filePlanes, true, options, label, notes);
 
         Files.createDirectories(outDir);
         List<String> names = channelNames(sidecar);
@@ -744,21 +701,6 @@ public final class MicroManagerPreprocessor {
                 StandardCharsets.UTF_8);
         logReduced(label, planes, options);
         return planes;
-    }
-
-    /** Channel, slice and frame from a single-plane file's name, else from its Metadata- block. */
-    private static Coord singlePlaneCoord(String name, JsonElement block) {
-        Matcher m = SINGLE_PLANE.matcher(name);
-        if (m.matches()) {
-            return new Coord(Integer.parseInt(m.group(1)), Integer.parseInt(m.group(3)), Integer.parseInt(m.group(2)));
-        }
-        if (block != null && block.isJsonObject()) {
-            JsonObject b = block.getAsJsonObject();
-            if (b.has("ChannelIndex") && b.has("FrameIndex")) {
-                return new Coord(intOr(b, "ChannelIndex", 0), intOr(b, "SliceIndex", 0), intOr(b, "FrameIndex", 0));
-            }
-        }
-        return null;
     }
 
     /**
@@ -856,33 +798,32 @@ public final class MicroManagerPreprocessor {
         }
     }
 
-    /** {@code _MMStack_} files grouped by position, continuation files after the first. */
+    /** {@code _MMStack_} files grouped by position label, continuation files after the first. */
     private static Map<String, List<Path>> positionFiles(Path src) throws IOException {
-        Map<String, List<Path>> out = new TreeMap<>();
+        List<Path> tiffs = new ArrayList<>();
         try (var s = Files.list(src)) {
             for (Path p : (Iterable<Path>) s.sorted()::iterator) {
                 String name = p.getFileName().toString();
                 String lower = name.toLowerCase(Locale.ROOT);
-                if (name.contains(":") || !(lower.endsWith(".tif") || lower.endsWith(".tiff"))) continue;
-                String label = MicroManagerMetadataStrategy.extractMMStackLabel(name);
-                if (label == null) continue;
-                Matcher m = CONTINUATION.matcher(label);
-                if (m.matches() && Files.isRegularFile(p.resolveSibling(name.replace("_" + m.group(2) + ".", ".")))) {
-                    label = m.group(1);
-                }
-                out.computeIfAbsent(label, k -> new ArrayList<>()).add(p);
+                if (!name.contains(":") && (lower.endsWith(".tif") || lower.endsWith(".tiff"))) tiffs.add(p);
             }
         }
-        return out;
-    }
-
-    /** File name without {@code .ome.tif} / {@code .tif}. */
-    private static String stemOf(String name) {
-        String lower = name.toLowerCase(Locale.ROOT);
-        for (String ext : List.of(".ome.tiff", ".ome.tif", ".tiff", ".tif")) {
-            if (lower.endsWith(ext)) return name.substring(0, name.length() - ext.length());
+        Set<String> labels = Set.of();
+        for (Path p : tiffs) {
+            String stem = MicroManagerPlanes.stemOf(p.getFileName().toString());
+            Path sidecar = p.resolveSibling(stem + "_metadata.txt");
+            if (stem.contains("_MMStack_") && Files.isRegularFile(sidecar)) {
+                labels = MicroManagerPlanes.positionLabels(summaryOf(MicroManagerPlanes.readJson(sidecar)));
+                break;
+            }
         }
-        return name;
+        Map<String, List<Path>> out = new TreeMap<>();
+        MicroManagerPlanes.stackFilesByPosition(tiffs, labels)
+                .forEach((first, files) -> out.put(
+                        MicroManagerMetadataStrategy.extractMMStackLabel(
+                                first.getFileName().toString()),
+                        files));
+        return out;
     }
 
     private static JsonObject firstFrameBlock(JsonObject sidecar) {
@@ -895,28 +836,10 @@ public final class MicroManagerPreprocessor {
         return null;
     }
 
-    private static JsonObject readJson(Path p) throws IOException {
-        try (Reader r = Files.newBufferedReader(p, StandardCharsets.UTF_8)) {
-            JsonElement e = JsonParser.parseReader(r);
-            return e != null && e.isJsonObject() ? e.getAsJsonObject() : null;
-        } catch (RuntimeException e) {
-            throw new IOException("Cannot parse " + p.getFileName() + ": " + e.getMessage(), e);
-        }
-    }
-
     private static JsonObject summaryOf(JsonObject root) {
         if (root == null) return null;
         JsonElement s = root.get("Summary");
         return s != null && s.isJsonObject() ? s.getAsJsonObject() : null;
-    }
-
-    private static int intOr(JsonObject o, String key, int fallback) {
-        try {
-            JsonElement e = o.get(key);
-            return e == null || e.isJsonNull() ? fallback : e.getAsInt();
-        } catch (RuntimeException ex) {
-            return fallback;
-        }
     }
 
     private static Double doubleOr(JsonObject o, String key) {
