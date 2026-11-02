@@ -30,9 +30,10 @@ machine.
   each -- one per channel, or one per polarization angle.
 - **Channels:** single-channel folders can be merged into one multichannel image; RGB tiles stay
   RGB.
-- **Z-stacks and time series:** only from separate files per plane, and only with the
-  TileConfiguration.txt method. A MicroManager time series per position (e.g. SHG frames) can be
-  averaged before stitching. See [Z-stacks and time series](#z-stacks-and-time-series).
+- **Z-stacks and time series:** from separate files per plane with the TileConfiguration.txt
+  method, or from a MicroManager acquisition in either of its layouts. A MicroManager time series
+  per position (e.g. SHG frames) can be averaged, and a z-stack max-projected, before stitching.
+  See [Z-stacks and time series](#z-stacks-and-time-series).
 - **Closing seams:** optional content-based registration measures where tiles really overlap and
   corrects their positions. See [Tile registration](#tile-registration).
 
@@ -215,20 +216,21 @@ dialog -- the strategy detects it. Detail on each:
 **Flat MMStack** (one OME-TIFF + sidecar per position, all in one folder):
 - Reads tile positions from `*_metadata.txt` JSON sidecar files
 - Uses authoritative per-tile stage coordinates (`FrameKey-0-0-0.XPositionUm` / `YPositionUm`)
-- Each OME-TIFF carries every position as a separate series; the pages of each file are its CHANNELS
+- Each OME-TIFF carries every position as a separate series; the pages of each file are that position's planes (every channel, z-slice and time point), each placed by the MicroManager tag on the page
+- A position larger than 4 GB continues into `<prefix>_MMStack_<pos>_1.ome.tif`; its planes join that position, it is not a tile of its own
 - Example filenames: `acq_MMStack_Pos-0_000.ome.tif` and `acq_MMStack_Pos-0_000_metadata.txt`
 
 **Single-plane TIFF series** (`SINGLEPLANE_TIFF_SERIES`; one subfolder per position):
 - Each position is its own subfolder (e.g. `Pos-1-000_000/`) containing a single-image TIFF (`img_channelNNN_positionNNN_..._zNNN.tif`) and a `metadata.txt`
 - Reads per-tile stage coordinates from the `Metadata-<relative/path/to.tif>` block (the JSON key encodes the file name)
-- Each TIFF is a genuine single-image file
+- Each TIFF is a genuine single-image file; its channel, z-slice and time point come from its name, or from its `Metadata-` or `Coords-` block when the name is not of that form
 
 Common to both:
 - Falls back to `Summary.StagePositions` labels if a per-tile block is missing or malformed
 - Auto-detects pixel size from the metadata's `PixelSizeUm`
-- **Channels:** A single-channel acquisition stitches into one output named after the folder. A multi-channel acquisition emits one tile per channel, each named after its channel (from `Summary.ChNames`), so the workflow's existing per-channel-folder stitching combines them with the channel merger. Splitting only happens when the file's page count equals the channel count; a z-stack or time series interleaves those axes into the same pages and reads the first page only, unless the time points are averaged and the z-slices projected first (see [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager)).
+- **Channels, z-slices and time points:** every plane is placed by its own channel, z-slice and time point. A single-channel acquisition stitches into one output named after the folder; a multi-channel acquisition into one output per channel, named from `Summary.ChNames`, which **Merge the N channel stitches** combines. Each output keeps every z-slice and time point it was given (z spacing from `Summary.z-step_um`), unless the time points are averaged or the z-slices projected first (see [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager)). For an MMStack page without the MicroManager tag, the plane comes from the order of the `FrameKey-t-c-z` entries in its sidecar, or, with one page per channel and no z or time, page `i` is channel `i`. When none of these says what a page holds, the position is read from its first page only (always the first channel, slice and time point), and a single-plane file is left out; either is reported as a **WARNING** at the top of the result window and in the `.stitch-info.txt` record.
 - **Time series and z-stacks per position:** when the acquisition has more than one frame or z-slice per position (either layout), the dialog offers **Average the N time points of each position before stitching** and **Max-intensity project the N z-slices of each position**. See [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager).
-- **Registration limit:** Seam measurement on MicroManager input is always performed on the first channel only, because all channels in a position come from the same file. The dialog's "Align-on" choice has no effect for MicroManager input. See [Tile registration](#tile-registration).
+- **Registration limit:** On MMStack input, seams are always measured on the first channel, because all channels of a position are pages of one file and registration reads its first page. On a single-plane series each channel has files of its own, and **Auto** picks among the channels. Either way the dialog's "Align-on" list names folders, not MicroManager channels, so choosing one has no effect; every channel, z-slice and time point of a position receives that position's correction. See [Tile registration](#tile-registration).
 - **Stage axes:** the sidecars record absolute stage coordinates, and whether a rising stage coordinate moves right and down in the camera image depends on how the stage is wired and the camera mounted. The strategy cannot infer that, so it assumes rising stage equals rising pixel. Where that is wrong, tick **Invert X axis** / **Invert Y axis** -- see [If the mosaic comes out mirrored](#if-the-mosaic-comes-out-mirrored).
 - No additional configuration files required
 
@@ -317,7 +319,7 @@ input_folder/             Method: Filename[x,y]; sub-folder text: slide
 | **Average the N time points of each position before stitching** | Shown only for the MicroManager method when the acquisition has more than one frame per position. Averages each position's frames into a copy beside the folder and stitches that. See [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager). Choice is remembered | On |
 | **Correct uneven brightness with a flat-field profile** | Shown only for the MicroManager method. For a detector with no background image, such as a PMT. Choose a profile folder fitted with **QP Scope > Utilities > Image Quality > Estimate Flat-Field from Tiles (BaSiC)...**, or with `python -m microscope_imageprocessing.correction.flatfield`. Each plane is corrected after averaging and before any z projection, as `(raw - offset) / flatfield + offset`, so the background keeps its value. The copy that is stitched gets `_ff` in its name, and the stitch record names the profile. A profile fits one detector, objective, zoom and channel; other channels are left alone, and a profile of a different size is refused. It evens out brightness but does not improve signal to noise. |
 | **Max-intensity project the N z-slices of each position** | Shown only for the MicroManager method when the acquisition has more than one z-slice per position. Takes the per-pixel maximum over each channel's slices, after averaging the time points when that is ticked too, into the same copy. Choice is remembered | On |
-| **Merge the N channel stitches into one multichannel image** | Shown only when 2+ matching sub-folders of single-channel (non-RGB) tiles will be stitched, or when a MicroManager acquisition has multiple channels. Combines the per-channel stitches into one multichannel `<folder>_merged` image; the per-channel images are kept. See [Merging channels in the dialog](#merging-channels-in-the-dialog). Choice is remembered | On |
+| **Merge the N channel stitches into one multichannel image** | Shown only when 2+ matching sub-folders of single-channel (non-RGB) tiles will be stitched, or when a MicroManager acquisition has multiple channels. Combines the per-channel stitches into one multichannel `<folder>_merged` image; the per-channel images are kept. When the stitch produces fewer images than N, the result window says so. See [Merging channels in the dialog](#merging-channels-in-the-dialog). Choice is remembered | On |
 | **Z-Spacing (um)** | Scripts only (`StitchingConfig`); the dialog always records 1.0 | 1.0 |
 | **Solve tile overlaps (content-based registration)** | Checkbox to enable overlap measurement and correction. When enabled, measures the real overlap between neighboring tiles and corrects their positions before stitching, closing seams caused by stage backlash and drift. Writes a `TileRegistration.txt` solution file beside the tiles. Choice is remembered between sessions. See [Tile registration](#tile-registration) for details. | Off (faster, nominal positions) |
 | **Reference subdirectory** | Shown when overlap solving is on: what the overlaps are measured on. **Auto (best match)**, a named sub-folder, or **Normalized merge of all** when there are two or more. Every sub-folder is then placed with that one result. See [Tile registration](#tile-registration) | Auto |
@@ -611,8 +613,8 @@ by a separate **channel-merge** step (`ChannelMerger`), which requires them to s
 height, and pixel type. In the stitch dialog it appears as a "Merge the N channel stitches..." checkbox
 when the selected folder holds two or more matching sub-folders of single-channel tiles (or when a
 MicroManager acquisition has multiple channels); it stays hidden for RGB tiles or a single tile folder.
-For MicroManager, channels are automatically split from the pages of each file and merged if more than
-one is found. The merged image is written as `<folder>_merged` beside the tiles; the per-channel images
+For MicroManager, each channel's planes are stitched to an image of their own, with its z-slices and
+time points, and the merge combines those. The merged image is written as `<folder>_merged` beside the tiles; the per-channel images
 that feed it are moved into `<folder>_channels/` (best-effort: a file that cannot be moved stays put),
 with channels named after the sub-folders (or after the channel names from `Summary.ChNames` for
 MicroManager). QPSC and scripts call `ChannelMerger` directly. Co-registration across the
@@ -636,9 +638,11 @@ Select `IF_run`, tick **Merge the 3 channel stitches into one multichannel image
 What to know before relying on the merged image:
 
 - **When the option appears.** Only when the folder and sub-folder text select two or more
-  sub-folders, and the first `.tif`/`.tiff` (by name) of the first sub-folder (by name) is not RGB.
-  "N" is the number of matching sub-folders; only that one tile is checked, so keep every matching
-  sub-folder single-channel, with the same tile size and pixel type.
+  sub-folders, and the first `.tif`/`.tiff` of the first sub-folder (by name) is not RGB. That tile
+  is looked for at the top of the sub-folder first, then up to two folder levels down, so channel
+  folders that keep their planes in `t{nn}/z{nn}/` count. "N" is the number of matching
+  sub-folders; only that one tile is checked, so keep every matching sub-folder single-channel,
+  with the same tile size and pixel type. For MicroManager, "N" is `Summary.Channels`.
 - **"RGB" means 3 or more bands at 8-bit** (or a packed RGB image type). 8-bit multichannel
   fluorescence tiles therefore count as RGB and hide the option; save one channel per file to use it.
 - **Channel order and names.** Channels are ordered by the per-channel output file name (plain text
@@ -656,7 +660,9 @@ What to know before relying on the merged image:
 - **Width, height and pixel type must match.** If they differ, no merged image is written; the
   per-channel images remain in the folder.
 - **Partial failures.** If one sub-folder fails to stitch, the rest are still merged, so the merged
-  image lacks that channel. Check the "Failed:" list in the result window before using it. Per-channel
+  image lacks that channel. Check the "Failed:" list in the result window before using it. When
+  the stitch produced fewer images than the N channels offered, the result window says how many,
+  and with fewer than two nothing is merged. Per-channel
   images that were successfully stitched before the failure are still moved to `<folder>_channels/`.
 - **With Solve tile overlaps.** All channels share one registration solve, applied by tile file
   name. Tiles must have the same file names in every channel folder; otherwise the non-reference
@@ -784,35 +790,38 @@ Using matching string "." will create three separate stitched images, one for ea
 </details>
 
 <details>
-<summary><b>Z-stacks and time series</b> -- preserved only from separate files per plane, with TileConfiguration.txt</summary>
+<summary><b>Z-stacks and time series</b> -- preserved from separate files per plane (TileConfiguration.txt) and from MicroManager acquisitions</summary>
 
 ## Z-stacks and time series
 
-Z-slices and timepoints are preserved **only when each plane is a separate tile file**, placed in
+Z-slices and timepoints are preserved in two cases: each plane a separate tile file, placed in
 `z{nn}/` (and optionally `t{nn}/`) subdirectories and stitched with the **TileConfiguration.txt**
-strategy. That path builds a genuine multi-plane pyramid: each `(z, t)` plane is composited from
-only the tiles at that plane, the Z-spacing is recorded, and both output formats declare the Z/T
-sizes. There is no maximum-intensity projection or flattening -- planes are written through as-is.
+strategy; or a **MicroManager** acquisition in either layout, whose planes are placed by the
+channel, z-slice and time point MicroManager recorded for each one. Either way the output is a
+genuine multi-plane pyramid: each `(z, t)` plane is composited from only the tiles at that plane,
+and both output formats declare the Z/T sizes. The Z-spacing recorded is 1 um for
+TileConfiguration.txt input (the dialog has no field for it) and `Summary.z-step_um` for
+MicroManager input (left unset when the sidecar has none). Planes are written through as-is; for
+MicroManager input, time points can be averaged and z-stacks max-projected first (below).
 
 | Input layout | Z | T |
 |---|---|---|
 | TileConfiguration.txt + `z{nn}/` directories | preserved | -- |
 | TileConfiguration.txt + `t{nn}/z{nn}/` directories | preserved | preserved |
 | TileConfiguration.txt, flat (no z/t directories) | 2D (z=0) | 2D (t=0) |
-| MicroManager, Filename[x,y], Vectra | 2D only | 2D only |
-| Z/T **inside** a multi-page file (e.g. an MMStack z-stack per position) | **collapsed** | **collapsed** |
+| MicroManager, MMStack (planes are pages of one file per position) | preserved | preserved |
+| MicroManager, single-plane TIFF series (one file per plane) | preserved | preserved |
+| Filename[x,y], Vectra | 2D only | 2D only |
+| Z/T **inside** a multi-page file stitched by TileConfiguration.txt | **collapsed** | **collapsed** |
 
 Two limits worth stating plainly:
 
-- **The MicroManager, Filename[x,y], and Vectra strategies are 2D only** -- they read the XY
-  position of each tile and place it at z=0, t=0.
-- **Z and T inside a multi-page file are not expanded.** Channels are: a MicroManager file whose
-  page count equals its channel count becomes one tile per channel. But an MMStack that stores a
-  z-stack or a time series in those pages is stitched as a single plane, read from page 0. When
-  the acquisition reports several channels and the page count disagrees, the log says so; a
-  single-channel z-stack is collapsed silently. To preserve those dimensions, export the
-  acquisition to the separate-file `z{nn}/` / `t{nn}/` layout and use the TileConfiguration.txt
-  strategy. A MicroManager time series or z-stack can instead be averaged and projected, below.
+- **The Filename[x,y] and Vectra strategies are 2D only** -- they read the XY position of each
+  tile and place it at z=0, t=0.
+- **Outside MicroManager, Z and T inside a multi-page file are not expanded**: the
+  TileConfiguration.txt strategy reads page 0. Export such data to the separate-file `z{nn}/` /
+  `t{nn}/` layout. For MicroManager, see *Channels, z-slices and time points* under the
+  MicroManager method for how each page's plane is found and what happens when it cannot be.
 
 Directory names must be a `z` or `t` followed by digits and nothing else -- `z0`, `z00` and `z000`
 all match, case-insensitively;
@@ -825,9 +834,8 @@ laser-scanning modalities often do, and for z-stacks to be flattened by maximum 
 projection. Both MicroManager layouts work: **separate image files per position**
 (`<prefix>_MMStack_<label>.ome.tif` plus `_metadata.txt`) and the **single-plane TIFF series** (a
 folder per position holding one `img_channelCCC_positionPPP_timeTTTTTTTTT_zZZZ.tif` per plane and a
-`metadata.txt`). Without this step, the first layout stitches page 0 of each file, and the second
-stitches every frame and slice as its own tile, stacked at the same stage position, with the last
-one winning.
+`metadata.txt`). Without this step, every channel, z-slice and time point is stitched as a plane
+of its own (see [Z-stacks and time series](#z-stacks-and-time-series)).
 
 When the selected folder's metadata reports more than one frame, the dialog shows **Average the N
 time points of each position before stitching**; more than one z-slice, **Max-intensity project the
@@ -851,10 +859,11 @@ this order:
 5. **Stitch:** that copy is stitched as usual. The output is named after it and written where the
    stitch would otherwise write; the `.stitch-info.txt` record has a *preprocessing* section.
 
-Which frame and slice a page belongs to is read from the MicroManager tag on every page, or, for a
-file without it, from the order of the `FrameKey-t-c-z` entries in its sidecar; in a single-plane
-series it is read from the file name, or the file's `Metadata-` block. A file matching none of these
-is refused rather than guessed. On a 500-position, 3-frame 16-bit SHG acquisition (512 x 512 tiles)
+Which channel, frame and slice a page belongs to is read the same way the stitch reads it: from the
+MicroManager tag on every page, or, for a file without it, from the order of the `FrameKey-t-c-z`
+entries in its sidecar (a `_1.ome.tif` continuation file carries on that order); in a single-plane
+series from the file name, or the file's `Metadata-` or `Coords-` block. A file matching none of
+these is refused rather than guessed. On a 500-position, 3-frame 16-bit SHG acquisition (512 x 512 tiles)
 averaging took about 2 minutes over a network-mounted drive, and every averaged plane matched an
 independent numpy mean exactly; projection is checked by unit tests on synthetic stacks, not yet on
 a real z-stack. Positions with different frame or slice counts are each reduced over their own and

@@ -33,7 +33,9 @@ MicroManager stage positions, so it only works on MicroManager datasets.
 Each open builds fresh controls (JavaFX nodes cannot be re-parented); values persist through
 `QPPreferences`. On **Stitch** it runs `StitchingWorkflow.runDetailed` on a background thread (one
 at a time), sets `RegistrationMode.Solve` when **Solve tile overlaps** is ticked, and, when the
-merge checkbox is shown and ticked, passes the outputs to `ChannelMerger.merge`. The outcome is
+merge checkbox is shown and ticked, passes the outputs to `ChannelMerger.merge` (and says so in
+the result when there were fewer outputs than the channels it offered to merge). The strategy's
+`warnings()` (tiles left out or read only in part) head the result. The outcome is
 reported in a "Tiles to Pyramid - Result" alert; titles differ because the Dialog Manager
 extension remembers window size per title.
 
@@ -53,7 +55,7 @@ Implementations:
 | `TileConfigurationTxtStrategy` | `TileConfiguration.txt` (stage microns); z/t from `z{zz}`/`t{tt}` directory names |
 | `FileNameStitchingStrategy` | coordinates embedded in the filename |
 | `VectraMetadataStrategy` | Vectra TIFF metadata |
-| `MicroManagerMetadataStrategy` | MicroManager sidecar JSON (`XPositionUm`/`YPositionUm`) |
+| `MicroManagerMetadataStrategy` | MicroManager sidecar JSON (`XPositionUm`/`YPositionUm`); each plane's channel, z and t from `MicroManagerPlanes` (page tag, sidecar frame keys, or single-plane file name) |
 
 The filename, TileConfiguration and Vectra strategies find their tile folders through
 `TileDirectories.resolve`: a blank matching string means the selected folder itself and nothing

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A multichannel MicroManager acquisition with z-slices or time points stitched to one channel.** Two causes, both in how the MicroManager method decided which plane each page or file holds. A **single-plane TIFF series** (a folder per position of `img_channelCCC_..._zZZZ.tif` files) never separated its channels: every channel's file, and without preprocessing every z-slice and time point too, was stitched into one image at the same positions, so each tile showed whichever file was drawn last -- on Windows, the last channel. Averaging and projection did not help, because the copy they write is single-plane too. An **OME-TIFF per position** (`_MMStack_`) with more pages than channels (no preprocessing, or averaging without projection on a z-stack) stitched only page 0. In both cases the merge was then skipped without a word. Present since 0.5.0 (single-plane series) and 0.7.4 (MMStack channels). Every plane is now placed by the channel, z-slice and time point MicroManager recorded for it: the MicroManager tag on each page, else the order of the sidecar's `FrameKey-t-c-z` entries, else (one page per channel and no z or time) page `i` as channel `i`; for a single-plane file, its name or its `Metadata-`/`Coords-` block. Each channel stitches to its own image, with every z-slice and time point it has, and the merge combines them, so C x Z x T in either layout now comes out C x Z x T (or C x 1 x 1 with averaging and projection). Checked by unit tests on synthetic Micro-Manager 2.0.3-shaped data, 3 channels x {2D, Z, T, Z+T} x {no preprocessing, average, project, both} in both layouts, every plane and pyramid level of the merged image; 21 of those 32 cases failed before the fix. 2D acquisitions that stitched correctly before stitch to the same image (same tile mappings and same pixels at every level, checked against 0.8.1).
+- **A MicroManager position continued past 4 GB** (`<label>_1.ome.tif`) is no longer read as a tile of its own: its planes join that position, continuing its page order.
+- **Registration on a single-plane TIFF series** solved every z-slice and time point file as a tile of its own, stacked on the others, and left other channels' files at their nominal positions. Each stage position is now one tile to solve, and every plane of it, in every channel, receives its correction.
+
+### Changed
+- **Nothing the MicroManager method leaves out is log-only any more.** When a page's plane cannot be established, the position is read from its first page (always the first channel, slice and time point) and a single-plane file is left out; either is now a **WARNING** at the top of the result window and a line in the `.stitch-info.txt` record, and the result is shown as a warning.
+- **A merge that cannot be done is reported.** With **Merge the N channel stitches** ticked, the result window says when the stitch produced fewer images than N channels, instead of skipping the merge silently.
+- **The merge is offered for channel folders that keep their z-slices and time points** in `t{nn}/z{nn}/` sub-folders (the check for RGB looked only at the top of the first channel folder, found no tile, and hid the option).
+- **MicroManager z-stacks carry the acquisition's z-step** (`Summary.z-step_um`) as their z spacing; with no step recorded the spacing is left unset rather than written as 1 um.
+
 ## [0.8.1] - 2026-10-31
 
 ### Added
