@@ -933,6 +933,37 @@ averaging wrote), and refuses one that holds anything else. RGB frames are not s
 - **SSD Storage**: Use SSD drives for input/output to improve I/O performance
 - **Network Storage**: Avoid network drives for temporary processing
 
+### Disk space while writing an OME-TIFF
+For an 8- or 16-bit image that is not RGB, the zoomed-out pyramid levels are made from a staged,
+uncompressed copy of the level before, kept in a hidden folder `.t2p-level-staging-<id>` beside the
+output while it is written. Full resolution is composited once; without the copy every zoomed-out
+level composited the mosaic again and cost about as much as full resolution. The folder is deleted
+when the write ends, whether it succeeds, fails or is stopped; one left by a crash or a killed
+QuPath is deleted by the next stitch into the same folder (it holds a `lock` file and is safe to
+delete by hand when no stitch is running).
+
+Before writing, the free space on the output's drive is checked against
+
+`staged levels + output + 512 MiB`, where
+
+- *staged levels* = the largest `S(L) + S(L+1)` over the levels, with
+  `S(L) = planes x floor(W / 2^L) x floor(H / 2^L) x bytes per sample` for each zoomed-out level
+  `L >= 1` (0 for full resolution, and for a level a merged source file already holds). For a
+  stitch this is `S(1) + S(2)`, about 0.31 x the uncompressed full-resolution plane set; planes =
+  channels x z-slices x time points;
+- *output* = the uncompressed size of the whole pyramid (about 1.33 x full resolution), a ceiling
+  for the compressed file;
+- other stitches running at the same time on the same drive count with what they need.
+
+Example: a 101,864 x 87,085 px 16-bit channel stages at most 5.5 GB (4.4 GB + 1.1 GB) and the check
+asks for about 29.7 GB free (5.5 + 23.7 + 0.5); four such channels stitched at once ask for about 119 GB.
+
+With less free space than that the image is still written, the old way (each zoomed-out level from
+full resolution through QuPath's tile cache, the same pixels, several times slower), and a
+**WARNING** says so in the log, at the top of the result window and in the `.stitch-info.txt`
+record. RGB images always take that path; OME-ZARR already makes each level from the written level
+before and needs no staging.
+
 ### Tile size recommendations
 - **Small Tiles** (< 2048px): Fast processing, more metadata overhead
 - **Large Tiles** (> 8192px): Slower processing, less overhead
@@ -982,6 +1013,11 @@ QuPath has closed the image. On the LC-PolScope test data a 31,623 x 14,951 reta
 - **Cause**: TileConfiguration.txt references files not present in directory
 - **Solution**: Ensure all referenced files exist and names match exactly
 - **Check**: Case sensitivity on Linux/macOS systems
+
+#### "Not enough free disk space beside the output to stage the pyramid levels"
+- **Cause**: The output's drive has less free space than the staged levels, the output and a 512 MiB margin need (see *Disk space while writing an OME-TIFF* under Performance and memory)
+- **Effect**: The image is written anyway, with the same pixels; only its zoomed-out levels take longer
+- **Solution**: Free space on that drive, write to a larger drive, or stitch fewer channels at once
 
 #### More sub-folders stitched than intended
 - **Cause**: The sub-folder text selects every sub-folder whose name *contains* it, and each match produces its own output
