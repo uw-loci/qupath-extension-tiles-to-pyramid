@@ -452,7 +452,7 @@ public final class TileRegistrationStep {
     /**
      * The plane registration measures at every position: the middle z-slice of the first time
      * point the stitch holds, the same for every channel and position. The middle slice of a stack
-     * set around focus is the sharpest; the first time point is the one every position has, even
+     * set around focus is usually the sharpest; the first time point is the one every position has, even
      * in an acquisition stopped early. A position without that plane uses its nearest slice of its
      * earliest time point.
      *

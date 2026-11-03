@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`<image stem>.mm-metadata.json` beside every MicroManager stitch** (each per-channel stitch and the merged image), re-adding the file QPSC's removed "Stitch MicroManager Folder" wrote: pretty-printed UTF-8 JSON with `source_folder`, `source_folder_name`, `stitched_output`, `pixel_size_um`, `pixel_size_affine`, `z_position_um`, `z_step_um`, `exposure_ms`, `bit_depth`, `pixel_type`, `tile_width`, `tile_height`, `channels`, `start_time`, `micro_manager_version`, `tile_count`, `grid_rows`, `grid_cols` and `comments_txt`, in that order, each left out when the metadata has no value. Read from the first position's sidecar (`Summary.StagePositions[0]`), not whichever one a folder listing gives first. `exposure_ms` is the channel's own exposure, or for a merged image an object keyed by channel name. The operator's user and computer names are not written. A stitched preprocessed copy names its source folder and adds `preprocessed_copy`. The `.stitch-info.txt` record names the file in an `[acquisition metadata]` section, and after a merge the per-channel files move into `<folder>_channels` with their images.
+
+### Fixed
+- **Merged MicroManager channels came out in alphabetical order.** The merge sorted the per-channel stitches by file name, so channels acquired as TRITC, DAPI, FITC became DAPI, FITC, TRITC. They now keep the acquisition's order (`Summary.ChNames`) and names. Channel folders (TileConfiguration.txt and the other folder methods) record no acquisition order and still merge alphabetically.
+- **Max-intensity projection without averaging kept only the first time point.** With **Max-intensity project** ticked and **Average** clear, every time point after the first was dropped, so C x Z x T came out C x 1 x 1. Each time point is now projected on its own and kept (C x 1 x T), in both MicroManager layouts. The same holds for flat-field correction without averaging. A time point the acquisition stopped part way through, and any after it, is left out and the stitch record says so.
+- **Registration on an OME-TIFF per position measured only its first page** (the first channel's first slice), so an empty first channel or an out-of-focus first slice gave nothing to measure, and on a single-plane series the channels could not be compared (Auto silently used the first). Every position is now measured on the same plane of the chosen channel in both layouts: the middle z-slice of the first time point in the stitch, which is named in `TileRegistration.txt`. Every plane of a position still receives that position's correction.
+
+### Changed
+- **Reference subdirectory lists the acquisition's channels for the MicroManager method**, so a channel can be chosen to register on; Auto compares them as it does sub-folders. It used to list nothing for MicroManager input.
+- **Registration on `t{nn}/z{nn}/` channel folders measures the middle z-slice of the first time point** too, where it measured whichever slice the folder walk found first. 2D stitches are unchanged.
+
 ## [0.8.2] - 2026-11-02
 
 ### Fixed

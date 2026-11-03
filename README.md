@@ -228,9 +228,10 @@ dialog -- the strategy detects it. Detail on each:
 Common to both:
 - Falls back to `Summary.StagePositions` labels if a per-tile block is missing or malformed
 - Auto-detects pixel size from the metadata's `PixelSizeUm`
-- **Channels, z-slices and time points:** every plane is placed by its own channel, z-slice and time point. A single-channel acquisition stitches into one output named after the folder; a multi-channel acquisition into one output per channel, named from `Summary.ChNames`, which **Merge the N channel stitches** combines. Each output keeps every z-slice and time point it was given (z spacing from `Summary.z-step_um`), unless the time points are averaged or the z-slices projected first (see [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager)). For an MMStack page without the MicroManager tag, the plane comes from the order of the `FrameKey-t-c-z` entries in its sidecar, or, with one page per channel and no z or time, page `i` is channel `i`. When none of these says what a page holds, the position is read from its first page only (always the first channel, slice and time point), and a single-plane file is left out; either is reported as a **WARNING** at the top of the result window and in the `.stitch-info.txt` record.
+- **Channels, z-slices and time points:** every plane is placed by its own channel, z-slice and time point. A single-channel acquisition stitches into one output named after the folder; a multi-channel acquisition into one output per channel, named from `Summary.ChNames`, which **Merge the N channel stitches** combines in the acquisition's channel order. Each output keeps every z-slice and time point it was given (z spacing from `Summary.z-step_um`), unless the time points are averaged or the z-slices projected first (see [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager)). For an MMStack page without the MicroManager tag, the plane comes from the order of the `FrameKey-t-c-z` entries in its sidecar, or, with one page per channel and no z or time, page `i` is channel `i`. When none of these says what a page holds, the position is read from its first page only (always the first channel, slice and time point), and a single-plane file is left out; either is reported as a **WARNING** at the top of the result window and in the `.stitch-info.txt` record.
 - **Time series and z-stacks per position:** when the acquisition has more than one frame or z-slice per position (either layout), the dialog offers **Average the N time points of each position before stitching** and **Max-intensity project the N z-slices of each position**. See [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager).
-- **Registration limit:** On MMStack input, seams are always measured on the first channel, because all channels of a position are pages of one file and registration reads its first page. On a single-plane series each channel has files of its own, and **Auto** picks among the channels. Either way the dialog's "Align-on" list names folders, not MicroManager channels, so choosing one has no effect; every channel, z-slice and time point of a position receives that position's correction. See [Tile registration](#tile-registration).
+- **Registration:** each channel is a candidate to measure on, in both layouts: **Reference subdirectory** lists the acquisition's channels by name, and **Auto** picks among them. Every position is measured on the same plane of that channel, the middle z-slice of the first time point, and every channel, z-slice and time point of a position receives that position's correction. See [Which channel to measure on](#which-channel-to-measure-on).
+- **Acquisition metadata:** every output, and the merged image, gets a `<image stem>.mm-metadata.json` beside it with what Micro-Manager recorded about the acquisition (pixel size, exposure per channel, bit depth, start time, grid, `comments.txt`, ...). See [Micro-Manager acquisition metadata](#micro-manager-acquisition-metadata).
 - **Stage axes:** the sidecars record absolute stage coordinates, and whether a rising stage coordinate moves right and down in the camera image depends on how the stage is wired and the camera mounted. The strategy cannot infer that, so it assumes rising stage equals rising pixel. Where that is wrong, tick **Invert X axis** / **Invert Y axis** -- see [If the mosaic comes out mirrored](#if-the-mosaic-comes-out-mirrored).
 - No additional configuration files required
 
@@ -322,7 +323,7 @@ input_folder/             Method: Filename[x,y]; sub-folder text: slide
 | **Merge the N channel stitches into one multichannel image** | Shown only when 2+ matching sub-folders of single-channel (non-RGB) tiles will be stitched, or when a MicroManager acquisition has multiple channels. Combines the per-channel stitches into one multichannel `<folder>_merged` image; the per-channel images are kept. When the stitch produces fewer images than N, the result window says so. See [Merging channels in the dialog](#merging-channels-in-the-dialog). Choice is remembered | On |
 | **Z-Spacing (um)** | Scripts only (`StitchingConfig`); the dialog records 1.0, or for MicroManager input the acquisition's `Summary.z-step_um` (left unset when there is none). See [Z-stacks and time series](#z-stacks-and-time-series) | 1.0 |
 | **Solve tile overlaps (content-based registration)** | Checkbox to enable overlap measurement and correction. When enabled, measures the real overlap between neighboring tiles and corrects their positions before stitching, closing seams caused by stage backlash and drift. Writes a `TileRegistration.txt` solution file beside the tiles. Choice is remembered between sessions. See [Tile registration](#tile-registration) for details. | Off (faster, nominal positions) |
-| **Reference subdirectory** | Shown when overlap solving is on: what the overlaps are measured on. **Auto (best match)**, a named sub-folder, or **Normalized merge of all** when there are two or more. Every sub-folder is then placed with that one result. See [Tile registration](#tile-registration) | Auto |
+| **Reference subdirectory** | Shown when overlap solving is on: what the overlaps are measured on. **Auto (best match)**, a named sub-folder (for MicroManager, a channel), or **Normalized merge of all** when there are two or more. Every sub-folder is then placed with that one result. See [Tile registration](#tile-registration) | Auto |
 
 ### Result window and warnings
 
@@ -509,6 +510,18 @@ is shared by both tiles of a seam, so it cancels.
   `TileRegistration.txt`.
 - **Channels stored in one file** (multi-band tiles) are still averaged band by band with equal,
   unscaled weights. Normalization applies only across subdirectories.
+- **Z-slices and time points:** every position is measured on one plane, the same for every channel
+  and position: the middle z-slice of the first time point in the stitch (for 4 slices, the second;
+  a position without that plane uses its nearest slice of its earliest time point). The middle of
+  a stack set around focus is usually its sharpest slice, and the first time point is the one every
+  position has, even when an acquisition was stopped early. This holds for a MicroManager
+  OME-TIFF per position (the plane's page), a single-plane series (the plane's file) and
+  `t{nn}/z{nn}/` channel folders alike. The solution file's header says which plane was measured
+  (`measured plane: z-slice 2 (middle of 5) of time point 0 (first of 3)`).
+- **MicroManager channels** are candidates like sub-folders: **Reference subdirectory** lists them
+  by the names their stitches take, Auto compares them, and a channel whose first plane is empty no
+  longer stops the solve. (Up to 0.8.2 an OME-TIFF per position was always measured on its first
+  page, the first channel's first slice.)
 
 The solution file is also durable -- a re-stitch can reuse a solve rather than repeat it, and it
 can be read when a mosaic looks wrong. It records the pixel size, downsample, flip flags and tile
@@ -645,9 +658,11 @@ What to know before relying on the merged image:
   with the same tile size and pixel type. For MicroManager, "N" is `Summary.Channels`.
 - **"RGB" means 3 or more bands at 8-bit** (or a packed RGB image type). 8-bit multichannel
   fluorescence tiles therefore count as RGB and hide the option; save one channel per file to use it.
-- **Channel order and names.** Channels are ordered by the per-channel output file name (plain text
-  order, case-sensitive, so `ch10` sorts before `ch2`; zero-pad numbers) and named after the file
-  stem. Writer suffixes (`_<n>x_downsample` for downsampling, and `_<n>` for uniqueness when a file
+- **Channel order and names.** MicroManager channels keep the acquisition's order
+  (`Summary.ChNames`): channels acquired as TRITC, DAPI, FITC merge as TRITC, DAPI, FITC. Channel
+  folders record no acquisition order, so their channels are ordered by the per-channel output file
+  name (plain text order, case-sensitive, so `ch10` sorts before `ch2`; zero-pad numbers). Either
+  way each channel is named after its output's file stem. Writer suffixes (`_<n>x_downsample` for downsampling, and `_<n>` for uniqueness when a file
   is re-run into a folder that already holds the outputs) are automatically stripped from the merged
   channel names.
 - **Channel colors are assigned automatically.** Named channels (`DAPI`, `HOECHST`, `FITC`, `GFP`,
@@ -707,7 +722,33 @@ bounds/                   (the folder you selected)
 
 ### Stitch record
 
-Every stitched image gets a plain-text `<image stem>.stitch-info.txt` beside it. It records the source tiles, the stitch settings (method, pixel size, downsample, stage-axis negation, blending, format, compression), what registration did, including the solution file's header, and the software versions. A merged multichannel image's record lists its per-channel inputs and includes each one's record. The file is ASCII `[section]` headings followed by `key: value` lines, so a host application such as QPSC can append its own sections.
+Every stitched image gets a plain-text `<image stem>.stitch-info.txt` beside it. It records the source tiles, the stitch settings (method, pixel size, downsample, stage-axis negation, blending, format, compression), what registration did, including the solution file's header, and the software versions. A merged multichannel image's record lists its per-channel inputs and includes each one's record. The file is ASCII `[section]` headings followed by `key: value` lines, so a host application such as QPSC can append its own sections. For MicroManager input an `[acquisition metadata]` section names the image's `.mm-metadata.json`.
+
+### Micro-Manager acquisition metadata
+
+A MicroManager stitch writes `<image stem>.mm-metadata.json` beside every image it writes: each
+per-channel stitch and the merged image (after a merge the per-channel files move into
+`<folder>_channels` with their images). It holds what Micro-Manager recorded that the image file
+cannot carry, as pretty-printed UTF-8 JSON in this key order; a key is left out when the metadata
+has no value for it.
+
+| Key | From |
+|---|---|
+| `source_folder`, `source_folder_name` | the acquisition folder (for a preprocessed copy, the folder it was made from) |
+| `preprocessed_copy` | only when a preprocessed copy was stitched: that copy's folder |
+| `stitched_output` | the image's file name |
+| `pixel_size_um`, `pixel_size_affine`, `z_position_um`, `bit_depth` | the first channel's plane at the first time point and slice (`PixelSizeUm`, `PixelSizeAffine`, `ZPositionUm`, `BitDepth`) |
+| `z_step_um`, `pixel_type`, `tile_width`, `tile_height`, `start_time`, `micro_manager_version` | `Summary` (`z-step_um`, `PixelType`, `Width`, `Height`, `StartTime`, `MicroManagerVersion`) |
+| `exposure_ms` | `Exposure-ms` of each channel's first plane: a number for an image of one channel, an object keyed by channel name for a merged image |
+| `channels` | the image's channels, from `Summary.ChNames` |
+| `tile_count`, `grid_rows`, `grid_cols` | `Summary.StagePositions`: entries, and the largest `GridRow` / `GridCol` plus one |
+| `comments_txt` | the acquisition folder's `comments.txt` |
+
+Everything is read from the sidecar of the acquisition's first position (`Summary.StagePositions[0]`,
+or the first sidecar by path when that cannot be found), so it does not depend on the order a
+folder is listed in. The operator's user name and computer name, which `Summary` also holds, are
+not written. This replaces the file QPSC's "Stitch MicroManager Folder" wrote before it was
+removed.
 
 </details>
 
@@ -843,17 +884,20 @@ N z-slices of each position**. Both are on by default and remembered. When eithe
 this order:
 
 1. **Average:** each channel and z-slice of each position is averaged over its frames. Sums are
-   kept in double precision, so bright or saturated frames cannot overflow. With averaging clear
-   and projection ticked, the first time point is used instead.
+   kept in double precision, so bright or saturated frames cannot overflow. With averaging clear,
+   every time point is kept and the steps below are applied to each one on its own, so a C x Z x T
+   acquisition projects to C x 1 x T. A time point the acquisition stopped part way through (a
+   channel or slice missing) is left out, with any after it, and the record says so.
 2. **Project:** each channel's z-slices are reduced to their per-pixel maximum.
 3. **Round:** values are rounded to the original bit depth only when written (8- or 16-bit stay 8-
    or 16-bit, clamped to the type's range; 32-bit float stays float).
 4. **Write:** the result goes to a copy beside the acquisition folder, named `<folder>_averaged`,
    `<folder>_mip` or `<folder>_averaged_mip` after what was done, in the same MicroManager layout:
    one `_MMStack_<label>.ome.tif` per position with one page per channel (and slice, when not
-   projected), or (single-plane series) one folder per position holding one file per channel (and
-   slice), named as its `time000000000` / `z000` file. Each position's `_metadata.txt` /
-   `metadata.txt` has `Summary.Frames` 1 (and `Slices` 1 when projected) and keeps the stage
+   projected, and time point, when not averaged), or (single-plane series) one folder per position
+   holding one file per written plane, named as its source file (the `time000000000` file when
+   averaged, the `z000` file when projected). Each position's `_metadata.txt` / `metadata.txt` has
+   `Summary.Frames` 1 when averaged (and `Slices` 1 when projected) and keeps the stage
    coordinates and pixel size. `Summary.Preprocessing` and `preprocessing.txt` record the source,
    the method, and the frame and slice counts. The originals are not changed.
 5. **Stitch:** that copy is stitched as usual. The output is named after it and written where the

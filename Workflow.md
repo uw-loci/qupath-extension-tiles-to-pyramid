@@ -41,12 +41,19 @@ extension remembers window size per title.
 
 ## 3. StitchingStrategy (tile positions)
 
-`stitching/StitchingStrategy.java` has one method:
+`stitching/StitchingStrategy.java`:
 
 ```java
 List<TileMapping> prepareStitching(String folderPath, double pixelSizeInMicrons,
                                    double baseDownsample, String matchingString);
+default List<String> warnings();          // tiles left out or read in part, for the result window
+default List<String> groupOrder();        // acquisition order of the groups; MicroManager: ChNames
+default Path writeOutputMetadata(Path output, String group);  // MicroManager: .mm-metadata.json
 ```
+
+`StitchingWorkflow` stitches the groups in `groupOrder()` when it is not empty (and says so in
+`StitchingResult.acquisitionOrder()`), and calls `writeOutputMetadata` beside each output before
+writing its stitch record, which names the file.
 
 Implementations:
 
@@ -100,7 +107,11 @@ So the grid is solved once and every sibling reuses that result.
   subdirectories and keeps the best (`rescueWeakEdges`).
 
 The engine reads overlap bands through the `RegistrationChannel` list on the `RegistrationRequest`,
-not through `TileNode.file`. `StitchingWorkflow.solveRegistration(config, subdirs)` runs the solve
+not through `TileNode.file`. A `RegistrationChannel` maps each grid tile's file name to that
+channel's `TileNode` (file and page), matched by file name, else by nominal position (a
+Micro-Manager single-plane series names each channel's files apart). `TileRegistrationStep` builds
+one node per stage position, read on one plane for every channel and position: the middle z-slice
+of the first time point in the stitch (`MeasuredPlane`). `StitchingWorkflow.solveRegistration(config, subdirs)` runs the solve
 alone, with every named subdirectory in view, for callers that stitch subdirectories one at a time. The solution file is
 also durable: a re-stitch can reuse a solve instead of repeating it, and it can be inspected when a
 mosaic looks wrong.
@@ -168,8 +179,9 @@ holds a global semaphore around OME-TIFF writes.
 
 `ChannelMerger.merge` combines separately-stitched single-channel outputs into one multichannel
 image via `ChannelMergeImageServer`. The stitch dialog calls it after the stitch when its "Merge the
-N channel stitches..." box is ticked (`StitchingGUI.mergeChannelOutputs`: outputs sorted by path,
-channels named by file stem, no colors passed, written as `<folder>_merged` with the dialog's
+N channel stitches..." box is ticked (`StitchingGUI.mergeChannelOutputs`: outputs in acquisition
+order when `StitchingResult.acquisitionOrder()` (MicroManager), otherwise sorted by path; channels
+named by file stem, no colors passed, written as `<folder>_merged` with the dialog's
 compression and format). QPSC and scripts call it directly. Validation lives in
 `ChannelMergeImageServer.validateSourceCompatibility`: width, height and pixel type must match
 (otherwise it throws), and a level-count mismatch only warns.
