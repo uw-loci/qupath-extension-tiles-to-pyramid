@@ -163,6 +163,7 @@ public class DirectTileStitcher {
                 // CompositorImageServer's references to the tile reader pool
                 // and the spatial index.
                 String written;
+                List<String> writeWarnings = new java.util.ArrayList<>();
                 try {
                     written = PyramidImageWriter.write(
                             server,
@@ -171,7 +172,8 @@ public class DirectTileStitcher {
                             config.compressionType,
                             config.baseDownsample,
                             StitchingConfig.OutputFormat.OME_TIFF,
-                            progressCallback);
+                            progressCallback,
+                            writeWarnings::add);
                 } finally {
                     try {
                         server.close();
@@ -183,6 +185,7 @@ public class DirectTileStitcher {
 
                 long elapsed = System.currentTimeMillis() - t0;
                 if (written != null) {
+                    config.setOutputWarnings(written, writeWarnings);
                     logger.info(
                             "Direct stitching (OME-TIFF) complete in {}s: {}",
                             String.format("%.1f", elapsed / 1000.0),

@@ -133,12 +133,13 @@ public class ChannelMerger {
                     outputFilename,
                     merged.nChannels());
 
+            List<String> warnings = new ArrayList<>();
             String outPath = PyramidImageWriter.write(
-                    merged, outputDirectory, outputFilename, compression, 1.0, outputFormat, null);
+                    merged, outputDirectory, outputFilename, compression, 1.0, outputFormat, null, warnings::add);
 
             if (outPath != null) {
                 logger.info("ChannelMerger: merge succeeded -> {}", outPath);
-                writeMergeRecord(Paths.get(outPath), inputPaths, channelNames, compression, outputFormat);
+                writeMergeRecord(Paths.get(outPath), inputPaths, channelNames, compression, outputFormat, warnings);
             } else {
                 logger.error("ChannelMerger: PyramidImageWriter returned null -- merge failed");
             }
@@ -165,7 +166,8 @@ public class ChannelMerger {
             List<String> inputPaths,
             List<String> channelNames,
             String compression,
-            StitchingConfig.OutputFormat outputFormat) {
+            StitchingConfig.OutputFormat outputFormat,
+            List<String> warnings) {
         java.util.Map<String, String> image = new java.util.LinkedHashMap<>();
         image.put("file", merged.toString());
         image.put("written", java.time.OffsetDateTime.now().withNano(0).toString());
@@ -179,7 +181,10 @@ public class ChannelMerger {
         merge.put("compression", compression);
         List<qupath.ext.basicstitching.workflow.StitchInfoFile.Section> sections = new ArrayList<>();
         sections.add(qupath.ext.basicstitching.workflow.StitchInfoFile.Section.of("image", image));
-        sections.add(qupath.ext.basicstitching.workflow.StitchInfoFile.Section.of("channel merge", merge));
+        sections.add(new qupath.ext.basicstitching.workflow.StitchInfoFile.Section(
+                "channel merge",
+                merge,
+                warnings.stream().map(w -> "warning: " + w).toList()));
         for (int i = 0; i < inputPaths.size(); i++) {
             List<String> lines = qupath.ext.basicstitching.workflow.StitchInfoFile.read(Paths.get(inputPaths.get(i)));
             if (!lines.isEmpty()) {

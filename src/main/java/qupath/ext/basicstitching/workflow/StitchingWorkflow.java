@@ -94,8 +94,9 @@ public class StitchingWorkflow {
      * legacy {@link #run(StitchingConfig)} which only returns the last
      * successful path. {@code outputs} preserves insertion order; it is
      * never null but may be empty when the entire workflow failed.
-     * {@code warnings} are the strategy's {@link StitchingStrategy#warnings()}: tiles it left out
-     * or read only in part, which a caller should show to the user. {@code acquisitionOrder} is
+     * {@code warnings} are the strategy's {@link StitchingStrategy#warnings()} (tiles it left out
+     * or read only in part) followed by what writing each output reported, prefixed with its
+     * subdirectory; a caller should show them to the user. {@code acquisitionOrder} is
      * true when {@code outputs} follow the order the input recorded for its groups
      * ({@link StitchingStrategy#groupOrder()}, Micro-Manager's channel order); otherwise their
      * order means nothing.
@@ -211,6 +212,7 @@ public class StitchingWorkflow {
             // 4. Process each subdirectory group separately
             List<String> outputs = new ArrayList<>();
             List<String> failedSubdirs = new ArrayList<>();
+            List<String> resultWarnings = new ArrayList<>(warnings);
             int successCount = 0;
             int failureCount = 0;
 
@@ -248,6 +250,9 @@ public class StitchingWorkflow {
                                 stitchRecord(
                                         config, strategy, subdirName, subdirMappings, written, warnings, metadata));
                         outputs.add(written);
+                        for (String w : config.getOutputWarnings(written)) {
+                            resultWarnings.add(subdirName + ": " + w);
+                        }
                         successCount++;
                     } else {
                         logger.error("Stitching failed for subdirectory: {}", subdirName);
@@ -284,7 +289,7 @@ public class StitchingWorkflow {
             }
 
             return new StitchingResult(
-                    outputs, successCount, failureCount, failedSubdirs, warnings, !groupOrder.isEmpty());
+                    outputs, successCount, failureCount, failedSubdirs, resultWarnings, !groupOrder.isEmpty());
 
         } catch (Exception e) {
             logger.error("Critical exception in StitchingWorkflow", e);
@@ -467,7 +472,12 @@ public class StitchingWorkflow {
         if (config.getPreprocessingRecord() != null) {
             sections.add(config.getPreprocessingRecord());
         }
-        sections.add(StitchInfoFile.Section.of("stitching", stitching));
+        sections.add(new StitchInfoFile.Section(
+                "stitching",
+                stitching,
+                config.getOutputWarnings(written).stream()
+                        .map(w -> "warning: " + w)
+                        .toList()));
         if (acquisitionMetadata != null) {
             sections.add(acquisitionMetadataSection(acquisitionMetadata));
         }

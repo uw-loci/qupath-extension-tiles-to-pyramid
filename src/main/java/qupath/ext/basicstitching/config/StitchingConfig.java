@@ -96,6 +96,28 @@ public class StitchingConfig {
         this.geometryWarning = warning;
     }
 
+    /** What writing each output reported to the user, by output path, in the order written. */
+    private final java.util.Map<String, java.util.List<String>> outputWarnings =
+            java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<>());
+
+    /**
+     * @param output path of a written output
+     * @param warnings what writing it reported (for example that its pyramid levels could not be
+     *     staged); empty clears the entry
+     */
+    public void setOutputWarnings(String output, java.util.List<String> warnings) {
+        if (warnings == null || warnings.isEmpty()) {
+            outputWarnings.remove(output);
+        } else {
+            outputWarnings.put(output, java.util.List.copyOf(warnings));
+        }
+    }
+
+    /** @return what writing {@code output} reported; empty if nothing. */
+    public java.util.List<String> getOutputWarnings(String output) {
+        return outputWarnings.getOrDefault(output, java.util.List.of());
+    }
+
     public qupath.ext.basicstitching.workflow.StitchInfoFile.Section getRegistrationRecord() {
         return registrationRecord;
     }

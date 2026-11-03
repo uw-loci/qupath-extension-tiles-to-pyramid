@@ -86,10 +86,30 @@ public class PyramidImageWriter {
             double baseDownsample,
             StitchingConfig.OutputFormat outputFormat,
             Consumer<Double> progressCallback) {
+        return write(
+                server, outputPath, filename, compressionType, baseDownsample, outputFormat, progressCallback, null);
+    }
+
+    /**
+     * As {@link #write(ImageServer, String, String, String, double, StitchingConfig.OutputFormat, Consumer)},
+     * reporting what the user should be told about how the file was written (for an OME-TIFF:
+     * that its pyramid levels could not be staged, see {@link DirectTiffOutputWriter}).
+     *
+     * @param warnings receives each warning (also logged); may be null
+     */
+    public static String write(
+            ImageServer<BufferedImage> server,
+            String outputPath,
+            String filename,
+            String compressionType,
+            double baseDownsample,
+            StitchingConfig.OutputFormat outputFormat,
+            Consumer<Double> progressCallback,
+            Consumer<String> warnings) {
         if (outputFormat.stitchAsZarr()) {
             return writeOMEZARR(server, outputPath, filename, compressionType, baseDownsample, progressCallback);
         } else if (outputFormat == StitchingConfig.OutputFormat.OME_TIFF) {
-            return writeOMETIFF(server, outputPath, filename, compressionType, baseDownsample);
+            return writeOMETIFF(server, outputPath, filename, compressionType, baseDownsample, warnings);
         } else {
             logger.error("Unsupported output format: {}", outputFormat);
             return null;
@@ -140,7 +160,8 @@ public class PyramidImageWriter {
             String outputPath,
             String filename,
             String compressionType,
-            double baseDownsample) {
+            double baseDownsample,
+            Consumer<String> warnings) {
         // Write straight to the final unique path -- NO temp file, NO rename.
         // The previous temp -> final rename was the source of the Windows
         // "being used by another process" failures (an external handle holder
@@ -154,7 +175,7 @@ public class PyramidImageWriter {
 
         try {
             OMEPyramidWriter.CompressionType comp = UtilityFunctions.getCompressionType(compressionType);
-            DirectTiffOutputWriter.write(server, finalOutput, comp, 512, baseDownsample, null);
+            DirectTiffOutputWriter.write(server, finalOutput, comp, 512, baseDownsample, null, warnings);
             return finalOutput;
         } catch (Exception e) {
             logger.error("Failed to write pyramid OME-TIFF", e);
