@@ -3,6 +3,8 @@ package qupath.ext.basicstitching.assembly.direct;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Consumer;
 import loci.formats.FormatException;
 import loci.formats.ImageWriter;
@@ -59,8 +61,9 @@ import qupath.lib.regions.RegionRequest;
  * (fresh, non-colliding) output path, which the caller deletes.
  *
  * <p>The pixel data is read from the supplied server through
- * {@link NoDataPyramidServer} (non-RGB) or {@link ImageServers#pyramidalizeTiled} (RGB),
- * so downsampled levels are generated in bounded, tiled reads. The Bio-Formats writer still performs a single
+ * {@link NoDataPyramidServer} (non-RGB; one per source image for a {@link ChannelStack}) or
+ * {@link ImageServers#pyramidalizeTiled} (RGB), so downsampled levels are generated in bounded,
+ * tiled reads. The Bio-Formats writer still performs a single
  * close-time reopen of the finished file to patch in the OME-XML footer; that
  * is internal to Bio-Formats and is not the rename failure addressed above.
  */
@@ -132,16 +135,16 @@ public final class DirectTiffOutputWriter {
                 tileSize,
                 compression);
 
+        // Channel planes per (z, t): 1 for interleaved RGB (3 samples in one plane),
+        // nChannels for planar. The total plane count per level is
+        // channelPlanes * sizeZ * sizeT, ordered C-fastest then Z then T (XYCZT).
+        int channelPlanes = exportRGB ? 1 : nChannels;
+
         // Pyramidalize the source so downsampled levels are produced in bounded
         // tiled reads (a single high-level tile would otherwise read a huge
         // full-resolution region from the compositor).
-        // Non-RGB images get NoDataPyramidServer: every level made from the one before at full
-        // bit depth, with the mosaic's empty (zero) canvas left out of the averages.
-        ImageServer<BufferedImage> pyramidServer = exportRGB || source.isRGB()
-                ? ImageServers.pyramidalizeTiled(source, tileSize, tileSize, downsamples)
-                : new NoDataPyramidServer(source, tileSize, tileSize, downsamples);
-        String serverPath = pyramidServer.getPath();
-
+        List<ImageServer<BufferedImage>> pyramids = new ArrayList<>();
+        Plane[] planes = planePyramids(source, exportRGB, channelPlanes, tileSize, downsamples, pyramids);
         IMetadata meta = MetadataTools.createOMEXMLMetadata();
         initializeMetadata(meta, source, pixelType, exportRGB, fullWidth, fullHeight, downsamples);
 
@@ -150,10 +153,6 @@ public final class DirectTiffOutputWriter {
                 * (long) sizeT;
         boolean bigTiff = estimatedBytes >= (Integer.MAX_VALUE - 1024L * 1024L * 100L);
 
-        // Channel planes per (z, t): 1 for interleaved RGB (3 samples in one plane),
-        // nChannels for planar. The total plane count per level is
-        // channelPlanes * sizeZ * sizeT, ordered C-fastest then Z then T (XYCZT).
-        int channelPlanes = exportRGB ? 1 : nChannels;
         long totalTiles = countTiles(downsamples, fullWidth, fullHeight, tileSize)
                 * (long) channelPlanes
                 * (long) sizeZ
@@ -216,11 +215,9 @@ public final class DirectTiffOutputWriter {
                                     int ww = Math.min(tileSize, levelW - xx);
                                     writeTile(
                                             tiffWriter,
-                                            pyramidServer,
-                                            serverPath,
+                                            planes[c],
                                             ifd,
                                             planeIndex,
-                                            c,
                                             z,
                                             t,
                                             level,
@@ -249,10 +246,12 @@ public final class DirectTiffOutputWriter {
         } catch (Exception e) {
             throw new IOException("Direct OME-TIFF write failed for " + finalOutputPath, e);
         } finally {
-            try {
-                pyramidServer.close();
-            } catch (Exception closeEx) {
-                logger.warn("Pyramidalized source close() threw after OME-TIFF write: {}", closeEx.getMessage());
+            for (ImageServer<BufferedImage> pyramid : pyramids) {
+                try {
+                    pyramid.close();
+                } catch (Exception closeEx) {
+                    logger.warn("Pyramidalized source close() threw after OME-TIFF write: {}", closeEx.getMessage());
+                }
             }
         }
 
@@ -263,22 +262,78 @@ public final class DirectTiffOutputWriter {
         logger.info("Direct OME-TIFF complete: {}", finalOutputPath);
     }
 
+    /** The pyramid one output channel plane is read from, and that channel's band in it. */
+    private record Plane(ImageServer<BufferedImage> pyramid, int band) {}
+
     /**
-     * Read one tile of the (z, t) plane from the pyramidalized server and hand its
-     * packed bytes to Bio-Formats.
+     * The pyramid each output channel plane is read from. Non-RGB images get
+     * {@link NoDataPyramidServer}: every level made from the one before at full bit depth, with
+     * the mosaic's empty (zero) canvas left out of the averages. A {@link ChannelStack} gets one
+     * such pyramid per source image, so plane c reads only the image holding channel c.
+     *
+     * @param pyramids receives every pyramid made, for closing
+     */
+    private static Plane[] planePyramids(
+            ImageServer<BufferedImage> source,
+            boolean exportRGB,
+            int channelPlanes,
+            int tileSize,
+            double[] downsamples,
+            List<ImageServer<BufferedImage>> pyramids) {
+        Plane[] planes = new Plane[channelPlanes];
+        if (!exportRGB && !source.isRGB() && source instanceof ChannelStack stack && isSplittable(source, stack)) {
+            int c = 0;
+            for (ImageServer<BufferedImage> part : stack.getChannelSources()) {
+                ImageServer<BufferedImage> pyramid = new NoDataPyramidServer(part, tileSize, tileSize, downsamples);
+                pyramids.add(pyramid);
+                for (int band = 0; band < part.nChannels(); band++) {
+                    planes[c++] = new Plane(pyramid, band);
+                }
+            }
+            logger.info("Reading each of the {} channels from its own source image", channelPlanes);
+            return planes;
+        }
+        ImageServer<BufferedImage> pyramid = exportRGB || source.isRGB()
+                ? ImageServers.pyramidalizeTiled(source, tileSize, tileSize, downsamples)
+                : new NoDataPyramidServer(source, tileSize, tileSize, downsamples);
+        pyramids.add(pyramid);
+        for (int c = 0; c < channelPlanes; c++) {
+            planes[c] = new Plane(pyramid, c);
+        }
+        return planes;
+    }
+
+    /** Whether every channel of {@code source} can be read from the stack's sources as they are. */
+    private static boolean isSplittable(ImageServer<BufferedImage> source, ChannelStack stack) {
+        List<ImageServer<BufferedImage>> parts = stack.getChannelSources();
+        int channels = 0;
+        for (ImageServer<BufferedImage> part : parts) {
+            if (part.isRGB()
+                    || part.getWidth() != source.getWidth()
+                    || part.getHeight() != source.getHeight()
+                    || part.getPixelType() != source.getPixelType()
+                    || Math.max(1, part.nZSlices()) != Math.max(1, source.nZSlices())
+                    || Math.max(1, part.nTimepoints()) != Math.max(1, source.nTimepoints())) {
+                return false;
+            }
+            channels += part.nChannels();
+        }
+        return channels == source.nChannels();
+    }
+
+    /**
+     * Read one tile of one channel plane at (z, t) and hand its packed bytes to Bio-Formats.
      *
      * @param planeIndex sequential OME plane index (for {@code saveBytes})
-     * @param channelBand channel band to extract for planar output (ignored for RGB)
+     * @param plane the pyramid to read and the band to extract for planar output (ignored for RGB)
      * @param z z-slice to read
      * @param t timepoint to read
      */
     private static void writeTile(
             TiffWriter tiffWriter,
-            ImageServer<BufferedImage> pyramidServer,
-            String serverPath,
+            Plane plane,
             IFD ifd,
             int planeIndex,
-            int channelBand,
             int z,
             int t,
             int level,
@@ -292,9 +347,9 @@ public final class DirectTiffOutputWriter {
             throws IOException, FormatException {
 
         ImageRegion region = ImageRegion.createInstance(xx, yy, ww, hh, z, t);
-        TileRequest tile = TileRequest.createInstance(serverPath, level, downsample, region);
+        TileRequest tile = TileRequest.createInstance(plane.pyramid().getPath(), level, downsample, region);
         RegionRequest request = tile.getRegionRequest();
-        BufferedImage img = pyramidServer.readRegion(request);
+        BufferedImage img = plane.pyramid().readRegion(request);
 
         if (img == null) {
             int samples = exportRGB ? 3 : 1;
@@ -305,7 +360,7 @@ public final class DirectTiffOutputWriter {
 
         int aw = img.getWidth();
         int ah = img.getHeight();
-        byte[] buf = exportRGB ? packInterleavedRGB(img, aw, ah) : packPlane(img, channelBand, aw, ah, bytesPerPixel);
+        byte[] buf = exportRGB ? packInterleavedRGB(img, aw, ah) : packPlane(img, plane.band(), aw, ah, bytesPerPixel);
         tiffWriter.saveBytes(planeIndex, buf, ifd, xx, yy, aw, ah);
     }
 

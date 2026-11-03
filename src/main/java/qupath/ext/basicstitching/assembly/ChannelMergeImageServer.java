@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.basicstitching.assembly.direct.ChannelStack;
 import qupath.lib.awt.common.BufferedImageTools;
 import qupath.lib.images.servers.ImageChannel;
 import qupath.lib.images.servers.ImageServer;
@@ -38,7 +39,7 @@ import qupath.lib.regions.RegionRequest;
  * widefield immunofluorescence (and BF+IF) channels back into one image
  * after per-channel stitching.
  */
-public class ChannelMergeImageServer implements ImageServer<BufferedImage> {
+public class ChannelMergeImageServer implements ImageServer<BufferedImage>, ChannelStack {
 
     private static final Logger logger = LoggerFactory.getLogger(ChannelMergeImageServer.class);
 
@@ -208,6 +209,11 @@ public class ChannelMergeImageServer implements ImageServer<BufferedImage> {
             }
         }
         return output;
+    }
+
+    @Override
+    public List<ImageServer<BufferedImage>> getChannelSources() {
+        return sources;
     }
 
     @Override
