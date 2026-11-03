@@ -373,12 +373,14 @@ public class GlobalPositionSolverTest {
     // ---------------------------------------------------------------- scale
 
     /**
-     * 100x100 tiles, ~19,800 edges. The budget is not about the CPU -- it is a tripwire on
-     * materializing the matrix. A dense {@code (L + lambda*I)} for 10,000 tiles is 800 MB and would
-     * miss this by orders of magnitude, or fail to allocate at all.
+     * 100x100 tiles, ~19,800 edges, solved without materializing the matrix. A dense
+     * {@code (L + lambda*I)} for 10,000 tiles is 800 MB, so the check is on what the solve
+     * allocates (a few MB sparse), not on wall-clock time, which on shared CI runners varied
+     * past any tight budget (255 and 308 ms against 250 ms). The time budget is only an
+     * order-of-magnitude backstop.
      */
     @Test
-    public void solveIsFastEnough() {
+    public void solveDoesNotMaterializeTheMatrix() {
         // Warm the JIT on a small grid first; otherwise this measures the interpreter.
         runGridSolve(20, 20);
 
@@ -391,16 +393,24 @@ public class GlobalPositionSolverTest {
         double[][] truth = jitter(nominal, 3.0, new Random(42));
         List<EdgeMeasurement> edges = exactEdges(nominal, truth, pairs);
 
+        java.lang.management.ThreadMXBean threads = java.lang.management.ManagementFactory.getThreadMXBean();
+        com.sun.management.ThreadMXBean counting = threads instanceof com.sun.management.ThreadMXBean c ? c : null;
+        long thread = Thread.currentThread().threadId();
+        long allocatedBefore = counting != null ? counting.getThreadAllocatedBytes(thread) : -1;
         long start = System.nanoTime();
         GlobalPositionSolver.SolveOutcome outcome =
                 GlobalPositionSolver.solve(nominal, edges, RegistrationSettings.defaults(), NO_CLAMP, NO_CLAMP);
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+        long allocatedMb = counting != null ? (counting.getThreadAllocatedBytes(thread) - allocatedBefore) >> 20 : -1;
 
         assertEquals(10000, outcome.positions().size());
-        // Budget raised from 100ms when per-component gauge pinning was added: the operator now sums
-        // per component each CG iteration. Still an order-of-magnitude tripwire on materializing the
-        // matrix (a dense 10000x10000 solve is seconds, not milliseconds), which is what this guards.
-        assertTrue(elapsedMs < 250, "solve of 10000 tiles / 19800 edges took " + elapsedMs + "ms, budget 250ms");
+        if (allocatedMb >= 0) {
+            assertTrue(
+                    allocatedMb < 200,
+                    "solve of 10000 tiles allocated " + allocatedMb + " MB; a dense matrix alone is 800 MB");
+        }
+        assertTrue(elapsedMs < 5000, "solve of 10000 tiles / 19800 edges took " + elapsedMs + " ms");
+        System.out.println("10000-tile solve: " + elapsedMs + " ms, " + allocatedMb + " MB allocated");
     }
 
     private static void runGridSolve(int cols, int rows) {
