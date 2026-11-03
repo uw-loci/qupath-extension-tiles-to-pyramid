@@ -1,5 +1,6 @@
 package qupath.ext.basicstitching.stitching;
 
+import java.nio.file.Path;
 import java.util.List;
 
 /**
@@ -29,5 +30,17 @@ public interface StitchingStrategy {
      */
     default List<String> groupOrder() {
         return List.of();
+    }
+
+    /**
+     * Write what the input recorded about the acquisition beside one output of the last
+     * {@link #prepareStitching} call. Never throws.
+     *
+     * @param output the stitched image
+     * @param group the group ({@link TileMapping#subdirName}) it was stitched from
+     * @return the file written, or null when the strategy has nothing to write
+     */
+    default Path writeOutputMetadata(Path output, String group) {
+        return null;
     }
 }

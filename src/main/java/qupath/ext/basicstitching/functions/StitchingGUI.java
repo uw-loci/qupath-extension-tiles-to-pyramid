@@ -51,6 +51,7 @@ import qupath.ext.basicstitching.stitching.FileScanner;
 import qupath.ext.basicstitching.stitching.FlatfieldProfile;
 import qupath.ext.basicstitching.stitching.FolderDiagnosis;
 import qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy;
+import qupath.ext.basicstitching.stitching.MicroManagerOutputMetadata;
 import qupath.ext.basicstitching.stitching.MicroManagerPreprocessor;
 import qupath.ext.basicstitching.stitching.TileConfigurationTxtStrategy;
 import qupath.ext.basicstitching.stitching.TileDirectories;
@@ -559,9 +560,37 @@ public class StitchingGUI {
         String merged = ChannelMerger.merge(
                 ordered, names, config.outputPath, stem, config.compressionType, config.outputFormat);
         if (merged != null) {
+            writeMergedAcquisitionMetadata(Paths.get(merged), names, config);
             tidyChannelStitches(ordered, config, stem);
         }
         return merged;
+    }
+
+    /**
+     * For a MicroManager merge, the merged image's {@code .mm-metadata.json} (its channels in merged
+     * order) and a pointer to it in its stitch record.
+     *
+     * @param channelNames the merged image's channel names, which are the channels' output names
+     */
+    private static void writeMergedAcquisitionMetadata(Path merged, List<String> channelNames, StitchingConfig config) {
+        if (config.stitchingType == null || !config.stitchingType.startsWith("MicroManager")) {
+            return;
+        }
+        List<String> outputNames = MicroManagerMetadataStrategy.channelOutputNames(new File(config.folderPath));
+        List<Integer> channels = new ArrayList<>();
+        for (String name : channelNames) {
+            int c = outputNames.indexOf(name);
+            if (c < 0) {
+                logger.warn(
+                        "Merged channel '{}' is not one of {}; no Micro-Manager metadata written", name, outputNames);
+                return;
+            }
+            channels.add(c);
+        }
+        Path written = MicroManagerOutputMetadata.write(merged, Paths.get(config.folderPath), channels);
+        if (written != null) {
+            StitchInfoFile.append(merged, List.of(StitchingWorkflow.acquisitionMetadataSection(written)));
+        }
     }
 
     /** A trailing "_2x_downsample", with an optional "_3" uniqueness counter after it. */
@@ -619,6 +648,7 @@ public class StitchingGUI {
                 Files.move(from, to, StandardCopyOption.REPLACE_EXISTING);
                 // The record has to travel with its image or it describes a file that is not there.
                 StitchInfoFile.moveWith(from, to);
+                MicroManagerOutputMetadata.moveWith(from, to);
                 moved++;
             } catch (IOException | RuntimeException e) {
                 logger.warn("Could not move {} into {}: {}", from.getFileName(), dir.getFileName(), e.getMessage());

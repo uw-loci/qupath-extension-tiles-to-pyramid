@@ -241,9 +241,12 @@ public class StitchingWorkflow {
                                     logger.debug("Direct stitch progress: {}%", String.format("%.1f", progress * 100)));
                     if (written != null) {
                         logger.info("Successfully wrote: {}", written);
+                        java.nio.file.Path metadata =
+                                strategy.writeOutputMetadata(java.nio.file.Path.of(written), subdirName);
                         StitchInfoFile.write(
                                 java.nio.file.Path.of(written),
-                                stitchRecord(config, strategy, subdirName, subdirMappings, written, warnings));
+                                stitchRecord(
+                                        config, strategy, subdirName, subdirMappings, written, warnings, metadata));
                         outputs.add(written);
                         successCount++;
                     } else {
@@ -370,7 +373,8 @@ public class StitchingWorkflow {
             String subdirName,
             List<TileMapping> tiles,
             String written,
-            List<String> warnings) {
+            List<String> warnings,
+            java.nio.file.Path acquisitionMetadata) {
         Map<String, String> image = new java.util.LinkedHashMap<>();
         image.put("file", written);
         image.put("written", java.time.OffsetDateTime.now().withNano(0).toString());
@@ -464,9 +468,25 @@ public class StitchingWorkflow {
             sections.add(config.getPreprocessingRecord());
         }
         sections.add(StitchInfoFile.Section.of("stitching", stitching));
+        if (acquisitionMetadata != null) {
+            sections.add(acquisitionMetadataSection(acquisitionMetadata));
+        }
         sections.add(config.getRegistrationRecord());
         sections.add(StitchInfoFile.Section.of("software", software));
         return sections;
+    }
+
+    /**
+     * The record's pointer to the acquisition metadata written beside an image.
+     *
+     * @param file the metadata file, beside the image
+     * @return a section naming it
+     */
+    public static StitchInfoFile.Section acquisitionMetadataSection(java.nio.file.Path file) {
+        Map<String, String> entries = new java.util.LinkedHashMap<>();
+        entries.put("file", file.getFileName().toString());
+        entries.put("written from", "Micro-Manager sidecar of the first position");
+        return StitchInfoFile.Section.of("acquisition metadata", entries);
     }
 
     /**

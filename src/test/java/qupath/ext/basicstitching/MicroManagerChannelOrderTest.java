@@ -65,6 +65,25 @@ class MicroManagerChannelOrderTest {
                 assertEquals(MicroManagerFixture.value(c, 0, 0), r.getSample(10, 10, c), "channel " + c + " pixels");
             }
         }
+
+        // Each image has its acquisition metadata beside it, named in its stitch record; the
+        // per-channel ones travel into the _channels folder with their images.
+        Path mergedMeta = out.resolve("MDA_region_merged.mm-metadata.json");
+        assertTrue(Files.isRegularFile(mergedMeta));
+        assertEquals(
+                "[\"TRITC\",\"DAPI\",\"FITC\"]",
+                com.google.gson.JsonParser.parseString(Files.readString(mergedMeta))
+                        .getAsJsonObject()
+                        .get("channels")
+                        .toString());
+        assertTrue(Files.readString(out.resolve("MDA_region_merged.stitch-info.txt"))
+                .contains("file: MDA_region_merged.mm-metadata.json"));
+        for (String name : ACQUIRED) {
+            Path channelDir = out.resolve("MDA_region_channels");
+            assertTrue(Files.isRegularFile(channelDir.resolve(name + ".mm-metadata.json")), name);
+            assertTrue(Files.readString(channelDir.resolve(name + ".stitch-info.txt"))
+                    .contains("file: " + name + ".mm-metadata.json"));
+        }
     }
 
     /** Channel folders record no acquisition order: they still merge in file name order. */

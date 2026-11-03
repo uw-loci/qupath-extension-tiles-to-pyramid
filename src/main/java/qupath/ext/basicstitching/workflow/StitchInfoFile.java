@@ -37,8 +37,6 @@ public final class StitchInfoFile {
     /** Appended to the image's name stem. */
     public static final String SUFFIX = ".stitch-info.txt";
 
-    private static final String[] IMAGE_EXTENSIONS = {".ome.tiff", ".ome.tif", ".ome.zarr", ".tiff", ".tif", ".zarr"};
-
     private StitchInfoFile() {}
 
     /**
@@ -65,15 +63,9 @@ public final class StitchInfoFile {
      * @return where its record lives: the image's name without its extension, plus {@link #SUFFIX}
      */
     public static Path pathFor(Path image) {
-        String name = image.getFileName().toString();
-        String lower = name.toLowerCase(java.util.Locale.ROOT);
-        for (String ext : IMAGE_EXTENSIONS) {
-            if (lower.endsWith(ext)) {
-                name = name.substring(0, name.length() - ext.length());
-                break;
-            }
-        }
-        return image.resolveSibling(name + SUFFIX);
+        return image.resolveSibling(qupath.ext.basicstitching.utilities.UtilityFunctions.imageStem(
+                        image.getFileName().toString())
+                + SUFFIX);
     }
 
     /**

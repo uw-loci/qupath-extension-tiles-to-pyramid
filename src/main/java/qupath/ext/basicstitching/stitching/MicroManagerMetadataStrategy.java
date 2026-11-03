@@ -185,6 +185,19 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
         return groupOrder;
     }
 
+    /** The folder the last {@link #prepareStitching} read; null before one ran. */
+    private Path lastFolder;
+
+    /** Writes {@code <output stem>.mm-metadata.json} ({@link MicroManagerOutputMetadata}). */
+    @Override
+    public Path writeOutputMetadata(Path output, String group) {
+        if (lastFolder == null) {
+            return null;
+        }
+        int channel = Math.max(0, groupOrder.indexOf(group));
+        return MicroManagerOutputMetadata.write(output, lastFolder, List.of(channel));
+    }
+
     @Override
     public List<TileMapping> prepareStitching(
             String folderPath, double pixelSizeInMicrons, double baseDownsample, String matchingString) {
@@ -193,10 +206,12 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
         groupOrder = List.of();
         List<TileMapping> mappings = new ArrayList<>();
         Path rootdir = Paths.get(folderPath).toAbsolutePath().normalize();
+        lastFolder = null;
         if (!Files.isDirectory(rootdir)) {
             logger.warn("Folder does not exist or is not a directory: {}", folderPath);
             return mappings;
         }
+        lastFolder = rootdir;
 
         boolean flipY = flipStitchingY;
         boolean flipX = flipStitchingX;
@@ -580,7 +595,7 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
      * {@code *_metadata.txt} sidecars. Skips Windows NTFS alternate-data-stream
      * artifacts that WSL surfaces as phantom files (names containing ':').
      */
-    private static List<Path> findMetadataFiles(Path rootdir) {
+    static List<Path> findMetadataFiles(Path rootdir) {
         return findFiles(rootdir, name -> name.equals("metadata.txt") || name.endsWith("_metadata.txt"));
     }
 

@@ -32,6 +32,23 @@ import qupath.lib.images.writers.ome.OMEPyramidWriter;
  */
 public class UtilityFunctions {
 
+    private static final String[] IMAGE_EXTENSIONS = {".ome.tiff", ".ome.tif", ".ome.zarr", ".tiff", ".tif", ".zarr"};
+
+    /**
+     * @param fileName a stitched image's file name
+     * @return the name without its image extension ({@code .ome.tif}, {@code .ome.zarr}, ...); the
+     *     stem the files written beside the image are named from
+     */
+    public static String imageStem(String fileName) {
+        String lower = fileName.toLowerCase(java.util.Locale.ROOT);
+        for (String ext : IMAGE_EXTENSIONS) {
+            if (lower.endsWith(ext)) {
+                return fileName.substring(0, fileName.length() - ext.length());
+            }
+        }
+        return fileName;
+    }
+
     private static final Logger logger = LoggerFactory.getLogger(UtilityFunctions.class);
 
     /**
