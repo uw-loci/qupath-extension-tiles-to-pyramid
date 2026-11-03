@@ -209,7 +209,7 @@ public final class DirectTiffOutputWriter {
             plan = new StagingPlan(sources, downsamples, fullWidth, fullHeight, sizeZ * sizeT, bytesPerPixel);
             if (plan.peakBytes() > 0) {
                 Path outDir = Path.of(finalOutputPath).toAbsolutePath().getParent();
-                staging = LevelStaging.open(outDir, plan.peakBytes(), estimatedBytes, space, warn);
+                staging = LevelStaging.open(outDir, plan.peakBytes(), space, warn);
                 if (staging == null) {
                     sources = null;
                     plan = null;

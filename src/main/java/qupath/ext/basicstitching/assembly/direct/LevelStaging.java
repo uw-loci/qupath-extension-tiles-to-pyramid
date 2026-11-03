@@ -43,7 +43,7 @@ final class LevelStaging implements AutoCloseable {
     /** Name prefix of the staging folders. */
     static final String PREFIX = ".t2p-level-staging-";
 
-    /** Free space kept in hand beyond the staged levels and the output. */
+    /** Free space kept in hand beyond the staged levels. */
     static final long MARGIN_BYTES = 512L * 1024 * 1024;
 
     private static final String LOCK = "lock";
@@ -104,16 +104,15 @@ final class LevelStaging implements AutoCloseable {
 
     /**
      * Open a staging folder in {@code outputDir}, after removing stale ones, if the volume has
-     * {@code stagingBytes + outputBytes + MARGIN_BYTES} free beyond what other writes in this JVM
-     * have reserved.
+     * {@code stagingBytes + MARGIN_BYTES} free beyond what other staged writes in this JVM have
+     * reserved. The output file is not counted: the unstaged path writes the same file.
      *
      * @return the staging folder, or null (with the reason passed to {@code warnings}) to write
      *     without staging
      */
-    static LevelStaging open(
-            Path outputDir, long stagingBytes, long outputBytes, FreeSpace space, Consumer<String> warnings) {
+    static LevelStaging open(Path outputDir, long stagingBytes, FreeSpace space, Consumer<String> warnings) {
         removeStale(outputDir, warnings);
-        long need = stagingBytes + outputBytes + MARGIN_BYTES;
+        long need = stagingBytes + MARGIN_BYTES;
         FileStore fileStore = null;
         long usable;
         long othersReserved = 0;
@@ -131,11 +130,10 @@ final class LevelStaging implements AutoCloseable {
                 warnings.accept(String.format(
                         Locale.ROOT,
                         "Not enough free disk space beside the output to stage the pyramid levels: %s needed"
-                                + " (%s staged levels + %s output + %s margin), %s free in %s%s. The pyramid levels"
+                                + " (%s staged levels + %s margin), %s free in %s%s. The pyramid levels"
                                 + " were made the slower way, each from full resolution; the image is the same.",
                         gb(need),
                         gb(stagingBytes),
-                        gb(outputBytes),
                         gb(MARGIN_BYTES),
                         gb(usable),
                         outputDir,
@@ -160,7 +158,7 @@ final class LevelStaging implements AutoCloseable {
                             + ProcessHandle.current().pid() + ". Safe to delete when no stitch is running.\n")
                     .getBytes(StandardCharsets.US_ASCII)));
             logger.info(
-                    "Staging pyramid levels in {} (up to {}; {} free, {} needed with the output)",
+                    "Staging pyramid levels in {} (up to {}; {} free, {} needed with the margin)",
                     dir,
                     gb(stagingBytes),
                     gb(usable),

@@ -944,19 +944,21 @@ left by a crash or a killed QuPath is deleted by the next stitch into the same f
 
 Before writing, the free space on the output's drive is checked against
 
-`staged levels + output + 512 MiB`, where
+`staged levels + 512 MiB`, where
 
 - *staged levels* = the largest `S(L) + S(L+1)` over the levels, with
   `S(L) = planes x floor(W / 2^L) x floor(H / 2^L) x bytes per sample` for each zoomed-out level
   `L >= 1` (0 for full resolution, and for a level a merged source file already holds). For a
   stitch this is `S(1) + S(2)`, about 0.31 x the uncompressed full-resolution plane set; planes =
   channels x z-slices x time points;
-- *output* = the uncompressed size of the whole pyramid (about 1.33 x full resolution), a ceiling
-  for the compressed file;
-- other stitches running at the same time on the same drive count with what they need.
+- other stitches staging at the same time on the same drive count with what they need.
+
+The output file itself is not counted: it is the same file either way, so the drive needs room for
+it whether the levels are staged or not.
 
 Example: a 101,864 x 87,085 px 16-bit channel stages at most 5.5 GB (4.4 GB + 1.1 GB) and the check
-asks for about 29.7 GB free (5.5 + 23.7 + 0.5); four such channels stitched at once ask for about 119 GB.
+asks for about 6.1 GB free (5.5 + 0.5); four such channels stitched at once ask for about 24.3 GB.
+The drive still needs room for the output files as well, as it always did.
 
 With less free space than that the image is still written, the old way (each zoomed-out level from
 full resolution through QuPath's tile cache, the same pixels, several times slower), and a
@@ -1015,7 +1017,7 @@ QuPath has closed the image. On the LC-PolScope test data a 31,623 x 14,951 reta
 - **Check**: Case sensitivity on Linux/macOS systems
 
 #### "Not enough free disk space beside the output to stage the pyramid levels"
-- **Cause**: The output's drive has less free space than the staged levels, the output and a 512 MiB margin need (see *Disk space while writing an OME-TIFF* under Performance and memory)
+- **Cause**: The output's drive has less free space than the staged levels and a 512 MiB margin need (see *Disk space while writing an OME-TIFF* under Performance and memory)
 - **Effect**: The image is written anyway, with the same pixels; only its zoomed-out levels take longer
 - **Solution**: Free space on that drive, write to a larger drive, or stitch fewer channels at once
 

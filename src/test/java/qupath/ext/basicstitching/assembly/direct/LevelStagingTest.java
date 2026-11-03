@@ -3,6 +3,8 @@ package qupath.ext.basicstitching.assembly.direct;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static qupath.ext.basicstitching.assembly.direct.PyramidTestFiles.H;
@@ -49,7 +51,8 @@ import qupath.lib.images.servers.WrappedBufferedImageServer;
 /**
  * Pyramid levels made from a staged copy of the level before are the levels the unstaged path
  * (0.8.3) makes, for every plane; full resolution is read once per plane; the staging folder is
- * gone after a write, failed or not, and a write without the disk space falls back with a warning.
+ * gone after a write, failed or not, and a write without the disk space for the staged levels
+ * (the output is not counted) falls back with a warning.
  */
 class LevelStagingTest {
 
@@ -128,6 +131,54 @@ class LevelStagingTest {
         assertTrue(none.isEmpty(), String.valueOf(none));
         assertSameBytes(slow, fast);
         assertTrue(stagingFolders(dir).isEmpty());
+    }
+
+    @Test
+    void roomForTheStagedLevelsButNotForAnUncompressedOutputStillStages() throws Exception {
+        long staged = stagedPeakBytes(1);
+        long uncompressedOutput = 0;
+        for (double d : DirectTiffOutputWriter.computePyramidDownsamples(W, H, 1.0, TILE)) {
+            uncompressedOutput += (long) (W / d) * (long) (H / d) * 2;
+        }
+        long free = staged + LevelStaging.MARGIN_BYTES;
+        assertTrue(free < staged + uncompressedOutput + LevelStaging.MARGIN_BYTES, "the output would not fit");
+        int tiles = ((W + TILE - 1) / TILE) * ((H + TILE - 1) / TILE);
+        List<String> warnings = new ArrayList<>();
+        PlanesServer server = new PlanesServer(1, 1, 1, PixelType.UINT16);
+        write(server, dir, "tight", d -> free, warnings::add);
+        assertTrue(warnings.isEmpty(), String.valueOf(warnings));
+        assertEquals(tiles, server.reads.get(), "full-resolution tile reads: the staged path");
+    }
+
+    @Test
+    void oneByteShortOfTheStagedLevelsAndMarginFallsBack() throws Exception {
+        long free = stagedPeakBytes(1) + LevelStaging.MARGIN_BYTES - 1;
+        int tiles = ((W + TILE - 1) / TILE) * ((H + TILE - 1) / TILE);
+        List<String> warnings = new ArrayList<>();
+        PlanesServer server = new PlanesServer(1, 1, 1, PixelType.UINT16);
+        write(server, dir, "short", d -> free, warnings::add);
+        assertEquals(1, warnings.size(), String.valueOf(warnings));
+        assertTrue(warnings.get(0).startsWith("Not enough free disk space"), warnings.get(0));
+        assertTrue(warnings.get(0).contains("staged levels + "), warnings.get(0));
+        assertFalse(warnings.get(0).contains("output +"), warnings.get(0));
+        assertTrue(server.reads.get() > 2 * tiles, "the unstaged path: " + server.reads.get());
+    }
+
+    @Test
+    void otherStagedWritesInThisJvmCountAgainstTheFreeSpace() {
+        long staged = 1_000_000;
+        long need = staged + LevelStaging.MARGIN_BYTES;
+        LevelStaging.FreeSpace space = d -> 2 * need - 1;
+        List<String> warnings = new ArrayList<>();
+        try (LevelStaging first = LevelStaging.open(dir, staged, space, warnings::add)) {
+            assertNotNull(first, String.valueOf(warnings));
+            assertNull(LevelStaging.open(dir, staged, space, warnings::add));
+            assertEquals(1, warnings.size(), String.valueOf(warnings));
+            assertTrue(warnings.get(0).contains("held by other stitches running now"), warnings.get(0));
+        }
+        try (LevelStaging again = LevelStaging.open(dir, staged, space, warnings::add)) {
+            assertNotNull(again, "the first write's reservation is returned when it closes: " + warnings);
+        }
     }
 
     @Test
@@ -233,6 +284,20 @@ class LevelStagingTest {
     @FunctionalInterface
     private interface ServerFactory {
         ImageServer<BufferedImage> create() throws Exception;
+    }
+
+    /** Peak staged bytes, max over L of S(L) + S(L+1), for {@code planes} 16-bit W x H planes. */
+    private static long stagedPeakBytes(int planes) {
+        double[] downsamples = DirectTiffOutputWriter.computePyramidDownsamples(W, H, 1.0, TILE);
+        long[] bytes = new long[downsamples.length + 1];
+        for (int level = 1; level < downsamples.length; level++) {
+            bytes[level] = (long) planes * (long) (W / downsamples[level]) * (long) (H / downsamples[level]) * 2;
+        }
+        long peak = 0;
+        for (int level = 0; level < downsamples.length; level++) {
+            peak = Math.max(peak, bytes[level] + bytes[level + 1]);
+        }
+        return peak;
     }
 
     private void assertStagedEqualsUnstaged(ServerFactory factory, String name) throws Exception {
