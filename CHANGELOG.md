@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-11-02
+
 ### Added
 - **`<image stem>.mm-metadata.json` beside every MicroManager stitch** (each per-channel stitch and the merged image), re-adding the file QPSC's removed "Stitch MicroManager Folder" wrote: pretty-printed UTF-8 JSON with `source_folder`, `source_folder_name`, `stitched_output`, `pixel_size_um`, `pixel_size_affine`, `z_position_um`, `z_step_um`, `exposure_ms`, `bit_depth`, `pixel_type`, `tile_width`, `tile_height`, `channels`, `start_time`, `micro_manager_version`, `tile_count`, `grid_rows`, `grid_cols` and `comments_txt`, in that order, each left out when the metadata has no value. Read from the first position's sidecar (`Summary.StagePositions[0]`), not whichever one a folder listing gives first. `exposure_ms` is the channel's own exposure, or for a merged image an object keyed by channel name. The operator's user and computer names are not written. A stitched preprocessed copy names its source folder and adds `preprocessed_copy`. The `.stitch-info.txt` record names the file in an `[acquisition metadata]` section, and after a merge the per-channel files move into `<folder>_channels` with their images.
 
