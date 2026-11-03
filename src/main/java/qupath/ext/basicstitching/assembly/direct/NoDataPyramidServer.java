@@ -13,10 +13,12 @@ import qupath.lib.images.servers.TileRequest;
 import qupath.lib.regions.RegionRequest;
 
 /**
- * The pyramid {@link DirectTiffOutputWriter} writes for a non-RGB image: level 0 is the source at
+ * The pyramid {@link DirectTiffOutputWriter} writes for a non-RGB image when it does not stage the
+ * levels (no disk space for them, or a pixel type it does not stage): level 0 is the source at
  * full resolution, and each coarser level is made from the one before it by averaging on the
  * raster at full bit depth, leaving zeros out of the mean. A level the source already stores at
- * the same downsample (a merge of finished pyramids) is read from the source instead.
+ * the same downsample (a merge of finished pyramids) is read from the source instead. The staged
+ * path makes the same pixels.
  *
  * <p>Replaces QuPath's {@code ImageServers.pyramidalizeTiled} for these images. That builds its
  * first level from a downsampled read of the source and every further level with QuPath's resize,

@@ -30,6 +30,66 @@ final class PyramidTestFiles {
         return out;
     }
 
+    /** As {@link #write}, with the free disk space taken from {@code space}. */
+    static Path write(
+            ImageServer<BufferedImage> server,
+            Path dir,
+            String name,
+            LevelStaging.FreeSpace space,
+            java.util.function.Consumer<String> warnings)
+            throws IOException {
+        Path out = dir.resolve(name + ".ome.tif");
+        DirectTiffOutputWriter.write(
+                server, out.toString(), OMEPyramidWriter.CompressionType.LZW, TILE, 1.0, null, warnings, space);
+        return out;
+    }
+
+    /** Every sample of every channel, z, t and resolution of two OME-TIFFs is the same. */
+    static void assertSameBytes(Path a, Path b) throws Exception {
+        try (ImageServer<BufferedImage> sa = open(a);
+                ImageServer<BufferedImage> sb = open(b)) {
+            assertEquals(sa.nResolutions(), sb.nResolutions(), "levels");
+            assertEquals(sa.nChannels(), sb.nChannels(), "channels");
+            assertEquals(sa.nZSlices(), sb.nZSlices(), "z");
+            assertEquals(sa.nTimepoints(), sb.nTimepoints(), "t");
+            assertEquals(sa.getPixelType(), sb.getPixelType(), "pixel type");
+            for (int level = 0; level < sa.nResolutions(); level++) {
+                double d = sa.getDownsampleForResolution(level);
+                assertEquals(d, sb.getDownsampleForResolution(level), 1e-9);
+                assertEquals(
+                        sa.getMetadata().getLevel(level).getWidth(),
+                        sb.getMetadata().getLevel(level).getWidth());
+                for (int t = 0; t < sa.nTimepoints(); t++) {
+                    for (int z = 0; z < sa.nZSlices(); z++) {
+                        RegionRequest ra = RegionRequest.createInstance(
+                                sa.getPath(), d, 0, 0, sa.getWidth(), sa.getHeight(), z, t);
+                        RegionRequest rb = RegionRequest.createInstance(
+                                sb.getPath(), d, 0, 0, sb.getWidth(), sb.getHeight(), z, t);
+                        BufferedImage ia = sa.readRegion(ra);
+                        BufferedImage ib = sb.readRegion(rb);
+                        assertEquals(ia.getWidth(), ib.getWidth());
+                        assertEquals(ia.getHeight(), ib.getHeight());
+                        for (int c = 0; c < sa.nChannels(); c++) {
+                            assertArrayEquals(
+                                    ia.getRaster().getSamples(0, 0, ia.getWidth(), ia.getHeight(), c, (int[]) null),
+                                    ib.getRaster().getSamples(0, 0, ib.getWidth(), ib.getHeight(), c, (int[]) null),
+                                    a.getFileName() + " vs " + b.getFileName() + " level " + level + " z " + z + " t "
+                                            + t + " c " + c);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Staging folders left in {@code dir}. */
+    static java.util.List<Path> stagingFolders(Path dir) throws IOException {
+        try (var s = java.nio.file.Files.list(dir)) {
+            return s.filter(p -> p.getFileName().toString().startsWith(LevelStaging.PREFIX))
+                    .toList();
+        }
+    }
+
     static ImageServer<BufferedImage> open(Path p) throws IOException {
         return ImageServers.buildServer(p.toUri());
     }

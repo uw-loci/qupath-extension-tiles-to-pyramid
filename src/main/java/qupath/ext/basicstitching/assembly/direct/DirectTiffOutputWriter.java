@@ -1,8 +1,10 @@
 package qupath.ext.basicstitching.assembly.direct;
 
 import java.awt.image.BufferedImage;
+import java.awt.image.DataBuffer;
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -58,12 +60,19 @@ import qupath.lib.regions.RegionRequest;
  * "being used by another process" failures (an external handle holder racing
  * the rename of a just-finished multi-GB file). Writing directly to the final
  * path removes the rename entirely. A failed write leaves a partial file at the
- * (fresh, non-colliding) output path, which the caller deletes.
+ * (fresh, non-colliding) output path, which the caller deletes. (The staged levels described
+ * below are separate scratch files, deleted after the write and never renamed.)
  *
- * <p>The pixel data is read from the supplied server through
- * {@link NoDataPyramidServer} (non-RGB; one per source image for a {@link ChannelStack}) or
- * {@link ImageServers#pyramidalizeTiled} (RGB), so downsampled levels are generated in bounded,
- * tiled reads. The Bio-Formats writer still performs a single
+ * <p><b>Levels.</b> For 8- and 16-bit images that are not RGB, full resolution is read from the
+ * source once per plane, and each coarser level the source does not store is made from the one
+ * before it, averaging 2 x 2 blocks with zeros (empty canvas) left out. The level before is read
+ * from a staged, uncompressed copy in a hidden folder beside the output ({@link LevelStaging}),
+ * written while that level is written, so the mosaic is composited once. Without the disk space
+ * for that copy (or for other images) the levels come from {@link NoDataPyramidServer} (non-RGB;
+ * one per source image for a {@link ChannelStack}) or {@link ImageServers#pyramidalizeTiled}
+ * (RGB), which make every level from full resolution through QuPath's tile cache: the same
+ * pixels for non-RGB images, but each level then costs about as much as full resolution once the
+ * cache cannot hold the level before. The Bio-Formats writer still performs a single
  * close-time reopen of the finished file to patch in the OME-XML footer; that
  * is internal to Bio-Formats and is not the rename failure addressed above.
  */
@@ -104,6 +113,52 @@ public final class DirectTiffOutputWriter {
             double baseDownsample,
             Consumer<Double> progressCallback)
             throws IOException {
+        write(source, finalOutputPath, compression, tileSize, baseDownsample, progressCallback, null);
+    }
+
+    /**
+     * As {@link #write(ImageServer, String, OMEPyramidWriter.CompressionType, int, double, Consumer)},
+     * reporting what the user should be told about how the file was written.
+     *
+     * @param warnings receives each warning (also logged); may be null
+     */
+    public static void write(
+            ImageServer<BufferedImage> source,
+            String finalOutputPath,
+            OMEPyramidWriter.CompressionType compression,
+            int tileSize,
+            double baseDownsample,
+            Consumer<Double> progressCallback,
+            Consumer<String> warnings)
+            throws IOException {
+        write(
+                source,
+                finalOutputPath,
+                compression,
+                tileSize,
+                baseDownsample,
+                progressCallback,
+                warnings,
+                LevelStaging.VOLUME);
+    }
+
+    /** As above, with the free disk space read from {@code space}. */
+    static void write(
+            ImageServer<BufferedImage> source,
+            String finalOutputPath,
+            OMEPyramidWriter.CompressionType compression,
+            int tileSize,
+            double baseDownsample,
+            Consumer<Double> progressCallback,
+            Consumer<String> warnings,
+            LevelStaging.FreeSpace space)
+            throws IOException {
+        Consumer<String> warn = w -> {
+            logger.warn(w);
+            if (warnings != null) {
+                warnings.accept(w);
+            }
+        };
 
         int fullWidth = source.getWidth();
         int fullHeight = source.getHeight();
@@ -140,18 +195,80 @@ public final class DirectTiffOutputWriter {
         // channelPlanes * sizeZ * sizeT, ordered C-fastest then Z then T (XYCZT).
         int channelPlanes = exportRGB ? 1 : nChannels;
 
-        // Pyramidalize the source so downsampled levels are produced in bounded
-        // tiled reads (a single high-level tile would otherwise read a huge
-        // full-resolution region from the compositor).
-        List<ImageServer<BufferedImage>> pyramids = new ArrayList<>();
-        Plane[] planes = planePyramids(source, exportRGB, channelPlanes, tileSize, downsamples, pyramids);
-        IMetadata meta = MetadataTools.createOMEXMLMetadata();
-        initializeMetadata(meta, source, pixelType, exportRGB, fullWidth, fullHeight, downsamples);
-
         long estimatedBytes = estimatePixelBytes(fullWidth, fullHeight, nChannels, bytesPerPixel, downsamples)
                 * (long) sizeZ
                 * (long) sizeT;
         boolean bigTiff = estimatedBytes >= (Integer.MAX_VALUE - 1024L * 1024L * 100L);
+
+        // Staged levels: each plane read straight from its source image, each level the source
+        // lacks made from a staged copy of the level before.
+        PlaneSource[] sources = stagedSources(source, exportRGB, channelPlanes, tileSize, baseDownsample, downsamples);
+        LevelStaging staging = null;
+        StagingPlan plan = null;
+        if (sources != null) {
+            plan = new StagingPlan(sources, downsamples, fullWidth, fullHeight, sizeZ * sizeT, bytesPerPixel);
+            if (plan.peakBytes() > 0) {
+                Path outDir = Path.of(finalOutputPath).toAbsolutePath().getParent();
+                staging = LevelStaging.open(outDir, plan.peakBytes(), estimatedBytes, space, warn);
+                if (staging == null) {
+                    sources = null;
+                    plan = null;
+                }
+            }
+        }
+        try {
+            writeLevels(
+                    source,
+                    finalOutputPath,
+                    compression,
+                    tileSize,
+                    downsamples,
+                    exportRGB,
+                    channelPlanes,
+                    bigTiff,
+                    sources,
+                    plan,
+                    staging,
+                    progressCallback);
+        } finally {
+            if (staging != null) {
+                staging.close();
+            }
+        }
+    }
+
+    private static void writeLevels(
+            ImageServer<BufferedImage> source,
+            String finalOutputPath,
+            OMEPyramidWriter.CompressionType compression,
+            int tileSize,
+            double[] downsamples,
+            boolean exportRGB,
+            int channelPlanes,
+            boolean bigTiff,
+            PlaneSource[] sources,
+            StagingPlan plan,
+            LevelStaging staging,
+            Consumer<Double> progressCallback)
+            throws IOException {
+        int fullWidth = source.getWidth();
+        int fullHeight = source.getHeight();
+        PixelType pixelType = source.getPixelType();
+        int bytesPerPixel = pixelType.getBytesPerPixel();
+        int sizeZ = Math.max(1, source.nZSlices());
+        int sizeT = Math.max(1, source.nTimepoints());
+        int numLevels = downsamples.length;
+
+        // Without staging, pyramidalize the source so downsampled levels are produced in bounded
+        // tiled reads (a single high-level tile would otherwise read a huge full-resolution
+        // region from the compositor).
+        List<ImageServer<BufferedImage>> pyramids = new ArrayList<>();
+        Plane[] planes = sources == null
+                ? planePyramids(source, exportRGB, channelPlanes, tileSize, downsamples, pyramids)
+                : null;
+        LevelStaging.StagedLevel[] staged = new LevelStaging.StagedLevel[numLevels];
+        IMetadata meta = MetadataTools.createOMEXMLMetadata();
+        initializeMetadata(meta, source, pixelType, exportRGB, fullWidth, fullHeight, downsamples);
 
         long totalTiles = countTiles(downsamples, fullWidth, fullHeight, tileSize)
                 * (long) channelPlanes
@@ -186,6 +303,7 @@ public final class DirectTiffOutputWriter {
             tiffWriter.setInterleaved(exportRGB);
 
             for (int level = 0; level < numLevels; level++) {
+                long levelStart = System.nanoTime();
                 double d = downsamples[level];
                 int levelW = (int) (fullWidth / d);
                 int levelH = (int) (fullHeight / d);
@@ -194,6 +312,14 @@ public final class DirectTiffOutputWriter {
                     tiffWriter.setResolution(level);
                 } catch (FormatException e) {
                     throw new IOException("Failed to set resolution level " + level, e);
+                }
+                if (plan != null && level + 1 < numLevels && plan.stagedChannels(level + 1) > 0) {
+                    staged[level + 1] = staging.create(
+                            level + 1,
+                            (int) (fullWidth / downsamples[level + 1]),
+                            (int) (fullHeight / downsamples[level + 1]),
+                            tileSize,
+                            bytesPerPixel);
                 }
 
                 // Plane order must match the XYCZT dimension order declared in the
@@ -209,25 +335,51 @@ public final class DirectTiffOutputWriter {
                             ifd.put(IFD.TILE_WIDTH, tileSize);
                             ifd.put(IFD.TILE_LENGTH, tileSize);
 
+                            int inSlot = plan == null ? -1 : plan.slot(level, c, z + sizeZ * t);
+                            int nextSlot = plan == null || level + 1 >= numLevels
+                                    ? -1
+                                    : plan.slot(level + 1, c, z + sizeZ * t);
                             for (int yy = 0; yy < levelH; yy += tileSize) {
                                 int hh = Math.min(tileSize, levelH - yy);
                                 for (int xx = 0; xx < levelW; xx += tileSize) {
                                     int ww = Math.min(tileSize, levelW - xx);
-                                    writeTile(
-                                            tiffWriter,
-                                            planes[c],
-                                            ifd,
-                                            planeIndex,
-                                            z,
-                                            t,
-                                            level,
-                                            d,
-                                            xx,
-                                            yy,
-                                            ww,
-                                            hh,
-                                            exportRGB,
-                                            bytesPerPixel);
+                                    if (sources != null) {
+                                        writeStagedTile(
+                                                tiffWriter,
+                                                sources[c],
+                                                ifd,
+                                                planeIndex,
+                                                z,
+                                                t,
+                                                level,
+                                                d,
+                                                xx,
+                                                yy,
+                                                ww,
+                                                hh,
+                                                tileSize,
+                                                bytesPerPixel,
+                                                staged[level],
+                                                inSlot,
+                                                level + 1 < numLevels ? staged[level + 1] : null,
+                                                nextSlot);
+                                    } else {
+                                        writeTile(
+                                                tiffWriter,
+                                                planes[c],
+                                                ifd,
+                                                planeIndex,
+                                                z,
+                                                t,
+                                                level,
+                                                d,
+                                                xx,
+                                                yy,
+                                                ww,
+                                                hh,
+                                                exportRGB,
+                                                bytesPerPixel);
+                                    }
 
                                     writtenTiles++;
                                     if (progressCallback != null && totalTiles > 0) {
@@ -239,7 +391,22 @@ public final class DirectTiffOutputWriter {
                         }
                     }
                 }
-                logger.info("Wrote resolution level {}/{} ({}x{})", level + 1, numLevels, levelW, levelH);
+                if (staged[level] != null) {
+                    staging.release(level);
+                    staged[level] = null;
+                }
+                logger.info(
+                        "Wrote resolution level {}/{} ({}x{}) in {} s{}",
+                        level + 1,
+                        numLevels,
+                        levelW,
+                        levelH,
+                        String.format("%.1f", (System.nanoTime() - levelStart) / 1e9),
+                        sources == null
+                                ? ""
+                                : level == 0 || plan.stagedChannels(level) == 0
+                                        ? ", from the source"
+                                        : ", from the staged level before");
             }
         } catch (IOException e) {
             throw e;
@@ -260,6 +427,254 @@ public final class DirectTiffOutputWriter {
             throw new IOException("OME-TIFF writer produced no output at " + finalOutputPath);
         }
         logger.info("Direct OME-TIFF complete: {}", finalOutputPath);
+    }
+
+    /**
+     * The image one output channel plane is read from on the staged path, its band in it, and
+     * which output levels that image stores itself.
+     */
+    private static final class PlaneSource {
+        final ImageServer<BufferedImage> server;
+        final int band;
+        final boolean[] stored;
+        /** Raster data type of the tiles read so far, -1 before the first. */
+        int dataType = -1;
+
+        PlaneSource(ImageServer<BufferedImage> server, int band, double[] downsamples) {
+            this.server = server;
+            this.band = band;
+            this.stored = new boolean[downsamples.length];
+            for (int level = 0; level < downsamples.length; level++) {
+                stored[level] = level == 0 || NoDataPyramidServer.storesLevel(server, downsamples[level]);
+            }
+        }
+    }
+
+    /**
+     * Where each staged plane of each level sits in its staged file, and the disk the staged
+     * levels need at most.
+     */
+    private static final class StagingPlan {
+        private final int[][] slotOfChannel;
+        private final int[] channelsStaged;
+        private final int zt;
+        private final long peakBytes;
+
+        StagingPlan(PlaneSource[] sources, double[] downsamples, int width, int height, int zt, int bytesPerPixel) {
+            int levels = downsamples.length;
+            this.zt = zt;
+            slotOfChannel = new int[levels][sources.length];
+            channelsStaged = new int[levels];
+            long[] bytes = new long[levels + 1];
+            for (int level = 0; level < levels; level++) {
+                for (int c = 0; c < sources.length; c++) {
+                    slotOfChannel[level][c] = sources[c].stored[level] ? -1 : channelsStaged[level]++;
+                }
+                bytes[level] = (long) channelsStaged[level]
+                        * zt
+                        * (long) (width / downsamples[level])
+                        * (long) (height / downsamples[level])
+                        * bytesPerPixel;
+            }
+            // Level L is read while level L + 1 is written, then deleted.
+            long peak = 0;
+            for (int level = 0; level < levels; level++) {
+                peak = Math.max(peak, bytes[level] + bytes[level + 1]);
+            }
+            peakBytes = peak;
+        }
+
+        long peakBytes() {
+            return peakBytes;
+        }
+
+        int stagedChannels(int level) {
+            return channelsStaged[level];
+        }
+
+        /** Slot of channel {@code c} at {@code planeZT = z + sizeZ * t} in the level's file, or -1. */
+        int slot(int level, int c, int planeZT) {
+            int s = slotOfChannel[level][c];
+            return s < 0 ? -1 : s + channelsStaged[level] * planeZT;
+        }
+    }
+
+    /**
+     * The image and band each channel plane is read from on the staged path, or null when the
+     * image is RGB, not 8- or 16-bit unsigned, or the pyramid is not a plain halving from full
+     * resolution with an even tile size.
+     */
+    private static PlaneSource[] stagedSources(
+            ImageServer<BufferedImage> source,
+            boolean exportRGB,
+            int channelPlanes,
+            int tileSize,
+            double baseDownsample,
+            double[] downsamples) {
+        PixelType type = source.getPixelType();
+        if (exportRGB
+                || source.isRGB()
+                || (type != PixelType.UINT8 && type != PixelType.UINT16)
+                || tileSize % 2 != 0
+                || baseDownsample != 1.0) {
+            return null;
+        }
+        for (int level = 0; level < downsamples.length; level++) {
+            if (downsamples[level] != (double) (1L << level)) {
+                return null;
+            }
+        }
+        PlaneSource[] sources = new PlaneSource[channelPlanes];
+        if (source instanceof ChannelStack stack && isSplittable(source, stack)) {
+            int c = 0;
+            for (ImageServer<BufferedImage> part : stack.getChannelSources()) {
+                for (int band = 0; band < part.nChannels(); band++) {
+                    sources[c++] = new PlaneSource(part, band, downsamples);
+                }
+            }
+            logger.info("Reading each of the {} channels from its own source image", channelPlanes);
+        } else {
+            for (int c = 0; c < channelPlanes; c++) {
+                sources[c] = new PlaneSource(source, c, downsamples);
+            }
+        }
+        return sources;
+    }
+
+    /**
+     * Write one tile of one plane on the staged path: read it from the source, or from the staged
+     * copy of this level when the source does not store it, and stage its 2 x 2 average for the
+     * next level when that level is staged.
+     *
+     * @param in this level's staged copy, or null
+     * @param inSlot this plane's slot in {@code in}, or -1 to read the source
+     * @param next the next level's staged copy, or null
+     * @param nextSlot this plane's slot in {@code next}, or -1 when the next level is not staged
+     */
+    private static void writeStagedTile(
+            TiffWriter tiffWriter,
+            PlaneSource ps,
+            IFD ifd,
+            int planeIndex,
+            int z,
+            int t,
+            int level,
+            double downsample,
+            int xx,
+            int yy,
+            int ww,
+            int hh,
+            int tileSize,
+            int bytesPerPixel,
+            LevelStaging.StagedLevel in,
+            int inSlot,
+            LevelStaging.StagedLevel next,
+            int nextSlot)
+            throws IOException, FormatException {
+        int tx = xx / tileSize;
+        int ty = yy / tileSize;
+        int[] samples;
+        if (inSlot >= 0) {
+            byte[] bytes = in.readTile(inSlot, tx, ty, ww, hh);
+            tiffWriter.saveBytes(planeIndex, bytes, ifd, xx, yy, ww, hh);
+            samples = nextSlot >= 0 ? unpackSamples(bytes, bytesPerPixel, ps.dataType == DataBuffer.TYPE_SHORT) : null;
+        } else {
+            ImageRegion region = ImageRegion.createInstance(xx, yy, ww, hh, z, t);
+            RegionRequest request = TileRequest.createInstance(ps.server.getPath(), level, downsample, region)
+                    .getRegionRequest();
+            BufferedImage img = ps.server.readRegion(request);
+            if (img == null) {
+                tiffWriter.saveBytes(planeIndex, new byte[ww * hh * bytesPerPixel], ifd, xx, yy, ww, hh);
+                samples = new int[ww * hh];
+            } else {
+                int type = img.getRaster().getDataBuffer().getDataType();
+                if (type != DataBuffer.TYPE_BYTE && type != DataBuffer.TYPE_USHORT && type != DataBuffer.TYPE_SHORT) {
+                    throw new IOException("Cannot stage pyramid levels of raster data type " + type);
+                }
+                if (ps.dataType >= 0 && ps.dataType != type) {
+                    throw new IOException("Raster data type changed from " + ps.dataType + " to " + type);
+                }
+                ps.dataType = type;
+                int aw = img.getWidth();
+                int ah = img.getHeight();
+                samples = img.getRaster().getSamples(0, 0, aw, ah, ps.band, (int[]) null);
+                tiffWriter.saveBytes(planeIndex, packSamples(samples, bytesPerPixel), ifd, xx, yy, aw, ah);
+                if (aw != ww || ah != hh) {
+                    samples = fit(samples, aw, ah, ww, hh);
+                }
+            }
+        }
+        if (nextSlot >= 0) {
+            next.writeBlock(nextSlot, tx, ty, ww / 2, hh / 2, packSamples(halve(samples, ww, hh), bytesPerPixel));
+        }
+    }
+
+    /**
+     * Each 2 x 2 block of {@code w x h} samples averaged, zeros left out, rounded as
+     * {@link CompositorImageServer#areaAverage(BufferedImage, int, int, boolean)} rounds; an odd
+     * last row or column is dropped, as the level below has {@code floor(w / 2)} columns.
+     */
+    static int[] halve(int[] samples, int w, int h) {
+        int ow = w / 2;
+        int oh = h / 2;
+        int[] out = new int[ow * oh];
+        for (int oy = 0; oy < oh; oy++) {
+            int r0 = 2 * oy * w;
+            int r1 = r0 + w;
+            for (int ox = 0; ox < ow; ox++) {
+                int x = 2 * ox;
+                double sum = 0;
+                int count = 0;
+                int v = samples[r0 + x];
+                if (v != 0) {
+                    sum += v;
+                    count++;
+                }
+                v = samples[r0 + x + 1];
+                if (v != 0) {
+                    sum += v;
+                    count++;
+                }
+                v = samples[r1 + x];
+                if (v != 0) {
+                    sum += v;
+                    count++;
+                }
+                v = samples[r1 + x + 1];
+                if (v != 0) {
+                    sum += v;
+                    count++;
+                }
+                out[oy * ow + ox] = count == 0 ? 0 : (int) Math.rint(sum / count);
+            }
+        }
+        return out;
+    }
+
+    /** The inverse of {@link #packSamples}: unsigned bytes, 16-bit signed when {@code signed}. */
+    static int[] unpackSamples(byte[] bytes, int bytesPerPixel, boolean signed) {
+        int n = bytes.length / bytesPerPixel;
+        int[] out = new int[n];
+        if (bytesPerPixel == 2) {
+            for (int i = 0; i < n; i++) {
+                int v = ((bytes[2 * i] & 0xFF) << 8) | (bytes[2 * i + 1] & 0xFF);
+                out[i] = signed ? (short) v : v;
+            }
+        } else {
+            for (int i = 0; i < n; i++) {
+                out[i] = bytes[i] & 0xFF;
+            }
+        }
+        return out;
+    }
+
+    /** {@code samples} of an {@code aw x ah} tile cropped or zero-padded to {@code w x h}. */
+    private static int[] fit(int[] samples, int aw, int ah, int w, int h) {
+        int[] out = new int[w * h];
+        for (int y = 0; y < Math.min(ah, h); y++) {
+            System.arraycopy(samples, y * aw, out, y * w, Math.min(aw, w));
+        }
+        return out;
     }
 
     /** The pyramid one output channel plane is read from, and that channel's band in it. */
@@ -382,9 +797,13 @@ public final class DirectTiffOutputWriter {
      * big-endian bytes per pixel (matching {@code setPixelsBigEndian(true)}).
      */
     private static byte[] packPlane(BufferedImage img, int channel, int w, int h, int bytesPerPixel) {
-        int[] samples = img.getRaster().getSamples(0, 0, w, h, channel, (int[]) null);
+        return packSamples(img.getRaster().getSamples(0, 0, w, h, channel, (int[]) null), bytesPerPixel);
+    }
+
+    /** As {@link #packPlane}, from the samples. */
+    static byte[] packSamples(int[] samples, int bytesPerPixel) {
         if (bytesPerPixel == 2) {
-            byte[] buf = new byte[w * h * 2];
+            byte[] buf = new byte[samples.length * 2];
             for (int i = 0; i < samples.length; i++) {
                 int v = samples[i];
                 buf[2 * i] = (byte) ((v >> 8) & 0xFF);
@@ -392,7 +811,7 @@ public final class DirectTiffOutputWriter {
             }
             return buf;
         }
-        byte[] buf = new byte[w * h];
+        byte[] buf = new byte[samples.length];
         for (int i = 0; i < samples.length; i++) {
             buf[i] = (byte) samples[i];
         }
