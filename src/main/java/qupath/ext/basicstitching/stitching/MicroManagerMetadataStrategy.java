@@ -65,11 +65,10 @@ import qupath.lib.regions.ImageRegion;
  * is left out, and either is reported through {@link #warnings()} for the result dialog. The
  * {@code matchingString} argument is unused (MicroManager folders are not multi-angle).
  *
- * <p><b>Registration limit.</b> Registration reads a tile's first page, so on MMStack input
- * seams are always measured on the first channel. A single-plane series gives each channel files
- * of its own, so the automatic reference choice compares channels there. The dialog's Align-on
- * list names folders, not channels, so it has no effect for MicroManager input. Every plane of a
- * position receives that position's correction ({@code TileRegistrationStep}).
+ * <p><b>Registration.</b> Each channel output is a channel to register on. Every position is
+ * measured on the same plane of that channel, in both layouts: the middle z-slice of the first
+ * time point (its page in an OME-TIFF per position, its file in a single-plane series), and every
+ * plane of a position receives that position's correction ({@code TileRegistrationStep}).
  *
  * <p><b>Pixel size.</b> The metadata's {@code PixelSizeUm} is used by default,
  * but some scopes (notably laser-scanning microscopes whose zoom factor is not
@@ -635,44 +634,62 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
     }
 
     /**
-     * Scan a folder (recursively) for MicroManager metadata and return the
-     * first usable {@code PixelSizeUm} found in any per-tile block (flat-MMStack
-     * {@code FrameKey-*} or single-plane {@code Metadata-*}). Used by the dialog
-     * to auto-fill the pixel-size field before stitching runs.
+     * The {@code Summary} of the first sidecar under {@code folder} that has one. Every sidecar in
+     * one acquisition carries the same Summary, and the dialog calls this on every keystroke in the
+     * folder field, so it stops at the first.
      *
-     * @param folder directory to scan
-     * @return detected pixel size in microns ({@code > 0}), or {@code null}
-     *         if no metadata reports a usable value
+     * @return the Summary, or null when the folder holds no readable MicroManager metadata
      */
+    private static JsonObject firstSummary(File folder) {
+        if (folder == null || !folder.isDirectory()) return null;
+        Path rootdir = folder.toPath().toAbsolutePath().normalize();
+        if (rootdir.getParent() == null) return null;
+        for (Path p : findMetadataFiles(rootdir)) {
+            try (Reader reader = Files.newBufferedReader(p)) {
+                JsonObject root = GSON.fromJson(reader, JsonObject.class);
+                JsonObject summary = root == null ? null : optObject(root, "Summary");
+                if (summary != null) return summary;
+            } catch (Exception e) {
+                logger.debug("Could not read the Summary of {}: {}", p, e.toString());
+            }
+        }
+        return null;
+    }
+
     /**
      * How many channels a MicroManager acquisition in {@code folder} will stitch to.
      *
-     * <p>For the dialog, which needs to know whether to offer channel merging before
-     * anything has been stitched. Reads {@code Summary} from the first sidecar it finds
-     * and stops -- every sidecar in one acquisition carries the same Summary, and this
-     * runs on every keystroke in the folder field, so it must not walk the whole set.
+     * <p>For the dialog, which needs to know whether to offer channel merging before anything has
+     * been stitched.
      *
      * @return the channel count, or 0 when the folder holds no readable MicroManager
      *     metadata or the acquisition has a single channel (nothing to merge)
      */
     public static int countChannels(File folder) {
-        if (folder == null || !folder.isDirectory()) return 0;
-        Path rootdir = folder.toPath().toAbsolutePath().normalize();
-        if (rootdir.getParent() == null) return 0;
-        for (Path p : findMetadataFiles(rootdir)) {
-            try (Reader reader = Files.newBufferedReader(p)) {
-                JsonObject root = GSON.fromJson(reader, JsonObject.class);
-                if (root == null) continue;
-                JsonObject summary = optObject(root, "Summary");
-                if (summary == null) continue;
-                JsonArray names = optArray(summary, "ChNames");
-                int n = optInt(summary, "Channels", names == null ? 0 : names.size());
-                return n > 1 ? n : 0;
-            } catch (Exception e) {
-                logger.debug("Could not read channel count from {}: {}", p, e.toString());
+        JsonObject summary = firstSummary(folder);
+        if (summary == null) return 0;
+        JsonArray names = optArray(summary, "ChNames");
+        int n = optInt(summary, "Channels", names == null ? 0 : names.size());
+        return n > 1 ? n : 0;
+    }
+
+    /**
+     * The names the channels of a MicroManager acquisition in {@code folder} stitch under, in
+     * acquisition order: the per-channel outputs, and the registration reference choices.
+     *
+     * @return the names; empty for a single-channel acquisition or a folder without metadata
+     */
+    public static List<String> channelOutputNames(File folder) {
+        int n = countChannels(folder);
+        if (n < 2) return List.of();
+        List<String> names = new ArrayList<>();
+        JsonArray chNames = optArray(firstSummary(folder), "ChNames");
+        if (chNames != null) {
+            for (JsonElement el : chNames) {
+                names.add(el.isJsonPrimitive() ? el.getAsString() : null);
             }
         }
-        return 0;
+        return channelGroupNames(names, Math.max(n, names.size()));
     }
 
     /**
@@ -683,23 +700,21 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
      *     positive (Micro-Manager writes 0 for an acquisition without z-slices)
      */
     public static Double detectZStepUm(File folder) {
-        if (folder == null || !folder.isDirectory()) return null;
-        Path rootdir = folder.toPath().toAbsolutePath().normalize();
-        if (rootdir.getParent() == null) return null;
-        for (Path p : findMetadataFiles(rootdir)) {
-            try (Reader reader = Files.newBufferedReader(p)) {
-                JsonObject root = GSON.fromJson(reader, JsonObject.class);
-                JsonObject summary = root == null ? null : optObject(root, "Summary");
-                if (summary == null) continue;
-                Double step = optDouble(summary, "z-step_um");
-                return step != null && step > 0 ? step : null;
-            } catch (Exception e) {
-                logger.debug("Could not read the z-step from {}: {}", p, e.toString());
-            }
-        }
-        return null;
+        JsonObject summary = firstSummary(folder);
+        Double step = summary == null ? null : optDouble(summary, "z-step_um");
+        return step != null && step > 0 ? step : null;
     }
 
+    /**
+     * Scan a folder (recursively) for MicroManager metadata and return the
+     * first usable {@code PixelSizeUm} found in any per-tile block (flat-MMStack
+     * {@code FrameKey-*} or single-plane {@code Metadata-*}). Used by the dialog
+     * to auto-fill the pixel-size field before stitching runs.
+     *
+     * @param folder directory to scan
+     * @return detected pixel size in microns ({@code > 0}), or {@code null}
+     *         if no metadata reports a usable value
+     */
     public static Double detectPixelSizeUm(File folder) {
         if (folder == null || !folder.isDirectory()) return null;
         Path rootdir = folder.toPath().toAbsolutePath().normalize();

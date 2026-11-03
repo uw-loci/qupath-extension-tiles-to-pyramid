@@ -963,7 +963,10 @@ public class StitchingGUI {
                         + "Normalized merge of all: scales each folder once for the whole dataset, then averages\n"
                         + "them.\n"
                         + "Reads every folder at every seam, so it takes longer than a single folder.\n"
-                        + "A named folder: solve on that folder only."));
+                        + "A named folder: solve on that folder only.\n\n"
+                        + "MicroManager: the choices are the acquisition's channels. Every position is\n"
+                        + "measured on the same plane of a channel, the middle z-slice of the first\n"
+                        + "time point, and every plane of a position gets that position's correction."));
         referenceBox.setTooltip(referenceLabel.getTooltip());
         refreshReferenceChoices();
         folderField.textProperty().addListener((obs, o, n) -> refreshReferenceChoices());
@@ -1019,9 +1022,9 @@ public class StitchingGUI {
      * <p>The candidates come from {@link TileDirectories#resolve}, the same call the stitch makes,
      * so the list cannot disagree with what is stitched. Listing every immediate subdirectory
      * instead offered folders that are not channels at all: after a merge the tile folder contains
-     * our own {@code <folder>_channels} output, which duly appeared in the dropdown, and on the
-     * MicroManager method there are no channel subdirectories in the first place -- its channels
-     * are pages inside each file. Choosing one of those cannot work, so it should not be offered.
+     * our own {@code <folder>_channels} output, which duly appeared in the dropdown. The
+     * MicroManager method has no channel subdirectories: its channels are offered by the names
+     * their stitches take ({@link MicroManagerMetadataStrategy#channelOutputNames}).
      *
      * <p>Fewer than two directories means there is nothing to choose between, so only
      * {@code Auto} is offered.
@@ -1031,7 +1034,16 @@ public class StitchingGUI {
         java.util.List<String> choices = new java.util.ArrayList<>();
         choices.add(AUTO_REFERENCE);
         String path = folderField.getText();
-        if (path != null && !path.trim().isEmpty()) {
+        String method = stitchingGridBox.getValue();
+        if (path != null && !path.trim().isEmpty() && method != null && method.startsWith("MicroManager")) {
+            // MicroManager channels are pages or files inside each position, not folders; offer them
+            // by the names their stitches take.
+            java.util.List<String> channels = MicroManagerMetadataStrategy.channelOutputNames(new File(path.trim()));
+            if (channels.size() >= 2) {
+                choices.add(PROJECTION_REFERENCE);
+                choices.addAll(channels);
+            }
+        } else if (path != null && !path.trim().isEmpty()) {
             try {
                 java.util.List<java.nio.file.Path> dirs =
                         TileDirectories.resolve(new File(path.trim()).toPath(), matchStringField.getText());
@@ -1539,6 +1551,7 @@ public class StitchingGUI {
         autoFillPixelSizeFromFolder();
         refreshMergeVisibility();
         refreshPreprocessVisibility();
+        refreshReferenceChoices();
         adjustLayout(pane);
     }
 

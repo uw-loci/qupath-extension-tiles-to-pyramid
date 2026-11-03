@@ -168,10 +168,17 @@ public final class TileRegistrationStep {
             List<TileMapping> mappings, StitchingConfig config, RegistrationMode.Solve solve) {
 
         Map<String, List<TileMapping>> bySubdir = groupBySubdir(mappings);
+        MeasuredPlane plane = MeasuredPlane.of(mappings);
         Map<String, List<TileNode>> nodesBySubdir = new LinkedHashMap<>();
-        bySubdir.forEach((name, tiles) -> nodesBySubdir.put(name, toNodes(tiles)));
+        bySubdir.forEach((name, tiles) -> nodesBySubdir.put(name, toNodes(tiles, plane)));
 
         Plan plan = plan(solve.reference(), nodesBySubdir, solve.settings());
+        if (plane.describe() != null) {
+            List<String> notes = new ArrayList<>(plan.notes());
+            notes.add("measured plane: " + plane.describe());
+            plan = new Plan(plan.label(), plan.grid(), plan.primary(), plan.alternates(), notes);
+            logger.info("Registration measures every position on {}", plane.describe());
+        }
         logger.info(
                 "Solving tile registration on {} ({} tiles)",
                 plan.label(),
@@ -214,7 +221,7 @@ public final class TileRegistrationStep {
                 return new Plan(
                         single.subdir(),
                         nodes,
-                        List.of(RegistrationRequest.channelOf(single.subdir(), nodes)),
+                        List.of(channelOn(single.subdir(), nodes, nodes)),
                         List.of(),
                         List.of("reference choice: selected"));
             }
@@ -244,7 +251,7 @@ public final class TileRegistrationStep {
                 List<TileNode> grid = nodesBySubdir.get(present.get(0));
                 List<RegistrationChannel> raw = new ArrayList<>();
                 for (String name : present) {
-                    raw.add(RegistrationRequest.channelOf(name, nodesBySubdir.get(name)));
+                    raw.add(channelOn(name, grid, nodesBySubdir.get(name)));
                 }
                 List<ChannelNormalizer.Scale> scales = new ArrayList<>();
                 List<RegistrationChannel> normalized = ChannelNormalizer.normalize(raw, grid, scales);
@@ -258,13 +265,21 @@ public final class TileRegistrationStep {
             logger.warn("None of the projection channels are present; choosing automatically");
         }
 
-        // Automatic: with one subdirectory there is nothing to choose.
-        List<RegistrationChannel> candidates = new ArrayList<>();
-        nodesBySubdir.forEach((name, nodes) -> candidates.add(RegistrationRequest.channelOf(name, nodes)));
+        // Automatic: with one subdirectory there is nothing to choose. Candidates are compared on one
+        // grid, then the chosen one's own tiles become the grid it is solved on.
         List<TileNode> anyGrid = nodesBySubdir.values().iterator().next();
-        RegistrationChannel chosen = TileRegistrationEngine.chooseReference(anyGrid, candidates, settings);
-        List<RegistrationChannel> alternates = new ArrayList<>(candidates);
-        alternates.remove(chosen);
+        List<RegistrationChannel> candidates = new ArrayList<>();
+        nodesBySubdir.forEach((name, nodes) -> candidates.add(channelOn(name, anyGrid, nodes)));
+        String chosenName = TileRegistrationEngine.chooseReference(anyGrid, candidates, settings)
+                .name();
+        List<TileNode> grid = nodesBySubdir.get(chosenName);
+        RegistrationChannel chosen = channelOn(chosenName, grid, grid);
+        List<RegistrationChannel> alternates = new ArrayList<>();
+        nodesBySubdir.forEach((name, nodes) -> {
+            if (!name.equals(chosenName)) {
+                alternates.add(channelOn(name, grid, nodes));
+            }
+        });
         List<String> notes = new ArrayList<>();
         notes.add(
                 alternates.isEmpty()
@@ -276,7 +291,36 @@ public final class TileRegistrationStep {
                                                 .map(RegistrationChannel::name)
                                                 .toList())
                                 + ")");
-        return new Plan(chosen.name(), nodesBySubdir.get(chosen.name()), List.of(chosen), alternates, notes);
+        return new Plan(chosenName, grid, List.of(chosen), alternates, notes);
+    }
+
+    /**
+     * A channel's tiles keyed by the grid it is measured on: the tile of the same file name, else
+     * the tile at the same nominal position. Folder layouts share file names across channels; a
+     * Micro-Manager single-plane series names each channel's files apart, so only the position
+     * matches there.
+     *
+     * @param grid the tiles being solved
+     * @param own this channel's tiles
+     */
+    private static RegistrationChannel channelOn(String name, List<TileNode> grid, List<TileNode> own) {
+        Map<String, TileNode> byName = new java.util.HashMap<>();
+        Map<String, TileNode> byPosition = new java.util.HashMap<>();
+        for (TileNode t : own) {
+            byName.putIfAbsent(t.filename(), t);
+            byPosition.putIfAbsent(positionKey(t), t);
+        }
+        Map<String, TileNode> byGridName = new LinkedHashMap<>();
+        for (TileNode g : grid) {
+            TileNode t = byName.get(g.filename());
+            if (t == null) {
+                t = byPosition.get(positionKey(g));
+            }
+            if (t != null) {
+                byGridName.put(g.filename(), t);
+            }
+        }
+        return new RegistrationChannel(name, byGridName, 1.0);
     }
 
     private static void writeSolution(
@@ -406,43 +450,73 @@ public final class TileRegistrationStep {
     }
 
     /**
-     * One node per tile position.
+     * The plane registration measures at every position: the middle z-slice of the first time
+     * point the stitch holds, the same for every channel and position. The middle slice of a stack
+     * set around focus is the sharpest; the first time point is the one every position has, even
+     * in an acquisition stopped early. A position without that plane uses its nearest slice of its
+     * earliest time point.
      *
-     * <p>Deduplicated by filename: a Z-stack or time series repeats the same filename once per
-     * plane under {@code z*}/{@code t*} directories, and those are all the same stage position. The
-     * grid must be solved once, not once per plane.
+     * @param z the slice measured
+     * @param t the time point measured
+     * @param slices distinct slices in the stitch
+     * @param frames distinct time points in the stitch
      */
-    /**
-     * One node per stage position. A tile seen once per z-slice or time point is still one tile to
-     * register, whether its planes share a file (MMStack, QPSC's t/z folders) or each have their own
-     * (Micro-Manager single-plane series); the first slice of the first time point stands for it.
-     */
-    private static List<TileNode> toNodes(List<TileMapping> tiles) {
-        Map<String, TileMapping> byPosition = new LinkedHashMap<>();
-        java.util.Set<String> names = new java.util.HashSet<>();
-        for (TileMapping m : tiles) {
-            if (!names.add(m.file.getName())) {
-                continue;
+    record MeasuredPlane(int z, int t, int slices, int frames) {
+
+        static MeasuredPlane of(List<TileMapping> mappings) {
+            java.util.TreeSet<Integer> zs = new java.util.TreeSet<>();
+            java.util.TreeSet<Integer> ts = new java.util.TreeSet<>();
+            for (TileMapping m : mappings) {
+                zs.add(m.region.getZ());
+                ts.add(m.region.getT());
             }
+            List<Integer> sorted = new ArrayList<>(zs);
+            return new MeasuredPlane(sorted.get((sorted.size() - 1) / 2), ts.first(), zs.size(), ts.size());
+        }
+
+        /** Lower is a better stand-in for the measured plane: earliest time point, then nearest slice. */
+        long distance(ImageRegion r) {
+            return ((long) Math.abs(r.getT() - t) << 32) | Math.abs(r.getZ() - z);
+        }
+
+        /** @return the plane in words for the log and the solution header; null for a 2D stitch */
+        String describe() {
+            if (slices <= 1 && frames <= 1) {
+                return null;
+            }
+            return "z-slice " + z + " (middle of " + slices + ") of time point " + t + " (first of " + frames + ")";
+        }
+    }
+
+    /**
+     * One node per stage position, read on the measured plane. A tile seen once per z-slice or time
+     * point is still one tile to register, whether its planes are pages of one file (Micro-Manager
+     * OME-TIFF per position), files of one name in {@code t*}/{@code z*} folders (QPSC), or files of
+     * their own (Micro-Manager single-plane series).
+     */
+    private static List<TileNode> toNodes(List<TileMapping> tiles, MeasuredPlane plane) {
+        Map<String, TileMapping> byPosition = new LinkedHashMap<>();
+        for (TileMapping m : tiles) {
             String at = positionKey(m.region);
             TileMapping have = byPosition.get(at);
-            if (have == null || planeOrder(m.region) < planeOrder(have.region)) {
+            if (have == null || plane.distance(m.region) < plane.distance(have.region)) {
                 byPosition.put(at, m);
             }
         }
         List<TileNode> out = new ArrayList<>(byPosition.size());
         for (TileMapping m : byPosition.values()) {
             ImageRegion r = m.region;
-            out.add(new TileNode(m.file.getName(), m.file, r.getX(), r.getY(), r.getWidth(), r.getHeight()));
+            out.add(new TileNode(
+                    m.file.getName(), m.file, r.getX(), r.getY(), r.getWidth(), r.getHeight(), m.ifdIndex));
         }
         return out;
     }
 
-    private static String positionKey(ImageRegion r) {
-        return r.getX() + "," + r.getY();
+    private static String positionKey(TileNode t) {
+        return (int) Math.round(t.xPx()) + "," + (int) Math.round(t.yPx());
     }
 
-    private static long planeOrder(ImageRegion r) {
-        return ((long) r.getT() << 32) | r.getZ();
+    private static String positionKey(ImageRegion r) {
+        return r.getX() + "," + r.getY();
     }
 }

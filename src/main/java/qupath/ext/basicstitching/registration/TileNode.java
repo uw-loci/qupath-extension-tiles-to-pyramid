@@ -19,8 +19,15 @@ import java.io.File;
  * @param yPx nominal top edge in output pixels
  * @param widthPx tile width in pixels
  * @param heightPx tile height in pixels
+ * @param page the page of {@code file} registration reads: the position's representative plane
+ *     when its planes are pages of one file (Micro-Manager OME-TIFF per position), else 0
  */
-public record TileNode(String filename, File file, double xPx, double yPx, int widthPx, int heightPx) {
+public record TileNode(String filename, File file, double xPx, double yPx, int widthPx, int heightPx, int page) {
+
+    /** A tile read from its first page. */
+    public TileNode(String filename, File file, double xPx, double yPx, int widthPx, int heightPx) {
+        this(filename, file, xPx, yPx, widthPx, heightPx, 0);
+    }
 
     /** @return nominal right edge (exclusive) in output pixels. */
     public double maxXPx() {

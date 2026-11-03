@@ -44,7 +44,7 @@ public final class OverlapBandReader implements AutoCloseable {
     /**
      * Read a sub-region of a tile as float grayscale, with its statistics.
      *
-     * @param file tile file
+     * @param tile the tile; its file and page are read
      * @param x left edge of the region within the tile
      * @param y top edge of the region within the tile
      * @param width region width
@@ -52,8 +52,8 @@ public final class OverlapBandReader implements AutoCloseable {
      * @return the band
      * @throws IOException if the region cannot be read
      */
-    public OverlapBand read(File file, int x, int y, int width, int height) throws IOException {
-        BufferedImage img = readImage(file, x, y, width, height);
+    public OverlapBand read(TileNode tile, int x, int y, int width, int height) throws IOException {
+        BufferedImage img = readImage(tile, x, y, width, height);
         return OverlapBand.of(toGray(img), maxPossibleValue(img));
     }
 
@@ -77,12 +77,12 @@ public final class OverlapBandReader implements AutoCloseable {
     public OverlapBand read(List<RegistrationChannel> channels, String filename, int x, int y, int width, int height)
             throws IOException {
         if (channels.size() == 1 && channels.get(0).scale() == 1.0) {
-            return read(requireFile(channels.get(0), filename), x, y, width, height);
+            return read(requireTile(channels.get(0), filename), x, y, width, height);
         }
         float[][] acc = null;
         double maxPossible = 0;
         for (RegistrationChannel channel : channels) {
-            BufferedImage img = readImage(requireFile(channel, filename), x, y, width, height);
+            BufferedImage img = readImage(requireTile(channel, filename), x, y, width, height);
             float[][] gray = toGray(img);
             float scale = (float) channel.scale();
             if (acc == null) {
@@ -110,7 +110,7 @@ public final class OverlapBandReader implements AutoCloseable {
      * Read a sub-region as float grayscale without computing statistics, for callers that only
      * need the pixel values (the normalization sampler).
      *
-     * @param file tile file
+     * @param tile the tile; its file and page are read
      * @param x left edge of the region within the tile
      * @param y top edge of the region within the tile
      * @param width region width
@@ -118,8 +118,8 @@ public final class OverlapBandReader implements AutoCloseable {
      * @return pixels as {@code [y][x]}
      * @throws IOException if the region cannot be read
      */
-    public float[][] readGray(File file, int x, int y, int width, int height) throws IOException {
-        return toGray(readImage(file, x, y, width, height));
+    public float[][] readGray(TileNode tile, int x, int y, int width, int height) throws IOException {
+        return toGray(readImage(tile, x, y, width, height));
     }
 
     /**
@@ -131,29 +131,22 @@ public final class OverlapBandReader implements AutoCloseable {
         return TileReaderPool.getDimensions(file);
     }
 
-    private BufferedImage readImage(File file, int x, int y, int width, int height) throws IOException {
-        // Page 0. Registration identifies the same grid position across channels by
-        // finding the same FILE NAME in sibling sub-folders (see TileNode), which is how
-        // QPSC and the folder-based strategies lay channels out. MicroManager instead
-        // packs a position's channels into pages of one file, so there are no siblings to
-        // compare and every channel resolves to the same file: seams are always measured
-        // on its first channel. That is a real limit, not a silent one -- it means the
-        // Align-on choice has no effect for MicroManager input. Lifting it means carrying
-        // a page index on TileNode and through the solve, which is a larger change than
-        // the one that made channels stitch at all.
-        BufferedImage img = pool.readRegion(file, 0, x, y, width, height);
+    private BufferedImage readImage(TileNode tile, int x, int y, int width, int height) throws IOException {
+        // The tile's representative page: 0 for a file per plane, the chosen plane for a position
+        // whose planes are pages of one file (TileRegistrationStep picks it).
+        BufferedImage img = pool.readRegion(tile.file(), tile.page(), x, y, width, height);
         if (img == null) {
-            throw new IOException("Null region read from " + file);
+            throw new IOException("Null region read from " + tile.file() + " page " + tile.page());
         }
         return img;
     }
 
-    private static File requireFile(RegistrationChannel channel, String filename) throws IOException {
-        File file = channel.fileFor(filename);
-        if (file == null) {
+    private static TileNode requireTile(RegistrationChannel channel, String filename) throws IOException {
+        TileNode tile = channel.tileFor(filename);
+        if (tile == null) {
             throw new IOException("Channel '" + channel.name() + "' has no tile " + filename);
         }
-        return file;
+        return tile;
     }
 
     /** Collapse every band of the image to one by an equal-weight mean. */

@@ -1,6 +1,5 @@
 package qupath.ext.basicstitching.registration;
 
-import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -111,17 +110,17 @@ public final class ChannelNormalizer {
         int sampled = 0;
         for (int i = 0; i < tiles.size() && sampled < SAMPLE_TILES; i += stride) {
             TileNode t = tiles.get(i);
-            File file = channel.fileFor(t.filename());
-            if (file == null) {
+            TileNode tile = channel.tileFor(t.filename());
+            if (tile == null) {
                 continue;
             }
             int w = Math.min(CROP_PX, t.widthPx());
             int h = Math.min(CROP_PX, t.heightPx());
             float[][] gray;
             try {
-                gray = reader.readGray(file, (t.widthPx() - w) / 2, (t.heightPx() - h) / 2, w, h);
+                gray = reader.readGray(tile, (t.widthPx() - w) / 2, (t.heightPx() - h) / 2, w, h);
             } catch (java.io.IOException | RuntimeException e) {
-                logger.debug("Normalization could not sample {}: {}", file, e.toString());
+                logger.debug("Normalization could not sample {}: {}", tile.file(), e.toString());
                 continue;
             }
             sampled++;

@@ -1,6 +1,5 @@
 package qupath.ext.basicstitching.registration;
 
-import java.io.File;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -53,10 +52,10 @@ public record RegistrationRequest(
      * @return an unscaled channel over those files
      */
     public static RegistrationChannel channelOf(String name, List<TileNode> tiles) {
-        Map<String, File> files = new LinkedHashMap<>();
+        Map<String, TileNode> byName = new LinkedHashMap<>();
         for (TileNode t : tiles) {
-            files.putIfAbsent(t.filename(), t.file());
+            byName.putIfAbsent(t.filename(), t);
         }
-        return new RegistrationChannel(name, files, 1.0);
+        return new RegistrationChannel(name, byName, 1.0);
     }
 }
