@@ -938,9 +938,9 @@ For an 8- or 16-bit image that is not RGB, the zoomed-out pyramid levels are mad
 uncompressed copy of the level before, kept in a hidden folder `.t2p-level-staging-<id>` beside the
 output while it is written. Full resolution is composited once; without the copy every zoomed-out
 level composited the mosaic again and cost about as much as full resolution. The folder is deleted
-when the write ends, whether it succeeds, fails or is stopped; one left by a crash or a killed
-QuPath is deleted by the next stitch into the same folder (it holds a `lock` file and is safe to
-delete by hand when no stitch is running).
+when the write ends, whether it succeeds or fails, and when QuPath is closed during a write; one
+left by a crash or a killed QuPath is deleted by the next stitch into the same folder (it holds a
+`lock` file and is safe to delete by hand when no stitch is running).
 
 Before writing, the free space on the output's drive is checked against
 

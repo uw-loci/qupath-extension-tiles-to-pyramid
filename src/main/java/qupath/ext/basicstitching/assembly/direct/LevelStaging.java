@@ -31,9 +31,10 @@ import org.slf4j.LoggerFactory;
  * without compositing the mosaic again.
  *
  * <p>Plain {@link FileChannel} reads and writes only (no memory mapping), so every file can be
- * closed and deleted on Windows. The folder holds a {@code lock} file locked for the whole write;
- * a folder whose lock can be taken belongs to a run that ended without cleaning up and is deleted
- * by the next write to the same folder.
+ * closed and deleted on Windows. The folder is deleted when the write ends, succeeded or failed,
+ * and by a shutdown hook if QuPath exits during the write. It holds a {@code lock} file locked for
+ * the whole write; a folder whose lock can be taken belongs to a process that ended without
+ * cleaning up (a crash, a killed QuPath) and is deleted by the next write to the same folder.
  */
 final class LevelStaging implements AutoCloseable {
 
@@ -49,6 +50,20 @@ final class LevelStaging implements AutoCloseable {
 
     /** Folders open in this JVM, which the stale-folder sweep must leave alone. */
     private static final Set<Path> ACTIVE = ConcurrentHashMap.newKeySet();
+
+    /** Staging open in this JVM, closed by a shutdown hook if QuPath exits during a write. */
+    private static final Set<LevelStaging> OPEN = ConcurrentHashMap.newKeySet();
+
+    static {
+        Runtime.getRuntime()
+                .addShutdownHook(new Thread(
+                        () -> {
+                            for (LevelStaging staging : OPEN) {
+                                staging.close();
+                            }
+                        },
+                        "t2p-level-staging-cleanup"));
+    }
 
     /** Bytes promised to staging folders open in this JVM, per volume. */
     private static final Map<FileStore, Long> RESERVED = new HashMap<>();
@@ -77,6 +92,7 @@ final class LevelStaging implements AutoCloseable {
     private final FileStore store;
     private final long reserved;
     private final Map<Integer, StagedLevel> levels = new HashMap<>();
+    private boolean closed;
 
     private LevelStaging(Path dir, FileChannel lockChannel, FileLock lock, FileStore store, long reserved) {
         this.dir = dir;
@@ -149,7 +165,9 @@ final class LevelStaging implements AutoCloseable {
                     gb(stagingBytes),
                     gb(usable),
                     gb(need));
-            return new LevelStaging(dir, lockChannel, lock, fileStore, need);
+            LevelStaging staging = new LevelStaging(dir, lockChannel, lock, fileStore, need);
+            OPEN.add(staging);
+            return staging;
         } catch (IOException e) {
             closeQuietly(lockChannel);
             deleteTree(dir);
@@ -164,7 +182,11 @@ final class LevelStaging implements AutoCloseable {
     /**
      * Create the staged copy of one level, {@code width x height} per plane.
      */
-    StagedLevel create(int level, int width, int height, int tileSize, int bytesPerPixel) throws IOException {
+    synchronized StagedLevel create(int level, int width, int height, int tileSize, int bytesPerPixel)
+            throws IOException {
+        if (closed) {
+            throw new IOException("Pyramid level staging was closed (QuPath shutting down?)");
+        }
         Path file = dir.resolve("level" + level + ".raw");
         FileChannel channel = FileChannel.open(
                 file, StandardOpenOption.CREATE_NEW, StandardOpenOption.READ, StandardOpenOption.WRITE);
@@ -177,7 +199,7 @@ final class LevelStaging implements AutoCloseable {
      * Close and delete one level once the level after it is written. A file that cannot be
      * deleted yet (a virus scanner holding it on Windows) is left for {@link #close()}.
      */
-    void release(int level) throws IOException {
+    synchronized void release(int level) throws IOException {
         StagedLevel staged = levels.remove(level);
         if (staged != null) {
             staged.channel.close();
@@ -193,8 +215,14 @@ final class LevelStaging implements AutoCloseable {
         return dir;
     }
 
+    /** Close every file and delete the folder; safe to call more than once and from any thread. */
     @Override
-    public void close() {
+    public synchronized void close() {
+        if (closed) {
+            return;
+        }
+        closed = true;
+        OPEN.remove(this);
         for (StagedLevel staged : levels.values()) {
             closeQuietly(staged.channel);
         }

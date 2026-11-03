@@ -143,6 +143,23 @@ class LevelStagingTest {
     }
 
     @Test
+    void theStagingFolderIsDeletedWhenTheJvmExitsDuringAWrite() throws Exception {
+        String javaExe = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+        Process p = new ProcessBuilder(
+                        javaExe,
+                        "-cp",
+                        System.getProperty("java.class.path"),
+                        StagingExitProbe.class.getName(),
+                        dir.toString())
+                .redirectErrorStream(true)
+                .start();
+        String out = new String(p.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(p.waitFor(120, java.util.concurrent.TimeUnit.SECONDS), out);
+        assertTrue(out.contains("staging folders before exit: 1"), out);
+        assertTrue(stagingFolders(dir).isEmpty(), "staging folder left after the JVM exited:\n" + out);
+    }
+
+    @Test
     void staleFoldersAreDeletedAndHeldOnesKept() throws Exception {
         Path stale = Files.createDirectory(dir.resolve(LevelStaging.PREFIX + "stale"));
         Files.writeString(stale.resolve("lock"), "old");
