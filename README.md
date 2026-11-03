@@ -961,8 +961,8 @@ asks for about 29.7 GB free (5.5 + 23.7 + 0.5); four such channels stitched at o
 With less free space than that the image is still written, the old way (each zoomed-out level from
 full resolution through QuPath's tile cache, the same pixels, several times slower), and a
 **WARNING** says so in the log, at the top of the result window and in the `.stitch-info.txt`
-record. RGB images always take that path; OME-ZARR already makes each level from the written level
-before and needs no staging.
+record. RGB images always take that path, without that warning; OME-ZARR already makes each level from
+the written level before and needs no staging.
 
 ### Tile size recommendations
 - **Small Tiles** (< 2048px): Fast processing, more metadata overhead
