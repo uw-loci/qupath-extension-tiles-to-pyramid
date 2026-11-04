@@ -129,6 +129,19 @@ public class ZarrOutputWriter implements AutoCloseable {
         this.compressor = compressor;
     }
 
+    /** Names for the non-RGB channels' omero labels; empty gives "Channel 0", "Channel 1", ... */
+    private List<String> channelNames = List.of();
+
+    /**
+     * Set the channel names written as omero labels. Call before {@link #initialize}; a list whose
+     * size differs from the channel count is ignored.
+     *
+     * @param names one name per channel, in order; null for the defaults
+     */
+    public void setChannelNames(List<String> names) {
+        this.channelNames = names == null ? List.of() : List.copyOf(names);
+    }
+
     /**
      * Initialize the ZARR structure: create group, arrays for all pyramid levels,
      * and write NGFF 0.4 metadata.
@@ -283,7 +296,10 @@ public class ZarrOutputWriter implements AutoCloseable {
             channels.add(buildChannelInfo("Green", "00FF00", 0, maxVal));
             channels.add(buildChannelInfo("Blue", "0000FF", 0, maxVal));
         } else {
-            channels.add(buildChannelInfo("Channel 0", "FFFFFF", 0, maxVal));
+            boolean named = channelNames.size() == nChannels;
+            for (int c = 0; c < nChannels; c++) {
+                channels.add(buildChannelInfo(named ? channelNames.get(c) : "Channel " + c, "FFFFFF", 0, maxVal));
+            }
         }
 
         Map<String, Object> rdefs = new LinkedHashMap<>();

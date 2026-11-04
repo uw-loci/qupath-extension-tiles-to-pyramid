@@ -2,7 +2,9 @@ package qupath.ext.basicstitching.channel;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.imageio.ImageIO;
@@ -40,7 +42,52 @@ public final class ChannelSemantics {
     private static final Pattern BACKGROUND =
             Pattern.compile("<M\\s+K=\"qpsc\\.background\"\\s*>([^<]*)</M>", Pattern.CASE_INSENSITIVE);
 
+    /** An OME {@code Channel} element's {@code Name}, with or without a namespace prefix. */
+    private static final Pattern CHANNEL_NAME = Pattern.compile("<(?:[\\w.-]+:)?Channel\\b[^>]*?\\sName=\"([^\"]*)\"");
+
     private ChannelSemantics() {}
+
+    /**
+     * The channel names a tile's OME-XML gives, in order, so the stitched image keeps them.
+     *
+     * <p>A name is the only place a derived image says what its pixel values mean (for example
+     * {@code Retardance_nm_x_100}); without it the stitched file reads "Channel 0" in any project
+     * that did not import it through QPSC.
+     *
+     * @param file tile to inspect; may be null
+     * @param nChannels channels the stitched image has
+     * @return the names, or an empty list when the tile has none, a blank one, or a different count
+     */
+    public static List<String> channelNames(File file, int nChannels) {
+        if (file == null || nChannels < 1) {
+            return List.of();
+        }
+        return channelNamesFromDescription(readImageDescription(file), nChannels);
+    }
+
+    static List<String> channelNamesFromDescription(String description, int nChannels) {
+        if (description == null) {
+            return List.of();
+        }
+        List<String> names = new ArrayList<>();
+        Matcher m = CHANNEL_NAME.matcher(description);
+        while (m.find()) {
+            String name = unescapeXml(m.group(1)).trim();
+            if (name.isEmpty()) {
+                return List.of();
+            }
+            names.add(name);
+        }
+        return names.size() == nChannels ? List.copyOf(names) : List.of();
+    }
+
+    private static String unescapeXml(String s) {
+        return s.replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&quot;", "\"")
+                .replace("&apos;", "'")
+                .replace("&amp;", "&");
+    }
 
     /** A tile's declared handling: its policy and, for angular policies, its period. */
     public record Declaration(ResamplePolicy policy, double period) {

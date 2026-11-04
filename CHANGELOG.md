@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A stitched image keeps its tiles' channel names.** Single-channel and multi-channel stitches named every channel "Channel 0", "Channel 1", ... and dropped the names in the tiles' OME-XML. They now take them from the first tile, in OME-TIFF and OME-Zarr output, so an LC-PolScope retardance image reads `Retardance_nm_x_100` in any project that opens the file. Tiles without names, RGB tiles, or tiles whose name count differs from the channel count keep the old defaults.
+
 ## [0.8.4] - 2026-11-03
 
 ### Fixed

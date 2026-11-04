@@ -154,7 +154,10 @@ public class DirectTileStitcher {
                         zCount,
                         tCount,
                         config.pixelSizeInMicrons,
-                        config.zSpacingMicrons);
+                        config.zSpacingMicrons,
+                        dims.isRGB()
+                                ? List.of()
+                                : ChannelSemantics.channelNames(mappings.get(0).file, dims.nChannels()));
 
                 logger.info("Writing OME-TIFF via CompositorImageServer (memory-efficient read path)...");
 
@@ -259,6 +262,9 @@ public class DirectTileStitcher {
             Compressor compressor = PyramidImageWriter.createZarrCompressor(config.compressionType);
 
             try (ZarrOutputWriter writer = new ZarrOutputWriter(zarrPath, compressor)) {
+                if (!dims.isRGB()) {
+                    writer.setChannelNames(ChannelSemantics.channelNames(mappings.get(0).file, dims.nChannels()));
+                }
                 writer.initialize(
                         imageWidth,
                         imageHeight,

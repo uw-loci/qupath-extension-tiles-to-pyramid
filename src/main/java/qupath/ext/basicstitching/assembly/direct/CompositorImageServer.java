@@ -70,6 +70,8 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
      * @param tCount Number of timepoints (>= 1)
      * @param pixelSizeMicrons Pixel size for metadata
      * @param zSpacingMicrons Z-spacing for metadata
+     * @param channelNames Names for the non-RGB channels, one per channel (from the tiles'
+     *     OME-XML); null or a list of another size gives "Channel 0", "Channel 1", ...
      */
     public CompositorImageServer(
             ChunkCompositor compositor,
@@ -83,7 +85,8 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
             int zCount,
             int tCount,
             double pixelSizeMicrons,
-            double zSpacingMicrons) {
+            double zSpacingMicrons,
+            List<String> channelNames) {
         this.compositor = compositor;
         this.readerPool = readerPool;
         this.isRGB = isRGB;
@@ -96,15 +99,13 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
         List<ImageChannel> channels;
         if (isRGB) {
             channels = ImageChannel.getDefaultRGBChannels();
-        } else if (nChannels == 1) {
-            channels = List.of(ImageChannel.getInstance("Channel 0", null));
         } else {
-            // Multi-channel non-RGB
+            boolean named = channelNames != null && channelNames.size() == nChannels;
             var chList = new java.util.ArrayList<ImageChannel>();
             for (int i = 0; i < nChannels; i++) {
-                chList.add(ImageChannel.getInstance("Channel " + i, null));
+                chList.add(ImageChannel.getInstance(named ? channelNames.get(i) : "Channel " + i, null));
             }
-            channels = chList;
+            channels = List.copyOf(chList);
         }
 
         var builder = new ImageServerMetadata.Builder()
