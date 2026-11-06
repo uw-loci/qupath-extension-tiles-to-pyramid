@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **RGB OME-TIFF pyramids are made from staged levels too.** Only 8- and 16-bit non-RGB images were staged; an RGB image's zoomed-out levels went through QuPath's pyramidalized server, and on a stitched mosaic every level below the second cost about the same however small it was. On 2026-11-06 a 111932 x 97619 PPM angle (2,381 tiles, J2K) took 5,448 s for full resolution, 1,996 s for level 2 and then 1,297, 1,185, 1,150, 1,139, 1,146 and 1,149 s for levels 3 to 8, the last of them 874 x 762 px; the 16-bit birefringence image of the same tiles, staged, took 940, 237, 57, 15, 4, 1 and 1 s for levels 2 to 8. An RGB image is now staged as one plane of interleaved R, G, B bytes, each level the 2 x 2 mean of the one before (every pixel counts, the canvas included, as before). On a synthetic 12000 x 10000 RGB image (LZW, tile 512, in memory) levels 3 to 5 went from 2.8-4.4 s each to 0.1-0.9 s and the write from 24-29 s to 17 s. Full resolution is identical; zoomed-out levels are resampled by a plain 2 x 2 mean in place of QuPath's resize and stay within a few counts of the old ones. The free-space check counts 3 bytes per pixel (a 2,381-tile PPM angle needs about 10.8 GB free beside the output). The rig's per-level saving is estimated from the log above, not measured.
+
 ### Fixed
 - **A stitched image keeps its tiles' channel names.** Single-channel and multi-channel stitches named every channel "Channel 0", "Channel 1", ... and dropped the names in the tiles' OME-XML. They now take them from the first tile, in OME-TIFF and OME-Zarr output, so an LC-PolScope retardance image reads `Retardance_nm_x_100` in any project that opens the file. Tiles without names, RGB tiles, or tiles whose name count differs from the channel count keep the old defaults.
 

@@ -934,7 +934,7 @@ averaging wrote), and refuses one that holds anything else. RGB frames are not s
 - **Network Storage**: Avoid network drives for temporary processing
 
 ### Disk space while writing an OME-TIFF
-For an 8- or 16-bit image that is not RGB, the zoomed-out pyramid levels are made from a staged,
+For an 8- or 16-bit image, RGB included, the zoomed-out pyramid levels are made from a staged,
 uncompressed copy of the level before, kept in a hidden folder `.t2p-level-staging-<id>` beside the
 output while it is written. Full resolution is composited once; without the copy every zoomed-out
 level composited the mosaic again and cost about as much as full resolution. The folder is deleted
@@ -948,7 +948,8 @@ Before writing, the free space on the output's drive is checked against
 
 - *staged levels* = the largest `S(L) + S(L+1)` over the levels, with
   `S(L) = planes x floor(W / 2^L) x floor(H / 2^L) x bytes per sample` for each zoomed-out level
-  `L >= 1` (0 for full resolution, and for a level a merged source file already holds). For a
+  `L >= 1` (0 for full resolution, and for a level a merged source file already holds); an RGB
+  image is one plane of 3 bytes per pixel. For a
   stitch this is `S(1) + S(2)`, about 0.31 x the uncompressed full-resolution plane set; planes =
   channels x z-slices x time points;
 - other stitches staging at the same time on the same drive count with what they need.
@@ -958,6 +959,8 @@ it whether the levels are staged or not.
 
 Example: a 101,864 x 87,085 px 16-bit channel stages at most 5.5 GB (4.4 GB + 1.1 GB) and the check
 asks for about 6.1 GB free (5.5 + 0.5); four such channels stitched at once ask for about 24.3 GB.
+A 111,932 x 97,619 px RGB image (a 2,381-tile PPM angle at 20x) stages at most about 10.2 GB
+(8.2 + 2.0) and asks for about 10.8 GB.
 The drive still needs room for the output files as well, as it always did.
 
 With less free space than that the image is still written, the old way (each zoomed-out level from

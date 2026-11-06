@@ -206,7 +206,13 @@ public final class DirectTiffOutputWriter {
         LevelStaging staging = null;
         StagingPlan plan = null;
         if (sources != null) {
-            plan = new StagingPlan(sources, downsamples, fullWidth, fullHeight, sizeZ * sizeT, bytesPerPixel);
+            plan = new StagingPlan(
+                    sources,
+                    downsamples,
+                    fullWidth,
+                    fullHeight,
+                    sizeZ * sizeT,
+                    stagedBytesPerPixel(exportRGB, bytesPerPixel));
             if (plan.peakBytes() > 0) {
                 Path outDir = Path.of(finalOutputPath).toAbsolutePath().getParent();
                 staging = LevelStaging.open(outDir, plan.peakBytes(), space, warn);
@@ -258,6 +264,7 @@ public final class DirectTiffOutputWriter {
         int sizeZ = Math.max(1, source.nZSlices());
         int sizeT = Math.max(1, source.nTimepoints());
         int numLevels = downsamples.length;
+        int stagedBpp = stagedBytesPerPixel(exportRGB, bytesPerPixel);
 
         // Without staging, pyramidalize the source so downsampled levels are produced in bounded
         // tiled reads (a single high-level tile would otherwise read a huge full-resolution
@@ -319,7 +326,7 @@ public final class DirectTiffOutputWriter {
                             (int) (fullWidth / downsamples[level + 1]),
                             (int) (fullHeight / downsamples[level + 1]),
                             tileSize,
-                            bytesPerPixel);
+                            stagedBpp);
                 }
 
                 // Plane order must match the XYCZT dimension order declared in the
@@ -358,7 +365,7 @@ public final class DirectTiffOutputWriter {
                                                 ww,
                                                 hh,
                                                 tileSize,
-                                                bytesPerPixel,
+                                                stagedBpp,
                                                 staged[level],
                                                 inSlot,
                                                 level + 1 < numLevels ? staged[level + 1] : null,
@@ -435,7 +442,9 @@ public final class DirectTiffOutputWriter {
      */
     private static final class PlaneSource {
         final ImageServer<BufferedImage> server;
+        /** Band read, or -1 for an RGB image read as interleaved R, G, B bytes. */
         final int band;
+
         final boolean[] stored;
         /** Raster data type of the tiles read so far, -1 before the first. */
         int dataType = -1;
@@ -501,8 +510,12 @@ public final class DirectTiffOutputWriter {
 
     /**
      * The image and band each channel plane is read from on the staged path, or null when the
-     * image is RGB, not 8- or 16-bit unsigned, or the pyramid is not a plain halving from full
-     * resolution with an even tile size.
+     * image is not 8- or 16-bit unsigned (RGB: 8-bit, 3 channels, exported interleaved), or the
+     * pyramid is not a plain halving from full resolution with an even tile size.
+     *
+     * <p>RGB is one plane of interleaved R, G, B bytes. Without staging it went through QuPath's
+     * pyramidalized server, which on a 111932 x 97619 PPM mosaic took about 1,150 s for EVERY
+     * level below the second, the 874 x 762 one included (2026-11-06).
      */
     private static PlaneSource[] stagedSources(
             ImageServer<BufferedImage> source,
@@ -512,8 +525,7 @@ public final class DirectTiffOutputWriter {
             double baseDownsample,
             double[] downsamples) {
         PixelType type = source.getPixelType();
-        if (exportRGB
-                || source.isRGB()
+        if ((source.isRGB() && !exportRGB)
                 || (type != PixelType.UINT8 && type != PixelType.UINT16)
                 || tileSize % 2 != 0
                 || baseDownsample != 1.0) {
@@ -523,6 +535,9 @@ public final class DirectTiffOutputWriter {
             if (downsamples[level] != (double) (1L << level)) {
                 return null;
             }
+        }
+        if (exportRGB) {
+            return new PlaneSource[] {new PlaneSource(source, -1, downsamples)};
         }
         PlaneSource[] sources = new PlaneSource[channelPlanes];
         if (source instanceof ChannelStack stack && isSplittable(source, stack)) {
@@ -573,6 +588,28 @@ public final class DirectTiffOutputWriter {
             throws IOException, FormatException {
         int tx = xx / tileSize;
         int ty = yy / tileSize;
+        if (ps.band < 0) {
+            writeStagedRGBTile(
+                    tiffWriter,
+                    ps,
+                    ifd,
+                    planeIndex,
+                    z,
+                    t,
+                    level,
+                    downsample,
+                    xx,
+                    yy,
+                    ww,
+                    hh,
+                    tx,
+                    ty,
+                    in,
+                    inSlot,
+                    next,
+                    nextSlot);
+            return;
+        }
         int[] samples;
         if (inSlot >= 0) {
             byte[] bytes = in.readTile(inSlot, tx, ty, ww, hh);
@@ -607,6 +644,99 @@ public final class DirectTiffOutputWriter {
         if (nextSlot >= 0) {
             next.writeBlock(nextSlot, tx, ty, ww / 2, hh / 2, packSamples(halve(samples, ww, hh), bytesPerPixel));
         }
+    }
+
+    /**
+     * {@link #writeStagedTile} for an RGB image: the tile as interleaved R, G, B bytes, and the
+     * next level's block as their 2 x 2 average.
+     */
+    private static void writeStagedRGBTile(
+            TiffWriter tiffWriter,
+            PlaneSource ps,
+            IFD ifd,
+            int planeIndex,
+            int z,
+            int t,
+            int level,
+            double downsample,
+            int xx,
+            int yy,
+            int ww,
+            int hh,
+            int tx,
+            int ty,
+            LevelStaging.StagedLevel in,
+            int inSlot,
+            LevelStaging.StagedLevel next,
+            int nextSlot)
+            throws IOException, FormatException {
+        byte[] rgb;
+        if (inSlot >= 0) {
+            rgb = in.readTile(inSlot, tx, ty, ww, hh);
+            tiffWriter.saveBytes(planeIndex, rgb, ifd, xx, yy, ww, hh);
+        } else {
+            ImageRegion region = ImageRegion.createInstance(xx, yy, ww, hh, z, t);
+            RegionRequest request = TileRequest.createInstance(ps.server.getPath(), level, downsample, region)
+                    .getRegionRequest();
+            BufferedImage img = ps.server.readRegion(request);
+            if (img == null) {
+                rgb = new byte[ww * hh * 3];
+                tiffWriter.saveBytes(planeIndex, rgb, ifd, xx, yy, ww, hh);
+            } else {
+                int aw = img.getWidth();
+                int ah = img.getHeight();
+                rgb = packInterleavedRGB(img, aw, ah);
+                tiffWriter.saveBytes(planeIndex, rgb, ifd, xx, yy, aw, ah);
+                if (aw != ww || ah != hh) {
+                    rgb = fitInterleaved(rgb, aw, ah, ww, hh, 3);
+                }
+            }
+        }
+        if (nextSlot >= 0) {
+            next.writeBlock(nextSlot, tx, ty, ww / 2, hh / 2, halveInterleaved(rgb, ww, hh, 3));
+        }
+    }
+
+    /**
+     * Each 2 x 2 block of {@code w x h} interleaved 8-bit pixels averaged per sample, rounded; an
+     * odd last row or column is dropped. Every pixel counts, the canvas included, as in the
+     * pyramid QuPath builds for RGB (an RGB canvas is white or black, never "no data").
+     */
+    static byte[] halveInterleaved(byte[] pixels, int w, int h, int samplesPerPixel) {
+        int ow = w / 2;
+        int oh = h / 2;
+        int spp = samplesPerPixel;
+        byte[] out = new byte[ow * oh * spp];
+        for (int oy = 0; oy < oh; oy++) {
+            int r0 = 2 * oy * w * spp;
+            int r1 = r0 + w * spp;
+            for (int ox = 0; ox < ow; ox++) {
+                int x = 2 * ox * spp;
+                for (int k = 0; k < spp; k++) {
+                    int sum = (pixels[r0 + x + k] & 0xFF)
+                            + (pixels[r0 + x + spp + k] & 0xFF)
+                            + (pixels[r1 + x + k] & 0xFF)
+                            + (pixels[r1 + x + spp + k] & 0xFF);
+                    out[(oy * ow + ox) * spp + k] = (byte) Math.rint(sum / 4.0);
+                }
+            }
+        }
+        return out;
+    }
+
+    /** Interleaved {@code aw x ah} pixels cropped or zero-padded to {@code w x h}. */
+    private static byte[] fitInterleaved(byte[] pixels, int aw, int ah, int w, int h, int samplesPerPixel) {
+        byte[] out = new byte[w * h * samplesPerPixel];
+        int row = Math.min(aw, w) * samplesPerPixel;
+        for (int y = 0; y < Math.min(ah, h); y++) {
+            System.arraycopy(pixels, y * aw * samplesPerPixel, out, y * w * samplesPerPixel, row);
+        }
+        return out;
+    }
+
+    /** Bytes per pixel of a staged level: 3 for interleaved RGB, else the sample size. */
+    private static int stagedBytesPerPixel(boolean exportRGB, int bytesPerPixel) {
+        return exportRGB ? 3 : bytesPerPixel;
     }
 
     /**
