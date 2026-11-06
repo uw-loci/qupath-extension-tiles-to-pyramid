@@ -277,11 +277,13 @@ public final class DirectTiffOutputWriter {
         IMetadata meta = MetadataTools.createOMEXMLMetadata();
         initializeMetadata(meta, source, pixelType, exportRGB, fullWidth, fullHeight, downsamples);
 
-        long totalTiles = countTiles(downsamples, fullWidth, fullHeight, tileSize)
-                * (long) channelPlanes
+        // Progress counts uncompressed bytes, not tiles: every level costs about the same per byte
+        // to composite and encode, so a thumbnail tile must not weigh as much as a full one.
+        int bytesPerTilePixel = bytesPerPixel * (exportRGB ? source.nChannels() : 1);
+        long totalBytes = pyramidBytes(fullWidth, fullHeight, source.nChannels(), bytesPerPixel, downsamples)
                 * (long) sizeZ
                 * (long) sizeT;
-        long writtenTiles = 0;
+        long writtenBytes = 0;
 
         try (ImageWriter imageWriter = new ImageWriter()) {
             imageWriter.setWriteSequentially(true);
@@ -388,9 +390,9 @@ public final class DirectTiffOutputWriter {
                                                 bytesPerPixel);
                                     }
 
-                                    writtenTiles++;
-                                    if (progressCallback != null && totalTiles > 0) {
-                                        progressCallback.accept((double) writtenTiles / totalTiles);
+                                    writtenBytes += (long) ww * hh * bytesPerTilePixel;
+                                    if (progressCallback != null && totalBytes > 0) {
+                                        progressCallback.accept(Math.min(1.0, (double) writtenBytes / totalBytes));
                                     }
                                 }
                             }
@@ -1067,7 +1069,7 @@ public final class DirectTiffOutputWriter {
      * downsample 1.0. Matches the level convention used by the ZARR direct path
      * ({@code width >> level}).
      */
-    static double[] computePyramidDownsamples(int width, int height, double baseDownsample, int tileSize) {
+    public static double[] computePyramidDownsamples(int width, int height, double baseDownsample, int tileSize) {
         java.util.List<Double> levels = new java.util.ArrayList<>();
         double d = baseDownsample;
         levels.add(d);
@@ -1088,23 +1090,20 @@ public final class DirectTiffOutputWriter {
         return out;
     }
 
+    /**
+     * Uncompressed bytes of every level of a pyramid, one z and t: width x height x channels x
+     * bytes per sample, summed over the levels. What a write's progress and its time estimate
+     * count.
+     */
+    public static long pyramidBytes(int width, int height, int nChannels, int bytesPerSample, double[] downsamples) {
+        return estimatePixelBytes(width, height, nChannels, bytesPerSample, downsamples);
+    }
+
     private static long estimatePixelBytes(
             int width, int height, int nChannels, int bytesPerPixel, double[] downsamples) {
         long total = 0;
         for (double d : downsamples) {
             total += (long) (width / d) * (long) (height / d) * nChannels * bytesPerPixel;
-        }
-        return total;
-    }
-
-    private static long countTiles(double[] downsamples, int width, int height, int tileSize) {
-        long total = 0;
-        for (double d : downsamples) {
-            int levelW = (int) (width / d);
-            int levelH = (int) (height / d);
-            long tilesX = (levelW + tileSize - 1) / tileSize;
-            long tilesY = (levelH + tileSize - 1) / tileSize;
-            total += tilesX * tilesY;
         }
         return total;
     }

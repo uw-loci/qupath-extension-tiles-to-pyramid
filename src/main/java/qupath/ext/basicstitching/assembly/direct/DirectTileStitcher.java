@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import qupath.ext.basicstitching.assembly.PyramidImageWriter;
 import qupath.ext.basicstitching.channel.ChannelSemantics;
 import qupath.ext.basicstitching.config.StitchingConfig;
+import qupath.ext.basicstitching.progress.StitchProgressReporter;
 import qupath.ext.basicstitching.stitching.TileMapping;
 
 /**
@@ -111,6 +112,18 @@ public class DirectTileStitcher {
             int imageHeight = index.getImageHeight();
             int zCount = countZSlices(mappings);
             int tCount = countTimepoints(mappings);
+            StitchProgressReporter progress = StitchProgressReporter.current();
+            if (progress != null) {
+                progress.exactOutputBytes(DirectTiffOutputWriter.pyramidBytes(
+                                imageWidth,
+                                imageHeight,
+                                dims.nChannels(),
+                                Math.max(1, (dims.bitDepth() + 7) / 8),
+                                DirectTiffOutputWriter.computePyramidDownsamples(
+                                        imageWidth, imageHeight, config.baseDownsample, 512))
+                        * zCount
+                        * tCount);
+            }
             logger.info(
                     "Full image: {}x{} pixels ({} tiles, {} z-slices, {} timepoints)",
                     imageWidth,

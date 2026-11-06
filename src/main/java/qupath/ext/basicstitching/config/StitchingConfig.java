@@ -53,6 +53,22 @@ public class StitchingConfig {
     private RegistrationMode registrationMode = RegistrationMode.disabled();
 
     /** @return how tile positions should be determined; never null. */
+    private java.util.function.Consumer<qupath.ext.basicstitching.progress.StitchProgress> progressListener;
+
+    /**
+     * Receives the stitch's progress and estimated time left, about every two seconds and at each
+     * phase change, on the stitching thread (or a registration worker). Keep it quick; null for
+     * none.
+     */
+    public void setProgressListener(
+            java.util.function.Consumer<qupath.ext.basicstitching.progress.StitchProgress> listener) {
+        this.progressListener = listener;
+    }
+
+    public java.util.function.Consumer<qupath.ext.basicstitching.progress.StitchProgress> getProgressListener() {
+        return progressListener;
+    }
+
     public RegistrationMode getRegistrationMode() {
         return registrationMode;
     }

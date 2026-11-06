@@ -109,7 +109,8 @@ public class PyramidImageWriter {
         if (outputFormat.stitchAsZarr()) {
             return writeOMEZARR(server, outputPath, filename, compressionType, baseDownsample, progressCallback);
         } else if (outputFormat == StitchingConfig.OutputFormat.OME_TIFF) {
-            return writeOMETIFF(server, outputPath, filename, compressionType, baseDownsample, warnings);
+            return writeOMETIFF(
+                    server, outputPath, filename, compressionType, baseDownsample, progressCallback, warnings);
         } else {
             logger.error("Unsupported output format: {}", outputFormat);
             return null;
@@ -161,6 +162,7 @@ public class PyramidImageWriter {
             String filename,
             String compressionType,
             double baseDownsample,
+            Consumer<Double> progressCallback,
             Consumer<String> warnings) {
         // Write straight to the final unique path -- NO temp file, NO rename.
         // The previous temp -> final rename was the source of the Windows
@@ -175,7 +177,7 @@ public class PyramidImageWriter {
 
         try {
             OMEPyramidWriter.CompressionType comp = UtilityFunctions.getCompressionType(compressionType);
-            DirectTiffOutputWriter.write(server, finalOutput, comp, 512, baseDownsample, null, warnings);
+            DirectTiffOutputWriter.write(server, finalOutput, comp, 512, baseDownsample, progressCallback, warnings);
             return finalOutput;
         } catch (Exception e) {
             logger.error("Failed to write pyramid OME-TIFF", e);

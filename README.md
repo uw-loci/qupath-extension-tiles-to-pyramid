@@ -933,6 +933,27 @@ averaging wrote), and refuses one that holds anything else. RGB frames are not s
 - **SSD Storage**: Use SSD drives for input/output to improve I/O performance
 - **Network Storage**: Avoid network drives for temporary processing
 
+### Time left
+Every stitch logs where it is and how long it has left, at each step and every five minutes in
+between, for example:
+
+```
+Stitching '90.0': writing the image (90.0), 34% of this step, about 1 h 12 min left (ends about 14:05)
+```
+
+The estimate counts what each step has to do: tile headers to read (one per tile), overlap pixels
+to compare when registration solves (tiles, overlap and tile size), and uncompressed bytes to write
+across every pyramid level (image size, channels and bit depth; compression sets the speed per
+byte). Before a step has run 30 seconds it is costed at the speed earlier stitches on this computer
+reached with the same compression (the defaults come from a 2,381-tile PPM stitch with J2K), and
+says "not measured yet". After that the step's own speed over the last ten minutes is used, and
+the steps still to come are slowed down by the same factor, which covers other stitches running
+at the same time and slow disks. Each finished stitch updates the remembered speeds.
+
+Scripts and other extensions get the same numbers with
+`StitchingConfig.setProgressListener(progress -> ...)`; each `StitchProgress` carries the step, how
+much of it is done, the seconds left (`NaN` while unknown) and whether that figure is measured yet.
+
 ### Disk space while writing an OME-TIFF
 For an 8- or 16-bit image, RGB included, the zoomed-out pyramid levels are made from a staged,
 uncompressed copy of the level before, kept in a hidden folder `.t2p-level-staging-<id>` beside the

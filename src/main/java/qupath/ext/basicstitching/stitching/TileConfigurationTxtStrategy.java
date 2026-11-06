@@ -6,6 +6,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.basicstitching.progress.StitchPhase;
+import qupath.ext.basicstitching.progress.StitchProgressReporter;
 import qupath.ext.basicstitching.utilities.UtilityFunctions;
 import qupath.lib.regions.ImageRegion;
 
@@ -160,11 +162,23 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
             int tileCount = tiffFiles.size();
             logger.info("Processing {} TIFF files for dimensions and mapping...", tileCount);
             int processed = 0;
+            StitchProgressReporter progress = StitchProgressReporter.current();
+            if (progress != null) {
+                var w = progress.work();
+                progress.setWork(new qupath.ext.basicstitching.progress.StitchEta.Work(
+                        tileCount, w.solveBandPixels(), w.writeBytes()));
+            }
             for (Path tifPath : tiffFiles) {
                 String filename = tifPath.getFileName().toString();
                 Position pos = positionMap.get(filename);
                 Map<String, Integer> dims = UtilityFunctions.getTiffDimensions(tifPath.toFile());
                 processed++;
+                if (progress != null && (processed % 50 == 0 || processed == tileCount)) {
+                    progress.update(
+                            StitchPhase.SCAN,
+                            (double) processed / Math.max(1, tileCount),
+                            processed + " of " + tileCount);
+                }
                 if (processed % 500 == 0 || processed == tileCount) {
                     logger.info("Tile dimension progress: {}/{} files processed", processed, tileCount);
                 }

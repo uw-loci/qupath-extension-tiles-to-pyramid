@@ -10,6 +10,9 @@ import org.slf4j.LoggerFactory;
 import qupath.ext.basicstitching.assembly.direct.DirectTileStitcher;
 import qupath.ext.basicstitching.assembly.direct.OverlapBlend;
 import qupath.ext.basicstitching.config.StitchingConfig;
+import qupath.ext.basicstitching.progress.StitchEta;
+import qupath.ext.basicstitching.progress.StitchPhase;
+import qupath.ext.basicstitching.progress.StitchProgressReporter;
 import qupath.ext.basicstitching.stitching.StitchingStrategy;
 import qupath.ext.basicstitching.stitching.StitchingStrategyFactory;
 import qupath.ext.basicstitching.stitching.TileMapping;
@@ -150,6 +153,23 @@ public class StitchingWorkflow {
      * the only difference is the richer return value.
      */
     public static StitchingResult runDetailed(StitchingConfig config) {
+        StitchProgressReporter progress = new StitchProgressReporter(
+                config.matchingString == null || config.matchingString.isBlank()
+                        ? java.nio.file.Path.of(config.folderPath).getFileName().toString()
+                        : config.matchingString,
+                config.compressionType,
+                new StitchEta.Work(0, 0, 0),
+                config.getProgressListener());
+        StitchingResult result = StitchingResult.empty();
+        try (StitchProgressReporter.Scope bound = progress.bind()) {
+            result = runBound(config, progress);
+            return result;
+        } finally {
+            progress.finish(result.hasAnyOutput());
+        }
+    }
+
+    private static StitchingResult runBound(StitchingConfig config, StitchProgressReporter progress) {
         try {
             logger.info("=== STITCHING WORKFLOW STARTING ===");
             String extVersion = GeneralTools.getPackageVersion(StitchingWorkflow.class);
@@ -183,6 +203,7 @@ public class StitchingWorkflow {
 
             // 2. Prepare tile mappings (tile file, region, and group info)
             logger.info("Preparing tile mappings...");
+            progress.start(StitchPhase.SCAN, null);
             List<TileMapping> allMappings = strategy.prepareStitching(
                     config.folderPath, config.pixelSizeInMicrons, config.baseDownsample, config.matchingString);
 
@@ -192,6 +213,7 @@ public class StitchingWorkflow {
                 return StitchingResult.withWarnings(warnings);
             }
             logger.info("Total tile mappings created: {}", allMappings.size());
+            planProgress(progress, allMappings, config);
 
             // 2b. Optionally correct the nominal stage positions against the tiles' own content.
             // This is the only place positions change; everything downstream reads them through
@@ -216,9 +238,11 @@ public class StitchingWorkflow {
             int successCount = 0;
             int failureCount = 0;
 
+            int outputIndex = 0;
             for (Map.Entry<String, List<TileMapping>> entry : groupedMappings.entrySet()) {
                 String subdirName = entry.getKey();
                 List<TileMapping> subdirMappings = entry.getValue();
+                progress.startOutput(outputIndex++, subdirName);
 
                 logger.info(""); // Blank line for readability
                 logger.info("=== Processing subdirectory: '{}' ({} tiles) ===", subdirName, subdirMappings.size());
@@ -235,12 +259,7 @@ public class StitchingWorkflow {
                         outBase = subdirName;
                     }
                     String written = DirectTileStitcher.stitch(
-                            subdirMappings,
-                            config.outputPath,
-                            outBase,
-                            config,
-                            progress ->
-                                    logger.debug("Direct stitch progress: {}%", String.format("%.1f", progress * 100)));
+                            subdirMappings, config.outputPath, outBase, config, progress::outputProgress);
                     if (written != null) {
                         logger.info("Successfully wrote: {}", written);
                         java.nio.file.Path metadata =
@@ -338,6 +357,22 @@ public class StitchingWorkflow {
      * @return whether a solution file was written
      */
     public static boolean solveRegistration(StitchingConfig config, List<String> subdirs) {
+        StitchProgressReporter progress = new StitchProgressReporter(
+                "registration " + subdirs,
+                config.compressionType,
+                new StitchEta.Work(0, 0, 0),
+                config.getProgressListener());
+        boolean written = false;
+        try (StitchProgressReporter.Scope bound = progress.bind()) {
+            progress.start(StitchPhase.SCAN, null);
+            written = solveBound(config, subdirs);
+            return written;
+        } finally {
+            progress.finish(written);
+        }
+    }
+
+    private static boolean solveBound(StitchingConfig config, List<String> subdirs) {
         try {
             StitchingStrategy strategy = StitchingStrategyFactory.getStrategy(config);
             if (strategy == null) {
@@ -366,6 +401,62 @@ public class StitchingWorkflow {
             logger.error("Registration solve failed", e);
             return false;
         }
+    }
+
+    /**
+     * The counts the time estimate needs, from the scanned tiles: the tile count, a rough solve
+     * size when registration will solve (refined by the solve itself), and each output's pyramid
+     * size from its tiles' bounding box and the first tile's channels and bit depth (refined by
+     * the stitcher once it has read the tile).
+     */
+    static void planProgress(StitchProgressReporter progress, List<TileMapping> mappings, StitchingConfig config) {
+        int bytesPerPixel = 3;
+        try {
+            var dims = qupath.ext.basicstitching.assembly.direct.TileReaderPool.getDimensions(mappings.get(0).file);
+            bytesPerPixel = Math.max(1, dims.nChannels()) * Math.max(1, (dims.bitDepth() + 7) / 8);
+        } catch (Exception e) {
+            logger.debug("No tile header for the time estimate: {}", e.toString());
+        }
+        Map<String, int[]> boxes = new java.util.LinkedHashMap<>();
+        Map<String, java.util.Set<String>> planes = new java.util.HashMap<>();
+        long tilePixels = 0;
+        for (TileMapping m : mappings) {
+            var r = m.region;
+            int[] b = boxes.computeIfAbsent(m.subdirName, k ->
+                    new int[] {Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE});
+            b[0] = Math.min(b[0], r.getX());
+            b[1] = Math.min(b[1], r.getY());
+            b[2] = Math.max(b[2], r.getX() + r.getWidth());
+            b[3] = Math.max(b[3], r.getY() + r.getHeight());
+            planes.computeIfAbsent(m.subdirName, k -> new java.util.HashSet<>()).add(r.getZ() + ":" + r.getT());
+            tilePixels += (long) r.getWidth() * r.getHeight();
+        }
+        long[] bytes = new long[boxes.size()];
+        int i = 0;
+        for (Map.Entry<String, int[]> e : boxes.entrySet()) {
+            int[] b = e.getValue();
+            int w = Math.max(1, b[2] - b[0]);
+            int h = Math.max(1, b[3] - b[1]);
+            double[] ds = qupath.ext.basicstitching.assembly.direct.DirectTiffOutputWriter.computePyramidDownsamples(
+                    w, h, config.baseDownsample, 512);
+            bytes[i++] = qupath.ext.basicstitching.assembly.direct.DirectTiffOutputWriter.pyramidBytes(
+                            w, h, 1, bytesPerPixel, ds)
+                    * planes.get(e.getKey()).size();
+        }
+        // A solve correlates about two overlap bands per tile; ~17 % overlap is the usual grid.
+        long solveBand =
+                config.getRegistrationMode() instanceof qupath.ext.basicstitching.registration.RegistrationMode.Solve
+                        ? (long) (2
+                                * 0.17
+                                * tilePixels
+                                / Math.max(
+                                        1,
+                                        planes.values().stream()
+                                                .mapToInt(java.util.Set::size)
+                                                .sum()))
+                        : 0;
+        progress.setWork(new StitchEta.Work(mappings.size(), solveBand, 0));
+        progress.planWrite(bytes);
     }
 
     /**

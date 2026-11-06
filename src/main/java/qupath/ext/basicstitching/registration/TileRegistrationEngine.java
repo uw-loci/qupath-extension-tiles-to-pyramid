@@ -12,6 +12,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import qupath.ext.basicstitching.progress.StitchEta;
+import qupath.ext.basicstitching.progress.StitchPhase;
+import qupath.ext.basicstitching.progress.StitchProgressReporter;
 import qupath.ext.basicstitching.registration.NeighborGraphBuilder.EdgePair;
 import qupath.ext.basicstitching.registration.NeighborGraphBuilder.GridGeometry;
 import qupath.ext.basicstitching.registration.NeighborGraphBuilder.NeighborGraph;
@@ -134,8 +137,29 @@ public final class TileRegistrationEngine {
             int perEdgeX = perEdgeSearch(overlapXPx, tileW, settings);
             int perEdgeY = perEdgeSearch(overlapYPx, tileH, settings);
 
-            List<EdgeMeasurement> measured =
-                    measureAll(nominal, graph.edges(), request.primary(), registrar, settings, perEdgeX, perEdgeY);
+            // Progress of the main pass, costed by overlap-band pixels: a horizontal neighbor shares
+            // an overlapX x tileH band, a vertical one tileW x overlapY.
+            StitchProgressReporter progress = StitchProgressReporter.current();
+            java.util.function.IntConsumer onEdge = null;
+            if (progress != null) {
+                long band = 0;
+                for (EdgePair e : graph.edges()) {
+                    band += e.horizontal() ? (long) overlapXPx * tileH : (long) tileW * overlapYPx;
+                }
+                StitchEta.Work w = progress.work();
+                progress.setWork(new StitchEta.Work(w.tiles(), band, w.writeBytes()));
+                int total = graph.edges().size();
+                progress.start(StitchPhase.SOLVE, total + " tile overlaps");
+                java.util.concurrent.atomic.AtomicInteger done = new java.util.concurrent.atomic.AtomicInteger();
+                onEdge = n -> {
+                    int d = done.addAndGet(n);
+                    if (d % 25 == 0 || d == total) {
+                        progress.update(StitchPhase.SOLVE, (double) d / total, d + " of " + total + " tile overlaps");
+                    }
+                };
+            }
+            List<EdgeMeasurement> measured = measureAll(
+                    nominal, graph.edges(), request.primary(), registrar, settings, perEdgeX, perEdgeY, onEdge);
             if (!request.alternates().isEmpty()) {
                 measured = rescueWeakEdges(
                         nominal, graph.edges(), measured, request, registrar, settings, perEdgeX, perEdgeY);
@@ -242,6 +266,19 @@ public final class TileRegistrationEngine {
             RegistrationSettings settings,
             int searchX,
             int searchY) {
+        return measureAll(nominal, edges, channels, registrar, settings, searchX, searchY, null);
+    }
+
+    /** As above, telling {@code onEdge} (may be null) as each edge is measured. */
+    private static List<EdgeMeasurement> measureAll(
+            List<TileNode> nominal,
+            List<EdgePair> edges,
+            List<RegistrationChannel> channels,
+            PairwiseRegistrar registrar,
+            RegistrationSettings settings,
+            int searchX,
+            int searchY,
+            java.util.function.IntConsumer onEdge) {
         if (edges.isEmpty()) {
             return List.of();
         }
@@ -263,6 +300,9 @@ public final class TileRegistrationEngine {
                     try (OverlapBandReader reader = new OverlapBandReader(budgetPerWorker)) {
                         for (EdgePair edge : chunk) {
                             out.add(measureOne(nominal, edge, channels, reader, registrar, settings, searchX, searchY));
+                            if (onEdge != null) {
+                                onEdge.accept(1);
+                            }
                         }
                     }
                     return out;
