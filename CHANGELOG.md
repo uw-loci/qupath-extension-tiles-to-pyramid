@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-06
+
 ### Added
 - **Every stitch says how long it has left.** The log gets a line at each step (reading tile headers, measuring tile overlaps, writing the image) and every five minutes, with the time left and the clock time it should end. The estimate is built from what the stitch has to do (tiles, overlap pixels when registration solves, and uncompressed output bytes over every pyramid level, so image size, channels and bit depth count) at speeds this computer reached in earlier stitches with the same compression, then from the stitch's own measured speed once a step has run 30 seconds; the steps still ahead are scaled by how much slower or faster than expected it is running, which covers stitches running side by side. `StitchingConfig.setProgressListener` hands the same numbers to scripts and to QPSC. The OME-TIFF writer's progress now counts bytes, not tiles (a thumbnail tile weighed as much as a full-resolution one), and actually reaches the caller: it was dropped on the way to the writer.
 
