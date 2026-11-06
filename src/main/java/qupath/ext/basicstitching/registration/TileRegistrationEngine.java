@@ -233,9 +233,16 @@ public final class TileRegistrationEngine {
                         String.format(Locale.ROOT, "%.2f", fill.maxBlockShiftPx()));
             }
             if (fill.stranded() > 0) {
-                logger.warn(
-                        "{} tile(s) have no path to the registered mosaic and stay at their stage positions",
-                        fill.stranded());
+                // Not a failure by itself: a region made of separate pieces of tissue (no tile
+                // between them, so no overlap) is the usual cause. Each piece is still registered
+                // within itself; only its position relative to the others comes from the stage.
+                logger.info(
+                        "{} tile(s) in {} separate piece(s) of the region share no overlap with the largest"
+                                + " piece ({} tiles); each piece is registered within itself and placed"
+                                + " relative to the others by the stage positions",
+                        fill.stranded(),
+                        fill.strandedPieces(),
+                        fill.mainTiles());
             }
             logRejections(nominal, outcome.edges());
             return result;
@@ -682,8 +689,30 @@ public final class TileRegistrationEngine {
                 }
             }
         }
+        // How many separate pieces the stranded tiles form (grid adjacency), for the report.
+        int strandedPieces = 0;
+        boolean[] seen = reached.clone();
+        for (int i = 0; i < n; i++) {
+            if (seen[i]) {
+                continue;
+            }
+            strandedPieces++;
+            int h = 0;
+            int t = 0;
+            queue[t++] = i;
+            seen[i] = true;
+            while (h < t) {
+                for (int j : adjacency.get(queue[h++])) {
+                    if (!seen[j]) {
+                        seen[j] = true;
+                        queue[t++] = j;
+                    }
+                }
+            }
+        }
+        int mainTiles = size[main];
         if (loneTiles.isEmpty() && blockTiles.isEmpty()) {
-            return new FillOutcome(0, 0, 0, 0, 0, stranded);
+            return new FillOutcome(0, 0, 0, 0, 0, stranded, strandedPieces, mainTiles);
         }
 
         // Gauss-Seidel: updates are read back within the same sweep, which propagates the boundary
@@ -760,7 +789,15 @@ public final class TileRegistrationEngine {
             attachedTiles += blockTiles.get(b).size();
             maxShift = Math.max(maxShift, Math.hypot(shiftX[b], shiftY[b]));
         }
-        return new FillOutcome(loneTiles.size(), maxCorrection, blockTiles.size(), attachedTiles, maxShift, stranded);
+        return new FillOutcome(
+                loneTiles.size(),
+                maxCorrection,
+                blockTiles.size(),
+                attachedTiles,
+                maxShift,
+                stranded,
+                strandedPieces,
+                mainTiles);
     }
 
     /**
@@ -771,12 +808,22 @@ public final class TileRegistrationEngine {
      * @param blocks pieces of two or more mutually registered tiles that were shifted as a body
      * @param blockTiles tiles in those pieces
      * @param maxBlockShiftPx the largest shift applied to a piece
-     * @param stranded tiles with no path to the largest piece, left at nominal
+     * @param stranded tiles with no grid path to the largest piece; each such piece keeps its own
+     *     registration and is placed, as a whole, where the stage put it
+     * @param strandedPieces how many separate pieces those tiles form
+     * @param mainTiles tiles in the largest piece
      */
     private record FillOutcome(
-            int filled, double maxCorrectionPx, int blocks, int blockTiles, double maxBlockShiftPx, int stranded) {
+            int filled,
+            double maxCorrectionPx,
+            int blocks,
+            int blockTiles,
+            double maxBlockShiftPx,
+            int stranded,
+            int strandedPieces,
+            int mainTiles) {
 
-        static final FillOutcome NONE = new FillOutcome(0, 0, 0, 0, 0, 0);
+        static final FillOutcome NONE = new FillOutcome(0, 0, 0, 0, 0, 0, 0, 0);
     }
 
     private static <T> List<List<T>> partition(List<T> items, int parts) {

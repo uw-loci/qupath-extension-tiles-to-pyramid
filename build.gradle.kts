@@ -105,6 +105,8 @@ dependencies {
     testImplementation("io.github.qupath:qupath-extension-bioformats:0.7.0")
     testImplementation("dev.zarr:jzarr:0.4.2")
     testImplementation(libs.junit)
+    // Same version QuPath already puts on the test runtime classpath; compile-only so tests can read log output.
+    testCompileOnly("ch.qos.logback:logback-classic:1.5.23")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
 }

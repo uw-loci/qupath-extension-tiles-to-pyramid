@@ -262,6 +262,53 @@ class TileRegistrationEngineTest {
     }
 
     /** Mean Y correction over the tiles of rows {@code r0..r1} of a 3-column grid. */
+    @Test
+    void separatePiecesOfTissueAreReportedAsPiecesAndStillRegisterWithinThemselves() throws IOException {
+        // PPM, 2026-11-06: "2223 tile(s) have no path to the registered mosaic" next to "Registration
+        // moved 2374 of 2381 tile placements" and 4200/4226 edges accepted. Both are right when the
+        // region is several separate pieces of tissue: a piece with no tile next to the largest one
+        // has no overlap with it, so it is placed by the stage as a whole, while its tiles still
+        // register to each other. 3 x 7 grid, row 2 removed: a 6-tile piece above, 12 below.
+        SyntheticGridFixture.Grid grid = SyntheticGridFixture.write(tempDir, 3, 7, TILE_W, TILE_H, 0.15, 3.0, 31);
+        java.util.List<qupath.ext.basicstitching.registration.TileNode> islands = grid.nominal().stream()
+                .filter(t -> {
+                    int index = Integer.parseInt(t.filename().replace(".tif", "")) - 1;
+                    return index / 3 != 2;
+                })
+                .toList();
+        assertEquals(18, islands.size());
+
+        ch.qos.logback.classic.Logger log =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(TileRegistrationEngine.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+                new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        log.addAppender(appender);
+        RegistrationResult result;
+        try {
+            result = TileRegistrationEngine.register(new RegistrationRequest("0", islands, settings()));
+        } finally {
+            log.detachAppender(appender);
+        }
+        assertFalse(result.degenerate(), result.summary());
+        String report = appender.list.stream()
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .filter(m -> m.contains("separate piece"))
+                .findFirst()
+                .orElse("");
+        assertTrue(report.startsWith("6 tile(s) in 1 separate piece(s)"), report);
+        assertTrue(report.contains("largest piece (12 tiles)"), report);
+
+        // The small piece is registered within itself: its tiles' corrections differ from each
+        // other by the true jitter differences, though the piece as a whole sits where the stage said.
+        double[] a = result.deltaFor("1.tif");
+        double[] b = result.deltaFor("5.tif");
+        double[] ta = grid.trueJitterPx().get("1.tif");
+        double[] tb = grid.trueJitterPx().get("5.tif");
+        assertEquals(tb[0] - ta[0], b[0] - a[0], 0.75, "X within the small piece");
+        assertEquals(tb[1] - ta[1], b[1] - a[1], 0.75, "Y within the small piece");
+    }
+
     private static double meanDeltaY(RegistrationResult result, int r0, int r1) {
         double sum = 0;
         int count = 0;

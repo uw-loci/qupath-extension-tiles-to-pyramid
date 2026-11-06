@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **A region made of separate pieces of tissue no longer reads as a registration failure.** The warning "2223 tile(s) have no path to the registered mosaic and stay at their stage positions" appeared on 2026-11-06 next to "Registration moved 2374 of 2381 tile placements" and 4200/4226 edges accepted. Both were right: a piece of the region with no tile next to the largest piece shares no overlap with it, so the piece as a whole is placed by the stage, while its own tiles still register to each other (which is why they moved). The line is now an info message that says so and counts the pieces: "N tile(s) in K separate piece(s) of the region share no overlap with the largest piece (M tiles); each piece is registered within itself and placed relative to the others by the stage positions". A test with a grid split into two pieces checks the counts and that the smaller piece registers within itself.
+
 ## [0.9.0] - 2026-11-06
 
 ### Added
