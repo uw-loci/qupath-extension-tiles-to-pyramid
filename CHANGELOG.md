@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-07
+
 ### Fixed
 - **Registration no longer splits a slightly rotated tile grid into blocks that never align to each other.** A slide that sits a little rotated on the stage gives a tile grid rotated in stage coordinates (0.105 deg on the PPM 20x run of 2026-11-06), so each column's X drifts by a couple of hundred pixels from top to bottom. The neighbor graph estimated the grid step from the sorted X and Y positions, which on such a grid reads short (1729.5 px against a true 1860 px there), skipped a column or row index every dozen or so, and so never proposed the overlaps across those lines. The region broke into blocks of about 150 tiles: each block registered within itself, but the blocks kept their stage positions relative to each other, leaving offset seams along whole rows and columns. That run logged "2223 tile(s) have no path to the registered mosaic" with 4200 of 4226 edges accepted. The step is now measured as two vectors from each tile's nearest right and lower neighbors, and tiles are indexed in that rotated lattice. The grid geometry log line now also reports the grid's rotation. `NeighborGraphBuilderTest` rebuilds the 2026-11-06 grid: the old builder gives a 1726.9 px step and a 29-tile piece around the first tile; the new one gives one piece holding every tile.
 
