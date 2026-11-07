@@ -233,16 +233,23 @@ public final class TileRegistrationEngine {
                         String.format(Locale.ROOT, "%.2f", fill.maxBlockShiftPx()));
             }
             if (fill.stranded() > 0) {
-                // Not a failure by itself: a region made of separate pieces of tissue (no tile
-                // between them, so no overlap) is the usual cause. Each piece is still registered
-                // within itself; only its position relative to the others comes from the stage.
-                logger.info(
-                        "{} tile(s) in {} separate piece(s) of the region share no overlap with the largest"
-                                + " piece ({} tiles); each piece is registered within itself and placed"
-                                + " relative to the others by the stage positions",
-                        fill.stranded(),
-                        fill.strandedPieces(),
-                        fill.mainTiles());
+                // Separate pieces of tissue (no tile between them, so no overlap) are the usual
+                // cause, and each piece still registers within itself. When the largest piece holds
+                // fewer tiles than the stranded ones, though, the region is mostly disconnected,
+                // which a contiguous piece of tissue never is: say so loudly.
+                String message = "{} tile(s) in {} separate piece(s) of the region share no overlap with the"
+                        + " largest piece ({} tiles); each piece is registered within itself and placed"
+                        + " relative to the others by the stage positions";
+                if (fill.mainTiles() < fill.stranded()) {
+                    logger.warn(
+                            message + ". The largest piece is a minority of the region, so its seams to the"
+                                    + " other pieces will show",
+                            fill.stranded(),
+                            fill.strandedPieces(),
+                            fill.mainTiles());
+                } else {
+                    logger.info(message, fill.stranded(), fill.strandedPieces(), fill.mainTiles());
+                }
             }
             logRejections(nominal, outcome.edges());
             return result;
