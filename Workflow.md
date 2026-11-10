@@ -62,7 +62,14 @@ Implementations:
 | `TileConfigurationTxtStrategy` | `TileConfiguration.txt` (stage microns); z/t from `z{zz}`/`t{tt}` directory names |
 | `FileNameStitchingStrategy` | coordinates embedded in the filename |
 | `VectraMetadataStrategy` | Vectra TIFF metadata |
-| `MicroManagerMetadataStrategy` | MicroManager sidecar JSON (`XPositionUm`/`YPositionUm`); each plane's channel, z and t from `MicroManagerPlanes` (page tag, sidecar frame keys, or single-plane file name) |
+| `MicroManagerMetadataStrategy` | MicroManager sidecar JSON (`XPositionUm`/`YPositionUm`); each plane's channel, z and t from `MicroManagerPlanes` (page tag, sidecar frame keys, single-plane file name, or a 1.4 file's `FrameKey` block); for an NDTiff dataset, `NdTiffDataset` (index axes; position from the first image's metadata; page from the index's pixel offset) |
+
+Tile widths and heights come from `TileHeaders` (TIFF header only, several files at once, cached
+per file for the session by path, length and modification time); the NDTiff path takes them from
+the index. After the strategy runs, `StitchingWorkflow.resolveZSpacing` fills an unknown
+`zSpacingMicrons` (0 or less) of a stitch with z-slices from `StitchingStrategy.recordedZSpacingUm()`
+(`acquisition_metadata.json` for TileConfiguration.txt, `Summary.z-step_um` for MicroManager); a
+value the caller gave is kept.
 
 The filename, TileConfiguration and Vectra strategies find their tile folders through
 `TileDirectories.resolve`: a blank matching string means the selected folder itself and nothing

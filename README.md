@@ -23,7 +23,8 @@ machine.
 ## What it can stitch
 
 - **Input:** a grid of 2D tile files (TIFF), positioned by `TileConfiguration.txt`, `filename[x,y]`
-  coordinates in microns, Vectra metadata, or MicroManager metadata. One method per run.
+  coordinates in microns, Vectra metadata, or MicroManager metadata (MMStack, single-plane TIFF
+  series from Micro-Manager 2 or 1.4, or NDTiff). One method per run.
 - **Output:** a pyramidal `.ome.tif`, or an `.ome.zarr` directory (NGFF 0.4, Zarr v2), written
   beside the tiles, with a `.stitch-info.txt` record of how it was made.
 - **Several folders at once:** stitch every sub-folder whose name contains some text, one output
@@ -31,7 +32,7 @@ machine.
 - **Channels:** single-channel folders can be merged into one multichannel image; RGB tiles stay
   RGB.
 - **Z-stacks and time series:** from separate files per plane with the TileConfiguration.txt
-  method, or from a MicroManager acquisition in either of its layouts. A MicroManager time series
+  method, or from a MicroManager acquisition in any of its layouts. A MicroManager time series
   per position (e.g. SHG frames) can be averaged, and a z-stack max-projected, before stitching.
   See [Z-stacks and time series](#z-stacks-and-time-series).
 - **Closing seams:** optional content-based registration measures where tiles really overlap and
@@ -195,7 +196,7 @@ For Akoya/PerkinElmer Vectra imaging systems:
 - No additional configuration files required
 
 ### 4. MicroManager metadata (MMStack or TIFF series)
-For MicroManager 2 multi-position acquisitions with sidecar metadata. Both on-disk layouts MicroManager produces are supported.
+For Micro-Manager multi-position acquisitions. Shown in the dropdown as **MicroManager (MMStack, TIFF series or NDTiff)**; scripts and QPSC keep using the identifier `"MicroManager metadata (MMStack or TIFF series)"`. Micro-Manager 2's image stack files, separate image files and NDTiff are supported, and Micro-Manager 1.4's separate image files.
 
 **When to use this strategy:** choose it whenever you acquired a multi-position
 (XY-tiled) dataset in MicroManager 2 and let MicroManager write the standard
@@ -208,10 +209,12 @@ which of the two layouts you have:
 |---|---|---|
 | **Flat MMStack** | "Image stack file" (multi-page `MULTIPAGE_TIFF`) | one `<prefix>_MMStack_<pos>.ome.tif` + `<prefix>_MMStack_<pos>_metadata.txt` per position, all in one folder |
 | **Single-plane TIFF series** | "Separate image files" (`SINGLEPLANE_TIFF_SERIES`) | one subfolder per position (`Pos-...`), each with a single-image `img_...tif` + a `metadata.txt` |
+| **NDTiff** | "NDTiff" (Micro-Manager 2; also Pycro-Manager's default) | `<prefix>_NDTiffStack.tif` (continued in `_1`, `_2`, ... past 4 GB) holding every image, and one `NDTiff.index` |
+| **Micro-Manager 1.4 single-plane files** | Micro-Manager 1.4's "Separate image files" | one subfolder per position, each with `img_TTTTTTTTT_<channel name>_ZZZ.tif` files + a `metadata.txt` |
 
-Both come out of the same MicroManager MDA acquisition; the only difference is the
-"Save" radio button chosen at acquisition time. You do not pick the layout in the
-dialog -- the strategy detects it. Detail on each:
+They come out of the same MicroManager MDA acquisition; the only difference is the
+"Save" setting chosen at acquisition time (and, for the last, the Micro-Manager version). You do not
+pick the layout in the dialog -- the strategy detects it. Detail on each:
 
 **Flat MMStack** (one OME-TIFF + sidecar per position, all in one folder):
 - Reads tile positions from `*_metadata.txt` JSON sidecar files
@@ -225,18 +228,31 @@ dialog -- the strategy detects it. Detail on each:
 - Reads per-tile stage coordinates from the `Metadata-<relative/path/to.tif>` block (the JSON key encodes the file name)
 - Each TIFF is a genuine single-image file; its channel, z-slice and time point come from its name, or from its `Metadata-` or `Coords-` block when the name is not of that form
 
-Common to both:
+**NDTiff** (select the folder holding `NDTiff.index`, or its parent when the images sit in a `Full resolution` sub-folder):
+- Read from `NDTiff.index`, following the format specification in the [NDTiffStorage README](https://github.com/micro-manager/NDTiffStorage) ("Specification for NDTiff v3.x"); versions 2 and 3 are read
+- Each image's `channel`, `z` and `time` axes give its plane (a channel given by name, as format 3.2 allows, is ordered by `Summary.ChNames`); every other axis (`position`, or `row` / `column`) names its position
+- A position's stage coordinates are the `XPositionUm` / `YPositionUm` of its first image's metadata, else its `Summary.StagePositions` entry; a position with neither is left out with a **WARNING**
+- Pixel size from the first image's `PixelSizeUm`, else `Summary.PixelSize_um`; z spacing from `Summary.z-step_um`
+- Images must be uncompressed, which is the only compression the format defines
+- Not supported: NDTiff 1.x, which kept its index inside the TIFF, or a dataset whose `NDTiff.index` is missing. When a stitch finds no tiles, the result window names such stack files under **Not supported**. Averaging time points and projecting z-slices are not offered for NDTiff; its planes are stitched as they are
+
+**Micro-Manager 1.4 single-plane files** (a folder per position, named after the position):
+- Files are named `img_<frame, 9 digits>_<channel name>_<slice, 3 digits>.tif` (`TaggedImageStorageDiskDefault.createFileName` in Micro-Manager's `mm1.4` source)
+- Each position's `metadata.txt` has one `FrameKey-t-c-z` block per file, naming it in `FileName`; the plane comes from that block (its `ChannelIndex`, `SliceIndex`, `FrameIndex`), else from the file name with the channel looked up in `Summary.ChNames`
+- Stage coordinates come from each block's `XPositionUm` / `YPositionUm`: a 1.4 Summary lists no `StagePositions`, so a file without a block cannot be placed
+
+Common to all:
 - Falls back to `Summary.StagePositions` labels if a per-tile block is missing or malformed
 - Auto-detects pixel size from the metadata's `PixelSizeUm`
 - **Channels, z-slices and time points:** every plane is placed by its own channel, z-slice and time point. A single-channel acquisition stitches into one output named after the folder; a multi-channel acquisition into one output per channel, named from `Summary.ChNames`, which **Merge the N channel stitches** combines in the acquisition's channel order. Each output keeps every z-slice and time point it was given (z spacing from `Summary.z-step_um`), unless the time points are averaged or the z-slices projected first (see [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager)). For an MMStack page without the MicroManager tag, the plane comes from the order of the `FrameKey-t-c-z` entries in its sidecar, or, with one page per channel and no z or time, page `i` is channel `i`. When none of these says what a page holds, the position is read from its first page only (always the first channel, slice and time point), and a single-plane file is left out; either is reported as a **WARNING** at the top of the result window and in the `.stitch-info.txt` record.
-- **Time series and z-stacks per position:** when the acquisition has more than one frame or z-slice per position (either layout), the dialog offers **Average the N time points of each position before stitching** and **Max-intensity project the N z-slices of each position**. See [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager).
-- **Registration:** each channel is a candidate to measure on, in both layouts: **Reference subdirectory** lists the acquisition's channels by name, and **Auto** picks among them. Every position is measured on the same plane of that channel, the middle z-slice of the first time point, and every channel, z-slice and time point of a position receives that position's correction. See [Which channel to measure on](#which-channel-to-measure-on).
+- **Time series and z-stacks per position:** when the acquisition has more than one frame or z-slice per position (any layout but NDTiff), the dialog offers **Average the N time points of each position before stitching** and **Max-intensity project the N z-slices of each position**. See [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager).
+- **Registration:** each channel is a candidate to measure on, in every layout: **Reference subdirectory** lists the acquisition's channels by name, and **Auto** picks among them. Every position is measured on the same plane of that channel, the middle z-slice of the first time point, and every channel, z-slice and time point of a position receives that position's correction. See [Which channel to measure on](#which-channel-to-measure-on).
 - **Acquisition metadata:** every output, and the merged image, gets a `<image stem>.mm-metadata.json` beside it with what Micro-Manager recorded about the acquisition (pixel size, exposure per channel, bit depth, start time, grid, `comments.txt`, ...). See [Micro-Manager acquisition metadata](#micro-manager-acquisition-metadata).
 - **Stage axes:** the sidecars record absolute stage coordinates, and whether a rising stage coordinate moves right and down in the camera image depends on how the stage is wired and the camera mounted. The strategy cannot infer that, so it assumes rising stage equals rising pixel. Where that is wrong, tick **Invert X axis** / **Invert Y axis** -- see [If the mosaic comes out mirrored](#if-the-mosaic-comes-out-mirrored).
 - No additional configuration files required
 
 **Usage:**
-- Select the acquisition's root folder (the folder containing the sidecars, or the folder containing the per-position subfolders). The strategy scans subfolders, so either layout works.
+- Select the acquisition's root folder (the folder containing the sidecars, the folder containing the per-position subfolders, or the NDTiff dataset folder). The strategy scans subfolders, so any of the layouts works.
 - On a stage-inverted scope, tick **Invert X axis** and/or **Invert Y axis**. Scripted callers set `MicroManagerMetadataStrategy.flipStitchingX` / `flipStitchingY` instead.
 
 **Pixel Size Auto-fill:**
@@ -309,7 +325,7 @@ input_folder/             Method: Filename[x,y]; sub-folder text: slide
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| **Stitching Method** | How tile positions are read: "Vectra tiles with metadata", "Filename[x,y] with coordinates in microns", "TileConfiguration.txt file", or "MicroManager metadata (MMStack or TIFF series)". Remembered as soon as it is changed | Last-used (initially TileConfiguration.txt file) |
+| **Stitching Method** | How tile positions are read: "Vectra tiles with metadata", "Filename[x,y] with coordinates in microns", "TileConfiguration.txt file", or "MicroManager (MMStack, TIFF series or NDTiff)". Remembered as soon as it is changed | Last-used (initially TileConfiguration.txt file) |
 | **Folder location** (**Select Folder**) | The folder that holds your tiles. Stitched images are written **into this same folder** | Last-used folder (initially your home directory) |
 | **Pixel size, microns** | Physical size of each pixel in micrometers. Auto-detected from MMStack `*_metadata.txt` sidecars when available; field is locked by default. Tick "Manually edit pixel size" to override. Hidden for the Vectra method, whose tiles carry pixel positions | Detected from metadata; otherwise the last manually entered value (initially 7.2) |
 | **Downsample** | Downsampling factor for output | Last-used (initially 1) |
@@ -321,7 +337,7 @@ input_folder/             Method: Filename[x,y]; sub-folder text: slide
 | **Correct uneven brightness with a flat-field profile** | Shown only for the MicroManager method. For a detector with no background image, such as a PMT. Choose a profile folder fitted with **QP Scope > Utilities > Image Quality > Estimate Flat-Field from Tiles (BaSiC)...**, or with `python -m microscope_imageprocessing.correction.flatfield`. Each plane is corrected after averaging and before any z projection, as `(raw - offset) / flatfield + offset`, so the background keeps its value. The copy that is stitched gets `_ff` in its name, and the stitch record names the profile. A profile fits one detector, objective, zoom and channel; other channels are left alone, and a profile of a different size is refused. It evens out brightness but does not improve signal to noise. |
 | **Max-intensity project the N z-slices of each position** | Shown only for the MicroManager method when the acquisition has more than one z-slice per position. Takes the per-pixel maximum over each channel's slices, after averaging the time points when that is ticked too, into the same copy. Choice is remembered | On |
 | **Merge the N channel stitches into one multichannel image** | Shown only when 2+ matching sub-folders of single-channel (non-RGB) tiles will be stitched, or when a MicroManager acquisition has multiple channels. Combines the per-channel stitches into one multichannel `<folder>_merged` image; the per-channel images are kept. When the stitch produces fewer images than N, the result window says so. See [Merging channels in the dialog](#merging-channels-in-the-dialog). Choice is remembered | On |
-| **Z-Spacing (um)** | Scripts only (`StitchingConfig`); the dialog records 1.0, or for MicroManager input the acquisition's `Summary.z-step_um` (left unset when there is none). See [Z-stacks and time series](#z-stacks-and-time-series) | 1.0 |
+| **Z spacing (um), N z-slices** | Shown only for the TileConfiguration.txt method when the tile folders hold `z{nn}/` folders (2 or more). The distance between z-slices written to the output. Filled from the `acquisition_metadata.json` a QP Scope acquisition writes beside its tile folders (`acquisition.z_stack.z_step_um`), looked for in the selected folder and then its parent. Left empty, the spacing is unknown: the stitch still takes it from that file if it finds one, and otherwise the output records no z spacing. MicroManager input takes `Summary.z-step_um` instead, with no field. See [Z-stacks and time series](#z-stacks-and-time-series) | From `acquisition_metadata.json`; empty without one |
 | **Solve tile overlaps (content-based registration)** | Checkbox to enable overlap measurement and correction. When enabled, measures the real overlap between neighboring tiles and corrects their positions before stitching, closing seams caused by stage backlash and drift. Writes a `TileRegistration.txt` solution file beside the tiles. Choice is remembered between sessions. See [Tile registration](#tile-registration) for details. | Off (faster, nominal positions) |
 | **Reference subdirectory** | Shown when overlap solving is on: what the overlaps are measured on. **Auto (best match)**, a named sub-folder (for MicroManager, a channel), or **Normalized merge of all** when there are two or more. Every sub-folder is then placed with that one result. See [Tile registration](#tile-registration) | Auto |
 
@@ -746,7 +762,8 @@ has no value for it.
 
 Everything is read from the sidecar of the acquisition's first position (`Summary.StagePositions[0]`,
 or the first sidecar by path when that cannot be found), so it does not depend on the order a
-folder is listed in. The operator's user name and computer name, which `Summary` also holds, are
+folder is listed in. For NDTiff, the dataset's summary metadata stands in for the sidecar's
+`Summary`, and the metadata of the first position's earliest image of each channel for its planes. The operator's user name and computer name, which `Summary` also holds, are
 not written. This replaces the file QPSC's "Stitch MicroManager Folder" wrote before it was
 removed.
 
@@ -837,12 +854,18 @@ Using matching string "." will create three separate stitched images, one for ea
 
 Z-slices and timepoints are preserved in two cases: each plane a separate tile file, placed in
 `z{nn}/` (and optionally `t{nn}/`) subdirectories and stitched with the **TileConfiguration.txt**
-strategy; or a **MicroManager** acquisition in either layout, whose planes are placed by the
+strategy; or a **MicroManager** acquisition in any of its layouts, whose planes are placed by the
 channel, z-slice and time point MicroManager recorded for each one. Either way the output is a
 genuine multi-plane pyramid: each `(z, t)` plane is composited from only the tiles at that plane,
-and both output formats declare the Z/T sizes. The Z-spacing recorded is 1 um for
-TileConfiguration.txt input (the dialog has no field for it) and `Summary.z-step_um` for
-MicroManager input (left unset when the sidecar has none). Planes are written through as-is; for
+and both output formats declare the Z/T sizes. The z spacing written is, in this order: the value
+the caller gave (the dialog's **Z spacing** field for TileConfiguration.txt input, the
+`zSpacingMicrons` of a `StitchingConfig`, which QPSC fills from its z-stack step); else what the
+acquisition recorded (`acquisition.z_stack.z_step_um` in a QPSC `acquisition_metadata.json` beside
+the tile folders, or `Summary.z-step_um` for MicroManager input); else none: an OME-TIFF then has no
+`PhysicalSizeZ`. A value of 0 or less means "unknown". The `.stitch-info.txt` record gives the
+spacing and, when it was read from the acquisition, where from. (Until 0.9.1, TileConfiguration.txt
+input was always written with 1 um.) OME-Zarr output still writes a z scale of 1 when the spacing is
+unknown, since its coordinate transformations need one. Planes are written through as-is; for
 MicroManager input, time points can be averaged and z-stacks max-projected first (below).
 
 | Input layout | Z | T |
@@ -851,7 +874,8 @@ MicroManager input, time points can be averaged and z-stacks max-projected first
 | TileConfiguration.txt + `t{nn}/z{nn}/` directories | preserved | preserved |
 | TileConfiguration.txt, flat (no z/t directories) | 2D (z=0) | 2D (t=0) |
 | MicroManager, MMStack (planes are pages of one file per position) | preserved | preserved |
-| MicroManager, single-plane TIFF series (one file per plane) | preserved | preserved |
+| MicroManager, single-plane TIFF series (one file per plane), Micro-Manager 2 or 1.4 | preserved | preserved |
+| MicroManager, NDTiff (planes are pages of the stack files) | preserved | preserved |
 | Filename[x,y], Vectra | 2D only | 2D only |
 | Z/T **inside** a multi-page file stitched by TileConfiguration.txt | **collapsed** | **collapsed** |
 
@@ -872,10 +896,11 @@ the two levels are matched independently, so `z{nn}/t{nn}/` nesting works as wel
 
 For acquisitions that take several frames at each position to average out noise, as SHG and other
 laser-scanning modalities often do, and for z-stacks to be flattened by maximum intensity
-projection. Both MicroManager layouts work: **separate image files per position**
+projection. These MicroManager layouts work: **separate image files per position**
 (`<prefix>_MMStack_<label>.ome.tif` plus `_metadata.txt`) and the **single-plane TIFF series** (a
-folder per position holding one `img_channelCCC_positionPPP_timeTTTTTTTTT_zZZZ.tif` per plane and a
-`metadata.txt`). Without this step, every channel, z-slice and time point is stitched as a plane
+folder per position holding one `img_channelCCC_positionPPP_timeTTTTTTTTT_zZZZ.tif` per plane, or
+Micro-Manager 1.4's `img_TTTTTTTTT_<channel>_ZZZ.tif`, and a `metadata.txt`). NDTiff is not: its
+planes are stitched as they are. Without this step, every channel, z-slice and time point is stitched as a plane
 of its own (see [Z-stacks and time series](#z-stacks-and-time-series)).
 
 When the selected folder's metadata reports more than one frame, the dialog shows **Average the N
@@ -906,7 +931,7 @@ this order:
 Which channel, frame and slice a page belongs to is read the same way the stitch reads it: from the
 MicroManager tag on every page, or, for a file without it, from the order of the `FrameKey-t-c-z`
 entries in its sidecar (a `_1.ome.tif` continuation file carries on that order); in a single-plane
-series from the file name, or the file's `Metadata-` or `Coords-` block. A file matching none of
+series from the file name, or the file's `Metadata-`, `Coords-` or (1.4) `FrameKey-` block. A file matching none of
 these is refused rather than guessed. On a 500-position, 3-frame 16-bit SHG acquisition (512 x 512 tiles)
 averaging took about 2 minutes over a network-mounted drive, and every averaged plane matched an
 independent numpy mean exactly; projection is checked by unit tests on synthetic stacks, not yet on
@@ -930,6 +955,7 @@ averaging wrote), and refuses one that holds anything else. RGB frames are not s
 
 ### Processing speed
 - **Parallel Processing**: Extension automatically uses multiple CPU cores
+- **Tile headers**: each tile's size is read from its TIFF header, up to 8 files at a time, and remembered for the QuPath session while the file is unchanged, so a registration solve and the stitches after it read each header once. On 5 channel folders of 1810 tiles on a Windows drive seen from WSL, a solve over all five plus five stitches spent 4.8-5.7 s reading sizes, against 208-331 s in 0.9.1
 - **SSD Storage**: Use SSD drives for input/output to improve I/O performance
 - **Network Storage**: Avoid network drives for temporary processing
 
@@ -1143,7 +1169,10 @@ Configuration class for stitching operations.
 - `FileNameStitchingStrategy`: Parse coordinates from filenames
 - `TileConfigurationTxtStrategy`: Read ImageJ/Fiji tile configurations (and the `z{nn}/`/`t{nn}/` layouts)
 - `VectraMetadataStrategy`: Extract Vectra TIFF metadata
-- `MicroManagerMetadataStrategy`: Read MicroManager sidecar metadata (MMStack or single-plane TIFF series)
+- `MicroManagerMetadataStrategy`: Read MicroManager sidecar metadata (MMStack, single-plane TIFF series from Micro-Manager 2 or 1.4) or an NDTiff dataset
+- `NdTiffDataset`: Read an NDTiff `NDTiff.index`: each image's axes, stack file and page, and its metadata
+- `TileHeaders`: Tile width and height from the TIFF header, read on several threads and remembered per file for the session
+- `AcquisitionRecord`: Values from a QPSC `acquisition_metadata.json` (the z-step)
 - `MicroManagerPreprocessor`: Average each position's time points, then max-project its z-slices, into a copy before stitching (`run(source, output, Options)`, `shape(folder)`, `defaultOutput(source, options)`); see [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager)
 
 ### Extension points
