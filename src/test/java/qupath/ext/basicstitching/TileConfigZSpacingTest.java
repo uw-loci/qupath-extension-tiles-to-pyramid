@@ -50,7 +50,8 @@ class TileConfigZSpacingTest {
         try (ImageServer<BufferedImage> server = ImageServers.buildServer(out.toUri())) {
             assertEquals(4.0, server.getPixelCalibration().getZSpacingMicrons(), 1e-9);
         }
-        assertTrue(stitchInfo(out).contains("z spacing (um): 4.0\n"), stitchInfo(out));
+        // The whole line: no "(from ...)" after it. The record has the platform's line endings.
+        assertTrue(stitchInfo(out).lines().anyMatch(l -> l.strip().equals("z spacing (um): 4.0")), stitchInfo(out));
     }
 
     @Test
