@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-11-10
+
 ### Fixed
 - **Works when QuPath's language is set to Turkish or Azerbaijani.** Two names were lowered with the default locale before being matched, which turns an upper-case I into a dotless i: a Zarr compression given as `ZLIB` became `zlıb`, was rejected by Blosc and silently replaced by zstd, and a channel's declared resample policy `LINEAR` was read as unknown, so that channel was treated as one that must not be combined. Every case conversion now uses `Locale.ROOT`. The writers that other programs read (TileConfiguration, OME-XML, the stitch-info and solution files) already wrote their numbers with `Locale.ROOT`; tests now write their TileConfiguration fixtures the same way, and CI runs the unit tests in a Turkish JVM as well.
 
