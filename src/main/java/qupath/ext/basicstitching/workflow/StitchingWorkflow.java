@@ -213,6 +213,7 @@ public class StitchingWorkflow {
                 return StitchingResult.withWarnings(warnings);
             }
             logger.info("Total tile mappings created: {}", allMappings.size());
+            resolveZSpacing(config, strategy, allMappings);
             planProgress(progress, allMappings, config);
 
             // 2b. Optionally correct the nominal stage positions against the tiles' own content.
@@ -313,6 +314,35 @@ public class StitchingWorkflow {
         } catch (Exception e) {
             logger.error("Critical exception in StitchingWorkflow", e);
             return StitchingResult.empty();
+        }
+    }
+
+    /**
+     * Settle the z spacing of a stitch with z-slices: the caller's when given, else the one the
+     * acquisition recorded, else unknown (the output's z spacing is left unset).
+     */
+    static void resolveZSpacing(StitchingConfig config, StitchingStrategy strategy, List<TileMapping> mappings) {
+        if (mappings.stream().noneMatch(m -> m.region.getZ() > 0)) {
+            return;
+        }
+        Double recorded = strategy.recordedZSpacingUm();
+        if (config.zSpacingMicrons > 0) {
+            if (recorded != null && Math.abs(recorded - config.zSpacingMicrons) > 1e-6) {
+                logger.warn(
+                        "Z spacing {} um was given; the acquisition recorded {} um. Writing the value given.",
+                        config.zSpacingMicrons,
+                        recorded);
+            }
+            logger.info("  - Z spacing: {} um", config.zSpacingMicrons);
+        } else if (recorded != null
+                && config.useRecordedZSpacing(
+                        recorded,
+                        strategy instanceof qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy
+                                ? "Micro-Manager Summary z-step_um"
+                                : qupath.ext.basicstitching.stitching.AcquisitionRecord.FILE_NAME)) {
+            logger.info("  - Z spacing: {} um (from {})", config.zSpacingMicrons, config.getZSpacingSource());
+        } else {
+            logger.info("  - Z spacing: unknown; the output records none");
         }
     }
 
@@ -518,7 +548,12 @@ public class StitchingWorkflow {
         if (zs.size() > 1) {
             stitching.put(
                     "z spacing (um)",
-                    config.zSpacingMicrons > 0 ? String.valueOf(config.zSpacingMicrons) : "unknown (not written)");
+                    config.zSpacingMicrons > 0
+                            ? config.zSpacingMicrons
+                                    + (config.getZSpacingSource() != null
+                                            ? " (from " + config.getZSpacingSource() + ")"
+                                            : "")
+                            : "unknown (not written)");
         }
         stitching.put("stage axes negated (X, Y)", flipX + ", " + flipY);
         // Report the blend that was USED, not the one that was asked for. The old wording appended

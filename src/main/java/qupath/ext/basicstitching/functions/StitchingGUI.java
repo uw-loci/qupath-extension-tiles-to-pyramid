@@ -47,6 +47,7 @@ import qupath.ext.basicstitching.registration.RegistrationMode;
 import qupath.ext.basicstitching.registration.RegistrationReference;
 import qupath.ext.basicstitching.registration.RegistrationSettings;
 import qupath.ext.basicstitching.registration.TileRegistrationSolution;
+import qupath.ext.basicstitching.stitching.AcquisitionRecord;
 import qupath.ext.basicstitching.stitching.FileScanner;
 import qupath.ext.basicstitching.stitching.FlatfieldProfile;
 import qupath.ext.basicstitching.stitching.FolderDiagnosis;
@@ -145,6 +146,11 @@ public class StitchingGUI {
     private final Label pixelSizeLabel = new Label("Pixel size, microns:");
     private final Label downsampleLabel = new Label("Downsample:");
     private final Label matchStringLabel = new Label("Sub-folders to stitch (* = all):");
+    private final Label zSpacingLabel = new Label("Z spacing (um):");
+    private final TextField zSpacingField = new TextField();
+    /** Folder and sub-folder text the z spacing field was last filled for. */
+    private String zSpacingFilledFor;
+
     private final Hyperlink githubLink = new Hyperlink("GitHub ReadMe");
     private final Label xFudgeLabel = new Label("X fudge factor:");
     private final Label yFudgeLabel = new Label("Y fudge factor:");
@@ -237,12 +243,15 @@ public class StitchingGUI {
             double downsample = parseDoubleField(downsampleField.getText(), 1.0);
             String matchingString = matchStringField.getText();
             String stitchingType = stitchingGridBox.getValue();
-            // A MicroManager sidecar records the z-step; with none, 0 leaves the output's z spacing
-            // unset rather than claiming a value nobody measured.
-            double zSpacingMicrons = 1.0;
+            // A MicroManager sidecar records the z-step; a TileConfiguration.txt stack takes it from
+            // the dialog's field. 0 leaves the output's z spacing unset rather than claiming a value
+            // nobody measured (the stitch still fills it from an acquisition record it finds).
+            double zSpacingMicrons = 0.0;
             if (stitchingType != null && stitchingType.startsWith("MicroManager")) {
                 Double step = MicroManagerMetadataStrategy.detectZStepUm(new File(folderPath.trim()));
                 zSpacingMicrons = step != null ? step : 0.0;
+            } else if (zSpacingField.isVisible()) {
+                zSpacingMicrons = parseZSpacing(zSpacingField.getText());
             }
 
             QPPreferences.setFolderLocationSaved(folderPath);
@@ -722,6 +731,64 @@ public class StitchingGUI {
     }
 
     /**
+     * Adds the z spacing field for the TileConfiguration.txt method, shown when the tile folders hold
+     * z-slices ({@code z{nn}/} or {@code t{nn}/z{nn}/}): a TileConfiguration.txt has no field for it.
+     * It is filled from the acquisition's {@code acquisition_metadata.json} when there is one; left
+     * empty, the spacing is unknown and the output records none.
+     */
+    private void addZSpacingComponents(GridPane pane) {
+        zSpacingField.setPromptText("unknown");
+        Tooltip tip = new Tooltip("Distance between z-slices, in microns, written to the output image.\n"
+                + "A TileConfiguration.txt does not record it. It is filled in from the\n"
+                + "acquisition_metadata.json a QP Scope acquisition writes, when there is one.\n"
+                + "Left empty, the spacing is unknown: it is taken from that file if the\n"
+                + "stitch finds one, and otherwise the image records no z spacing.");
+        zSpacingLabel.setTooltip(tip);
+        zSpacingField.setTooltip(tip);
+        addToGrid(pane, zSpacingLabel, zSpacingField);
+        zSpacingLabel.setVisible(false);
+        zSpacingField.setVisible(false);
+        folderField.textProperty().addListener((obs, o, n) -> refreshZSpacing());
+        matchStringField.textProperty().addListener((obs, o, n) -> refreshZSpacing());
+        stitchingGridBox.valueProperty().addListener((obs, o, n) -> refreshZSpacing());
+    }
+
+    private void refreshZSpacing() {
+        String method = stitchingGridBox.getValue();
+        String path = folderField.getText();
+        int slices = "Coordinates in TileConfiguration.txt file".equals(method) && path != null && !path.isBlank()
+                ? TileConfigurationTxtStrategy.countZSlices(Paths.get(path.trim()), matchStringField.getText())
+                : 0;
+        boolean show = slices > 1;
+        zSpacingLabel.setVisible(show);
+        zSpacingField.setVisible(show);
+        if (!show) {
+            return;
+        }
+        zSpacingLabel.setText("Z spacing (um), " + slices + " z-slices:");
+        String key = path.trim() + "|" + matchStringField.getText();
+        if (!key.equals(zSpacingFilledFor)) {
+            zSpacingFilledFor = key;
+            Double recorded = AcquisitionRecord.zStepUm(Paths.get(path.trim()));
+            zSpacingField.setText(recorded != null ? String.valueOf(recorded) : "");
+        }
+    }
+
+    /** The z spacing typed in the dialog: 0 (unknown) when empty, not a number, or not positive. */
+    public static double parseZSpacing(String text) {
+        if (text == null || text.isBlank()) {
+            return 0.0;
+        }
+        try {
+            double v = Double.parseDouble(text.trim());
+            return v > 0 && Double.isFinite(v) ? v : 0.0;
+        } catch (NumberFormatException e) {
+            logger.warn("Z spacing '{}' is not a number; the spacing is left unknown", text);
+            return 0.0;
+        }
+    }
+
+    /**
      * Adds the preprocessing options for a MicroManager acquisition with several time points or
      * z-slices per position (e.g. SHG collected as a short time series, or a z-stack), in either
      * MicroManager layout. Time points are averaged first (or each kept), then z-slices
@@ -893,6 +960,7 @@ public class StitchingGUI {
         addStitchingGridComponents(pane);
         addFolderSelectionComponents(pane);
         addMatchStringComponents(pane);
+        addZSpacingComponents(pane);
         addStageInvertComponents(pane);
         addPreprocessComponents(pane);
         addMergeChannelsComponent(pane);
@@ -913,6 +981,7 @@ public class StitchingGUI {
 
         // Update the components' visibility based on the current selection
         updateComponentsBasedOnSelection(pane);
+        refreshZSpacing();
         addFudgeFactorComponents(pane);
 
         // Hidden rows (Vectra fudge factors, pixel size for other methods) must not reserve space.
@@ -1129,6 +1198,7 @@ public class StitchingGUI {
         guiElementPositions.put(pixelSizeOverrideCheckbox, currentPosition++);
         guiElementPositions.put(downsampleLabel, currentPosition++);
         guiElementPositions.put(matchStringLabel, currentPosition++);
+        guiElementPositions.put(zSpacingLabel, currentPosition++);
         guiElementPositions.put(invertLabel, currentPosition++);
         guiElementPositions.put(averageFramesCheckbox, currentPosition++);
         guiElementPositions.put(flatfieldRow, currentPosition++);

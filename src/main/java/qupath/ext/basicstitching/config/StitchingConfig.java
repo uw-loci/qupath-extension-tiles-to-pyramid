@@ -15,7 +15,16 @@ public class StitchingConfig {
     public final double pixelSizeInMicrons;
     public final double baseDownsample;
     public final String matchingString;
-    public final double zSpacingMicrons;
+    /**
+     * Spacing between z-slices in microns; 0 or less when unknown, which leaves the output's z
+     * spacing unset. The workflow fills an unknown value from the acquisition's own record when it
+     * has one ({@link #useRecordedZSpacing}); a value the caller gave is never replaced.
+     */
+    public double zSpacingMicrons;
+
+    /** Where {@link #zSpacingMicrons} came from when the workflow filled it in; null when the caller gave it. */
+    private String zSpacingSource;
+
     public final double xFudgeFactor;
     public final double yFudgeFactor;
     public final OutputFormat outputFormat;
@@ -90,6 +99,27 @@ public class StitchingConfig {
     private qupath.ext.basicstitching.workflow.StitchInfoFile.Section registrationRecord =
             qupath.ext.basicstitching.workflow.StitchInfoFile.Section.of(
                     "registration", java.util.Map.of("mode", "off (tiles at nominal stage positions)"));
+
+    /**
+     * Take the z spacing the acquisition recorded, when the caller gave none.
+     *
+     * @param micrometers the recorded spacing
+     * @param source where it was recorded, for the stitch record
+     * @return whether it was taken: false when the caller gave a spacing or the value is not positive
+     */
+    public boolean useRecordedZSpacing(double micrometers, String source) {
+        if (zSpacingMicrons > 0 || !(micrometers > 0) || !Double.isFinite(micrometers)) {
+            return false;
+        }
+        zSpacingMicrons = micrometers;
+        zSpacingSource = source;
+        return true;
+    }
+
+    /** @return where the z spacing was read from when the workflow filled it in; null when the caller gave it */
+    public String getZSpacingSource() {
+        return zSpacingSource;
+    }
 
     /** @return what registration did on this stitch; never null. */
     /**

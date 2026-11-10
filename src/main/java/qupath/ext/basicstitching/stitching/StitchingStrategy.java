@@ -33,6 +33,16 @@ public interface StitchingStrategy {
     }
 
     /**
+     * The spacing between z-slices that the acquisition the last {@link #prepareStitching} call read
+     * recorded itself, for a caller that does not know it.
+     *
+     * @return the spacing in microns; null when the input records none
+     */
+    default Double recordedZSpacingUm() {
+        return null;
+    }
+
+    /**
      * Write what the input recorded about the acquisition beside one output of the last
      * {@link #prepareStitching} call. Never throws.
      *

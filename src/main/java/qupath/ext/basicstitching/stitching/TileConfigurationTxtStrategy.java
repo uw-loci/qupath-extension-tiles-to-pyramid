@@ -1,5 +1,6 @@
 package qupath.ext.basicstitching.stitching;
 
+import java.io.IOException;
 import java.nio.file.*;
 import java.util.*;
 import java.util.regex.Matcher;
@@ -72,6 +73,7 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
     public List<TileMapping> prepareStitching(
             String folderPath, double pixelSizeInMicrons, double baseDownsample, String matchingString) {
         logger.info("Preparing stitching using TileConfiguration.txt strategy for folder: {}", folderPath);
+        recordedZSpacing = null;
         List<TileMapping> mappings = new ArrayList<>();
         Path rootdir = Paths.get(folderPath);
 
@@ -107,8 +109,58 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
             }
         }
 
+        recordedZSpacing =
+                mappings.stream().anyMatch(m -> m.region.getZ() > 0) ? AcquisitionRecord.zStepUm(rootdir) : null;
         logger.info("Total tiles mapped from TileConfiguration.txt: {}", mappings.size());
         return mappings;
+    }
+
+    /** The z-step in {@code acquisition_metadata.json} when the last call found z-slices; else null. */
+    private Double recordedZSpacing;
+
+    /** @return {@code acquisition.z_stack.z_step_um} of a QPSC acquisition record, when the tiles have z-slices */
+    @Override
+    public Double recordedZSpacingUm() {
+        return recordedZSpacing;
+    }
+
+    /**
+     * How many z-slices the tile folders the dialog would stitch hold, from their {@code z{nn}}
+     * folder names ({@code z{nn}/} or {@code t{nn}/z{nn}/}, optionally under an angle folder). Lists
+     * folders only; reads no file.
+     *
+     * @param root the selected folder
+     * @param matchingString the dialog's sub-folder text
+     * @return the number of distinct z indices; 0 when there are no z folders
+     */
+    public static int countZSlices(Path root, String matchingString) {
+        java.util.Set<Integer> zs = new java.util.TreeSet<>();
+        try {
+            List<Path> dirs = new ArrayList<>(TileDirectories.resolve(root, matchingString));
+            if (dirs.isEmpty() && !TileDirectories.isSingleFolder(matchingString)) {
+                dirs.add(root);
+            }
+            for (Path dir : dirs) {
+                collectZ(dir, MAX_TILE_SEARCH_DEPTH, zs);
+            }
+        } catch (IOException | RuntimeException e) {
+            logger.debug("Could not count z folders under {}: {}", root, e.toString());
+        }
+        return zs.size();
+    }
+
+    private static void collectZ(Path dir, int depth, java.util.Set<Integer> zs) throws IOException {
+        if (depth <= 0) return;
+        try (DirectoryStream<Path> children = Files.newDirectoryStream(dir, Files::isDirectory)) {
+            for (Path child : children) {
+                Matcher mz = Z_DIR.matcher(child.getFileName().toString());
+                if (mz.matches()) {
+                    zs.add(Integer.parseInt(mz.group(1)));
+                } else {
+                    collectZ(child, depth - 1, zs);
+                }
+            }
+        }
     }
 
     /**

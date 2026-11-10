@@ -187,6 +187,12 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
     /** The folder the last {@link #prepareStitching} read; null before one ran. */
     private Path lastFolder;
 
+    /** @return {@code Summary.z-step_um} of the folder the last call read, when positive */
+    @Override
+    public Double recordedZSpacingUm() {
+        return lastFolder == null ? null : detectZStepUm(lastFolder.toFile());
+    }
+
     /** Writes {@code <output stem>.mm-metadata.json} ({@link MicroManagerOutputMetadata}). */
     @Override
     public Path writeOutputMetadata(Path output, String group) {
