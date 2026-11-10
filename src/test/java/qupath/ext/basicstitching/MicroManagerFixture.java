@@ -42,7 +42,14 @@ final class MicroManagerFixture {
          * ({@code TaggedImageStorageDiskDefault}, {@code mm1.4} branch). Its Summary has no
          * StagePositions; positions come from each block's XPositionUm / YPositionUm.
          */
-        MM14
+        MM14,
+        /**
+         * Micro-Manager 2 NDTiff (v3): {@code <prefix>_NDTiffStack.tif} holding every image as a page,
+         * and {@code NDTiff.index} listing each image's axes, file and byte offsets, written byte for
+         * byte from the NDTiffStorage README's v3 specification. Stage positions are in each image's
+         * metadata; the Summary lists none.
+         */
+        NDTIFF
     }
 
     final Layout layout;
@@ -58,6 +65,10 @@ final class MicroManagerFixture {
     boolean firstFrameKeyOnly = false;
     /** Write a 1.4 metadata.txt with its Summary only: planes must be read from the file names. */
     boolean noPlaneBlocks = false;
+    /** NDTiff: the channel axis holds names (format 3.2) rather than indices. */
+    boolean ndChannelNames = false;
+    /** NDTiff: images after this many go to a second stack file ({@code _1}); 0 for one file. */
+    int ndSplitAfter = 0;
     /** Channel names in acquisition order ({@code Summary.ChNames}). */
     String[] names = NAMES;
 
@@ -111,6 +122,16 @@ final class MicroManagerFixture {
         return this;
     }
 
+    MicroManagerFixture ndChannelNames() {
+        ndChannelNames = true;
+        return this;
+    }
+
+    MicroManagerFixture ndSplitAfter(int images) {
+        ndSplitAfter = images;
+        return this;
+    }
+
     MicroManagerFixture noPlaneBlocks() {
         noPlaneBlocks = true;
         return this;
@@ -137,6 +158,10 @@ final class MicroManagerFixture {
      */
     Path write(Path root) throws IOException {
         Path src = Files.createDirectories(root.resolve("MDA_region"));
+        if (layout == Layout.NDTIFF) {
+            NdTiffWriter.write(this, src);
+            return src;
+        }
         for (int p = 0; p < POSITIONS; p++) {
             double x = (p % 2) * step() * PX_UM;
             double y = (p / 2) * step() * PX_UM;
@@ -322,7 +347,7 @@ final class MicroManagerFixture {
     }
 
     /** A Micro-Manager 1.4 Summary (acq_engine.clj, mm1.4): no StagePositions, PixelSize_um not PixelSizeUm. */
-    private String summary14(int p) {
+    String summary14(int p) {
         StringBuilder chNames = new StringBuilder();
         for (int c = 0; c < channels; c++) {
             chNames.append(c > 0 ? "," : "").append('"').append(names[c]).append('"');

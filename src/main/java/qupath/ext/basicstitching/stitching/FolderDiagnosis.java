@@ -87,6 +87,17 @@ public final class FolderDiagnosis {
                     subFoldersOf(root, mmMeta)));
         }
 
+        // Micro-Manager 2's NDTiff: one index for the whole dataset, beside its *_NDTiffStack.tif files.
+        List<Path> ndIndex = scan(root, p -> p.getFileName().toString().equals(NdTiffDataset.INDEX));
+        if (!ndIndex.isEmpty()) {
+            found.add(new Finding(
+                    "MicroManager metadata (MMStack or TIFF series)",
+                    ndIndex.size() == 1 ? "an NDTiff dataset (NDTiff.index)" : ndIndex.size() + " NDTiff datasets",
+                    subFoldersOf(root, ndIndex).stream()
+                            .filter(s -> !s.equals(NdTiffDataset.FULL_RESOLUTION))
+                            .toList()));
+        }
+
         List<Path> xy = scan(root, p -> {
             String n = p.getFileName().toString();
             return isTiff(n) && FILENAME_XY.matcher(n).matches();
@@ -98,6 +109,36 @@ public final class FolderDiagnosis {
                     subFoldersOf(root, xy)));
         }
         return found;
+    }
+
+    /**
+     * What the folder holds that no method can stitch, in the user's terms.
+     *
+     * @param folder the folder the user selected
+     * @return one sentence per kind found; empty when there is none
+     */
+    public static List<String> unsupported(File folder) {
+        List<String> out = new ArrayList<>();
+        if (folder == null || !folder.isDirectory()) {
+            return out;
+        }
+        Path root = folder.toPath();
+        List<Path> stacks = scan(root, p -> {
+            String n = p.getFileName().toString();
+            return isTiff(n) && n.contains("_NDTiffStack");
+        });
+        List<Path> orphans = stacks.stream()
+                .filter(p -> !java.nio.file.Files.isRegularFile(p.resolveSibling(NdTiffDataset.INDEX)))
+                .toList();
+        if (!orphans.isEmpty()) {
+            out.add(orphans.size() + " NDTiff stack file" + (orphans.size() == 1 ? "" : "s")
+                    + " (*_NDTiffStack*.tif) with no NDTiff.index beside "
+                    + (orphans.size() == 1 ? "it" : "them")
+                    + ". NDTiff 2 and 3 datasets can be stitched with the MicroManager method; NDTiff 1.x,"
+                    + " which kept its index inside the TIFF, cannot, and neither can a dataset whose index"
+                    + " was lost. First: " + root.relativize(orphans.get(0)));
+        }
+        return out;
     }
 
     /**

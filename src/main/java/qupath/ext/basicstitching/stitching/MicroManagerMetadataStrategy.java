@@ -221,41 +221,18 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
             logger.info("flipStitchingX=true: negating X coordinates for stage-inverted scope");
         }
 
+        Path ndtiff = NdTiffDataset.locate(rootdir);
+        if (ndtiff != null) {
+            return prepareNdTiff(ndtiff, rootdir, pixelSizeInMicrons, flipX, flipY);
+        }
+
         ParsedMetadata pm = parseMetadata(rootdir);
         if (pm.pathToRecord.isEmpty() && pm.labelToPosUm.isEmpty()) {
             logger.warn("No usable MicroManager metadata (metadata.txt / *_metadata.txt) found under {}", folderPath);
             return mappings;
         }
 
-        // Decide which pixel size drives the um->px conversion.
-        double effectivePixelSize;
-        if (manualPixelSizeOverride && pixelSizeInMicrons > 0) {
-            effectivePixelSize = pixelSizeInMicrons;
-            if (pm.detectedPixelSizeUm != null && Math.abs(pm.detectedPixelSizeUm - pixelSizeInMicrons) > 1e-9) {
-                logger.info(
-                        "Manual pixel-size override: using {} um/px (metadata value {} ignored)",
-                        pixelSizeInMicrons,
-                        pm.detectedPixelSizeUm);
-            } else {
-                logger.info("Manual pixel-size override: using {} um/px", pixelSizeInMicrons);
-            }
-        } else if (pm.detectedPixelSizeUm != null) {
-            effectivePixelSize = pm.detectedPixelSizeUm;
-            if (Math.abs(pm.detectedPixelSizeUm - pixelSizeInMicrons) > 1e-9) {
-                logger.info(
-                        "Using MicroManager metadata pixel size {} um/px (caller value {} ignored -- "
-                                + "the sidecar is authoritative; tick 'Manually edit pixel size' to override)",
-                        pm.detectedPixelSizeUm,
-                        pixelSizeInMicrons);
-            } else {
-                logger.info("Using MicroManager metadata pixel size {} um/px", pm.detectedPixelSizeUm);
-            }
-        } else {
-            effectivePixelSize = pixelSizeInMicrons;
-            logger.info(
-                    "No PixelSizeUm in MicroManager metadata; falling back to caller pixel size {} um/px",
-                    pixelSizeInMicrons);
-        }
+        double effectivePixelSize = choosePixelSize(pm.detectedPixelSizeUm, pixelSizeInMicrons);
         if (effectivePixelSize <= 0) {
             logger.error(
                     "Effective pixel size is {} um/px (must be > 0); cannot map tiles. "
@@ -382,6 +359,131 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
                 Math.max(1, channelNames.size()),
                 pending.stream().mapToInt(t -> t.plane.coord().z() + 1).max().orElse(0),
                 pending.stream().mapToInt(t -> t.plane.coord().t() + 1).max().orElse(0));
+        return mappings;
+    }
+
+    /**
+     * The pixel size that converts stage microns to pixels: the caller's when it is a deliberate
+     * manual override, else the metadata's, else the caller's.
+     */
+    private double choosePixelSize(Double detected, double caller) {
+        if (manualPixelSizeOverride && caller > 0) {
+            if (detected != null && Math.abs(detected - caller) > 1e-9) {
+                logger.info("Manual pixel-size override: using {} um/px (metadata value {} ignored)", caller, detected);
+            } else {
+                logger.info("Manual pixel-size override: using {} um/px", caller);
+            }
+            return caller;
+        }
+        if (detected != null) {
+            if (Math.abs(detected - caller) > 1e-9) {
+                logger.info(
+                        "Using MicroManager metadata pixel size {} um/px (caller value {} ignored -- "
+                                + "the sidecar is authoritative; tick 'Manually edit pixel size' to override)",
+                        detected,
+                        caller);
+            } else {
+                logger.info("Using MicroManager metadata pixel size {} um/px", detected);
+            }
+            return detected;
+        }
+        logger.info("No PixelSizeUm in MicroManager metadata; falling back to caller pixel size {} um/px", caller);
+        return caller;
+    }
+
+    /**
+     * Tiles of an NDTiff dataset: every image a plane of its position, placed by the stage position
+     * in the metadata of the position's first image ({@link NdTiffDataset}).
+     */
+    private List<TileMapping> prepareNdTiff(
+            Path dir, Path rootdir, double callerPixelSize, boolean flipX, boolean flipY) {
+        List<TileMapping> mappings = new ArrayList<>();
+        NdTiffDataset ds;
+        try {
+            ds = NdTiffDataset.read(dir);
+        } catch (IOException e) {
+            warn("Cannot read the NDTiff dataset in " + dir + ": " + e.getMessage());
+            return mappings;
+        }
+        Map<String, NdTiffDataset.Image> firsts = ds.firstImageOfEachPosition();
+        logger.info(
+                "NDTiff dataset {}: {} image(s), {} position(s), {} channel(s)",
+                dir,
+                ds.images().size(),
+                firsts.size(),
+                ds.channelCount());
+        JsonArray stage = NdTiffDataset.stagePositions(ds.summary());
+        Map<String, double[]> posUm = new HashMap<>();
+        Double detected = null;
+        List<String> unplaced = new ArrayList<>();
+        for (Map.Entry<String, NdTiffDataset.Image> e : firsts.entrySet()) {
+            JsonObject md;
+            try {
+                md = ds.metadata(e.getValue());
+            } catch (IOException ex) {
+                logger.warn("{}", ex.getMessage());
+                md = new JsonObject();
+            }
+            Double x = optDouble(md, "XPositionUm");
+            Double y = optDouble(md, "YPositionUm");
+            double[] xy = x != null && y != null ? new double[] {x, y} : null;
+            if (xy == null && stage != null) {
+                // Summary.StagePositions, by the position axis, when the image does not say.
+                JsonElement p = com.google.gson.JsonParser.parseString(e.getKey())
+                        .getAsJsonObject()
+                        .get("position");
+                if (p != null && p.isJsonPrimitive() && p.getAsJsonPrimitive().isNumber()) {
+                    int i = p.getAsInt();
+                    if (i >= 0 && i < stage.size() && stage.get(i).isJsonObject()) {
+                        xy = extractDevicePositionUm(stage.get(i).getAsJsonObject());
+                    }
+                }
+            }
+            if (xy == null) {
+                unplaced.add(e.getKey());
+                continue;
+            }
+            posUm.put(e.getKey(), xy);
+            Double ps = optDouble(md, "PixelSizeUm");
+            if (detected == null && ps != null && ps > 0) detected = ps;
+        }
+        if (detected == null) {
+            Double ps = optDouble(ds.summary(), "PixelSize_um");
+            if (ps != null && ps > 0) detected = ps;
+        }
+        double px = choosePixelSize(detected, callerPixelSize);
+        if (px <= 0) {
+            logger.error("Effective pixel size is {} um/px (must be > 0); cannot map tiles", px);
+            return mappings;
+        }
+        List<String> channelNames =
+                channelGroupNames(ds.channelNames(), Math.max(ds.channelNames().size(), ds.channelCount()));
+        if (channelNames.size() > 1) {
+            groupOrder = List.copyOf(channelNames);
+        }
+        String folderName =
+                rootdir.getFileName() != null ? rootdir.getFileName().toString() : "tiles";
+        for (NdTiffDataset.Image im : ds.images()) {
+            double[] xy = posUm.get(im.position());
+            if (xy == null) continue;
+            double rawX = flipX ? -xy[0] : xy[0];
+            double rawY = flipY ? -xy[1] : xy[1];
+            MicroManagerPlanes.Coord k = im.coord();
+            ImageRegion region = ImageRegion.createInstance(
+                    (int) Math.round(rawX / px),
+                    (int) Math.round(rawY / px),
+                    im.entry().width(),
+                    im.entry().height(),
+                    k.z(),
+                    k.t());
+            String subdir = channelNames.size() > 1 ? channelNames.get(k.c()) : folderName;
+            mappings.add(new TileMapping(im.file().toFile(), region, subdir, im.page()));
+        }
+        if (!unplaced.isEmpty()) {
+            warn(unplaced.size() + " NDTiff position(s) were left out: their images record no XPositionUm /"
+                    + " YPositionUm and Summary.StagePositions does not list them. First: " + unplaced.get(0));
+        }
+        logger.info("Total tiles mapped from NDTiff: {}", mappings.size());
         return mappings;
     }
 
@@ -676,7 +778,8 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
                 logger.debug("Could not read the Summary of {}: {}", p, e.toString());
             }
         }
-        return null;
+        Path ndtiff = NdTiffDataset.locate(rootdir);
+        return ndtiff == null ? null : NdTiffDataset.summaryOfDataset(ndtiff);
     }
 
     /**
@@ -747,6 +850,10 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
             logger.info("Not scanning {} for MicroManager metadata: choose the tile folder itself", rootdir);
             return null;
         }
+        Path ndtiff = NdTiffDataset.locate(rootdir);
+        if (ndtiff != null) {
+            return ndTiffPixelSizeUm(ndtiff);
+        }
         for (Path p : findMetadataFiles(rootdir)) {
             try (Reader reader = Files.newBufferedReader(p)) {
                 JsonObject root = GSON.fromJson(reader, JsonObject.class);
@@ -765,6 +872,19 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
             }
         }
         return null;
+    }
+
+    /** PixelSizeUm of an NDTiff dataset's first image, else its Summary's PixelSize_um; null if neither. */
+    private static Double ndTiffPixelSizeUm(Path dir) {
+        try {
+            NdTiffDataset ds = NdTiffDataset.read(dir);
+            Double ps = optDouble(ds.metadata(ds.images().get(0)), "PixelSizeUm");
+            if (ps == null || ps <= 0) ps = optDouble(ds.summary(), "PixelSize_um");
+            return ps != null && ps > 0 ? ps : null;
+        } catch (IOException | RuntimeException e) {
+            logger.debug("No pixel size from the NDTiff dataset in {}: {}", dir, e.toString());
+            return null;
+        }
     }
 
     /** Outcome of {@link #estimatePixelSizeUm(File)}. */

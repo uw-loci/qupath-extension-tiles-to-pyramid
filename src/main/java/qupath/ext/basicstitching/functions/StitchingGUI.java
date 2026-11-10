@@ -117,6 +117,11 @@ public class StitchingGUI {
 
     // Short enough to read in the combo at its dialog width; the tooltip carries the detail.
     // The long form used to render as "Auto (best matching folder, ..." with the answer cut off.
+    private static final String MM_METHOD = "MicroManager metadata (MMStack or TIFF series)";
+    /** What the dropdown shows for {@link #MM_METHOD}; the identifier itself stays as QPSC and saved preferences know it. */
+    private static final String MM_LABEL = "MicroManager (MMStack, TIFF series or NDTiff)";
+
+    private static final String TILECONFIG_LABEL = "TileConfiguration.txt file";
     private static final String AUTO_REFERENCE = "Auto (best match)";
     private static final String PROJECTION_REFERENCE = "Normalized merge of all";
     private final CheckBox overlapAutoCheckbox = new CheckBox("Overlap %: derive from the tile grid");
@@ -1155,14 +1160,16 @@ public class StitchingGUI {
         stitchingGridBox.setConverter(new StringConverter<>() {
             @Override
             public String toString(String method) {
-                return "Coordinates in TileConfiguration.txt file".equals(method)
-                        ? "TileConfiguration.txt file"
-                        : method;
+                if ("Coordinates in TileConfiguration.txt file".equals(method)) return TILECONFIG_LABEL;
+                if (MM_METHOD.equals(method)) return MM_LABEL;
+                return method;
             }
 
             @Override
             public String fromString(String label) {
-                return "TileConfiguration.txt file".equals(label) ? "Coordinates in TileConfiguration.txt file" : label;
+                if (TILECONFIG_LABEL.equals(label)) return "Coordinates in TileConfiguration.txt file";
+                if (MM_LABEL.equals(label)) return MM_METHOD;
+                return label;
             }
         });
 
@@ -1745,6 +1752,12 @@ public class StitchingGUI {
             sb.append("\nThere are no TIFF files in this folder or the folders inside it. ")
                     .append("Check that you selected the right folder.");
             return sb.toString();
+        }
+
+        List<String> unsupported = FolderDiagnosis.unsupported(folder);
+        if (!unsupported.isEmpty()) {
+            sb.append("\nNot supported:\n");
+            unsupported.forEach(u -> sb.append("  - ").append(u).append('\n'));
         }
 
         List<FolderDiagnosis.Finding> found = FolderDiagnosis.diagnose(folder);

@@ -62,6 +62,8 @@ class MicroManagerCztStitchTest {
         for (Layout layout : Layout.values()) {
             for (int[] zt : shapes) {
                 for (Opt opt : Opt.values()) {
+                    // NDTiff is stitched as it is: the preprocessing copy writes the other layouts only.
+                    if (layout == Layout.NDTIFF && opt != Opt.NONE) continue;
                     out.add(Arguments.of(layout, zt[0], zt[1], opt));
                 }
             }

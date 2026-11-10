@@ -104,11 +104,17 @@ public final class MicroManagerOutputMetadata {
      */
     static JsonObject build(String outputName, Path acquisition, List<Integer> channels) throws IOException {
         Path root = acquisition.toAbsolutePath().normalize();
-        Path sidecarFile = firstPositionSidecar(root);
-        if (sidecarFile == null) {
-            return null;
+        Path ndtiff = NdTiffDataset.locate(root);
+        JsonObject sidecar;
+        if (ndtiff != null) {
+            sidecar = ndTiffSidecar(ndtiff);
+        } else {
+            Path sidecarFile = firstPositionSidecar(root);
+            if (sidecarFile == null) {
+                return null;
+            }
+            sidecar = MicroManagerPlanes.readJson(sidecarFile);
         }
-        JsonObject sidecar = MicroManagerPlanes.readJson(sidecarFile);
         if (sidecar == null) {
             return null;
         }
@@ -227,6 +233,33 @@ public final class MicroManagerOutputMetadata {
             }
         }
         return files.get(0);
+    }
+
+    /**
+     * An NDTiff dataset seen as the sidecar of its first position: its Summary, and per channel the
+     * metadata of that position's earliest image as {@code FrameKey-t-c-z}.
+     */
+    static JsonObject ndTiffSidecar(Path dir) throws IOException {
+        NdTiffDataset ds = NdTiffDataset.read(dir);
+        JsonObject out = new JsonObject();
+        out.add("Summary", ds.summary().deepCopy());
+        String first = ds.images().get(0).position();
+        java.util.Map<Integer, NdTiffDataset.Image> earliest = new java.util.TreeMap<>();
+        for (NdTiffDataset.Image im : ds.images()) {
+            if (!im.position().equals(first)) continue;
+            NdTiffDataset.Image have = earliest.get(im.coord().c());
+            if (have == null
+                    || im.coord().t() < have.coord().t()
+                    || (im.coord().t() == have.coord().t()
+                            && im.coord().z() < have.coord().z())) {
+                earliest.put(im.coord().c(), im);
+            }
+        }
+        for (NdTiffDataset.Image im : earliest.values()) {
+            MicroManagerPlanes.Coord k = im.coord();
+            out.add("FrameKey-" + k.t() + "-" + k.c() + "-" + k.z(), ds.metadata(im));
+        }
+        return out;
     }
 
     /**
