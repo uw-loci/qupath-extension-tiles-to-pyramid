@@ -705,6 +705,30 @@ public final class MicroManagerPreprocessor {
         return names;
     }
 
+    /**
+     * The {@code FrameKey-t-c-z} block of each Micro-Manager 1.4 single-plane file, by file name.
+     *
+     * @return file name -> the key of its block; empty for a Micro-Manager 2 sidecar
+     */
+    private static Map<String, String> mm14FrameKeys(JsonObject sidecar) {
+        Map<String, String> out = new HashMap<>();
+        for (String key : sidecar.keySet()) {
+            String name = mm14FileName(key, sidecar.get(key));
+            if (name != null) out.putIfAbsent(name, key);
+        }
+        return out;
+    }
+
+    /** The file a 1.4 single-plane {@code FrameKey-} block names, or null for any other entry. */
+    private static String mm14FileName(String key, JsonElement value) {
+        if (!FRAME_KEY.matcher(key).matches() || value == null || !value.isJsonObject()) return null;
+        JsonElement f = value.getAsJsonObject().get("FileName");
+        if (f == null || !f.isJsonPrimitive()) return null;
+        String name = f.getAsString().replace('\\', '/');
+        name = name.substring(name.lastIndexOf('/') + 1);
+        return name.contains("_MMStack_") ? null : name;
+    }
+
     /** Position folders of a single-plane TIFF series: sub-folders holding a metadata.txt. */
     private static List<Path> singlePlaneDirs(Path src) throws IOException {
         List<Path> out = new ArrayList<>();
@@ -736,19 +760,30 @@ public final class MicroManagerPreprocessor {
         Map<Path, MicroManagerPlanes.Coord> coords = new LinkedHashMap<>();
         Map<Long, Path> earliest = new TreeMap<>();
         Map<String, Path> byTzc = new HashMap<>();
+        Map<String, String> frameKeyOf = mm14FrameKeys(sidecar);
+        List<String> chNames = channelNames(sidecar);
         try (var s = Files.list(dir)) {
             for (Path f : (Iterable<Path>) s.sorted()::iterator) {
                 String name = f.getFileName().toString();
                 String lower = name.toLowerCase(Locale.ROOT);
                 if (name.contains(":") || !(lower.endsWith(".tif") || lower.endsWith(".tiff"))) continue;
+                String frameKey = frameKeyOf.get(name);
                 MicroManagerPlanes.Coord c = MicroManagerPlanes.singlePlaneCoord(
                         name,
                         sidecar.get("Metadata-" + label + "/" + name),
                         sidecar.get("Coords-" + label + "/" + name));
+                if (c == null && frameKey != null) {
+                    c = MicroManagerPlanes.fromFrameKey(frameKey, sidecar.get(frameKey));
+                }
+                if (c == null) {
+                    c = MicroManagerPlanes.fromMm14FileName(name, chNames);
+                }
                 if (c == null) {
                     throw new IOException("Cannot tell which channel, slice and frame " + label + "/" + name
-                            + " holds: its name is not img_channelCCC_positionPPP_timeTTTTTTTTT_zZZZ.tif"
-                            + " and metadata.txt has no Metadata- or Coords- block for it");
+                            + " holds: its name is neither img_channelCCC_positionPPP_timeTTTTTTTTT_zZZZ.tif"
+                            + " (Micro-Manager 2) nor img_TTTTTTTTT_<channel>_ZZZ.tif (1.4) with a channel"
+                            + " listed in Summary.ChNames, and metadata.txt has no Metadata-, Coords- or"
+                            + " FrameKey- block for it");
                 }
                 coords.put(f, c);
                 byTzc.put(c.t() + "-" + c.z() + "-" + c.c(), f);
@@ -783,6 +818,9 @@ public final class MicroManagerPreprocessor {
                     String name = from.getFileName().toString();
                     kept.add(name);
                     JsonElement block = sidecar.get("Metadata-" + label + "/" + name);
+                    if (block == null && frameKeyOf.containsKey(name)) {
+                        block = sidecar.get(frameKeyOf.get(name));
+                    }
                     double[] plane = planes.mean[c + planes.channels * z];
                     writeTiff(
                             outDir.resolve(name),
@@ -820,7 +858,7 @@ public final class MicroManagerPreprocessor {
             }
             String rel = key.startsWith("Metadata-")
                     ? key.substring("Metadata-".length())
-                    : key.startsWith("Coords-") ? key.substring("Coords-".length()) : null;
+                    : key.startsWith("Coords-") ? key.substring("Coords-".length()) : mm14FileName(key, value);
             if (rel == null) {
                 out.add(key, value.deepCopy());
                 continue;
@@ -828,7 +866,7 @@ public final class MicroManagerPreprocessor {
             String base = rel.contains("/") ? rel.substring(rel.lastIndexOf('/') + 1) : rel;
             if (!kept.contains(base)) continue;
             JsonElement copy = value.deepCopy();
-            if (key.startsWith("Metadata-") && copy.isJsonObject()) {
+            if ((key.startsWith("Metadata-") || key.startsWith("FrameKey-")) && copy.isJsonObject()) {
                 annotate(copy.getAsJsonObject(), p);
             }
             out.add(key, copy);

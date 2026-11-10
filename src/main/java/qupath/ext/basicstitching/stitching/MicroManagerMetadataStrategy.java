@@ -415,6 +415,7 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
         if (stack == null) {
             MicroManagerPlanes.Coord k = MicroManagerPlanes.singlePlaneCoord(filename);
             if (k == null) k = pm.blockCoords.get(tif);
+            if (k == null) k = MicroManagerPlanes.fromMm14FileName(filename, pm.channelNames);
             if (k != null) {
                 return List.of(new MicroManagerPlanes.Plane(tif, 0, k));
             }
@@ -542,6 +543,17 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
                         if (k != null) {
                             String rel = key.substring(key.indexOf('-') + 1);
                             pm.blockCoords.putIfAbsent(resolveTilePath(rootdir, metaParent, rel), k);
+                        }
+                    }
+                    // Micro-Manager 1.4 single-plane files: one FrameKey block per file, naming it.
+                    // An _MMStack_ file holds many planes, so its blocks say nothing per file.
+                    if (key.startsWith("FrameKey-")) {
+                        String named = optString(block, "FileName");
+                        if (named != null && !named.contains("_MMStack_")) {
+                            MicroManagerPlanes.Coord k = MicroManagerPlanes.fromFrameKey(key, block);
+                            if (k != null) {
+                                pm.blockCoords.putIfAbsent(resolveTilePath(rootdir, metaParent, named), k);
+                            }
                         }
                     }
 

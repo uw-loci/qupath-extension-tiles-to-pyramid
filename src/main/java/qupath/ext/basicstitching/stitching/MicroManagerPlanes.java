@@ -39,6 +39,12 @@ import org.slf4j.LoggerFactory;
  *   <li><b>Single-plane TIFF series</b>: from the file name
  *       ({@code img_channelCCC_positionPPP_timeTTTTTTTTT_zZZZ.tif}, any subset of those axes in any
  *       order), else from the file's {@code Metadata-} or {@code Coords-} block in metadata.txt.</li>
+ *   <li><b>Micro-Manager 1.4 single-plane files</b> ({@code img_TTTTTTTTT_<channel name>_ZZZ.tif}, a
+ *       folder per position with a {@code metadata.txt}): from the file's {@code FrameKey-t-c-z}
+ *       block in that metadata.txt (its {@code FileName} names the file), else from the name, the
+ *       channel name looked up in {@code Summary.ChNames}. The name format is
+ *       {@code String.format("img_%09d_%s_%03d.tif", frame, channel, slice)} in
+ *       {@code TaggedImageStorageDiskDefault.createFileName} on Micro-Manager's {@code mm1.4} branch.</li>
  * </ul>
  */
 public final class MicroManagerPlanes {
@@ -51,6 +57,12 @@ public final class MicroManagerPlanes {
     private static final Pattern SINGLE_PLANE_NAME =
             Pattern.compile("img((?:_(?:channel|position|time|z)\\d+)+)\\.tiff?", Pattern.CASE_INSENSITIVE);
     private static final Pattern AXIS = Pattern.compile("_(channel|position|time|z)(\\d+)", Pattern.CASE_INSENSITIVE);
+    /**
+     * A Micro-Manager 1.4 single-plane file name: frame (9 digits), channel name, slice (3 digits).
+     * The channel name may itself contain underscores, so it is everything between the two numbers.
+     */
+    private static final Pattern MM14_NAME =
+            Pattern.compile("img_(\\d{9})_(.*)_(\\d{3})\\.tiff?", Pattern.CASE_INSENSITIVE);
     /** The label of a continuation file Micro-Manager starts past 4 GB: {@code <label>_1}. */
     private static final Pattern CONTINUATION = Pattern.compile("^(.*)_(\\d+)$");
 
@@ -125,6 +137,40 @@ public final class MicroManagerPlanes {
             }
         }
         return new Coord(c, z, t);
+    }
+
+    /**
+     * Coordinates from a Micro-Manager 1.4 single-plane file name, {@code img_TTTTTTTTT_<channel>_ZZZ.tif}.
+     *
+     * @param name the file name
+     * @param channelNames {@code Summary.ChNames}, in acquisition order
+     * @return the coordinates, or null when the name is not of that form or names no listed channel
+     */
+    public static Coord fromMm14FileName(String name, List<String> channelNames) {
+        if (name == null || channelNames == null) return null;
+        Matcher m = MM14_NAME.matcher(name);
+        if (!m.matches()) return null;
+        int c = channelNames.indexOf(m.group(2));
+        if (c < 0) return null;
+        return new Coord(c, Integer.parseInt(m.group(3)), Integer.parseInt(m.group(1)));
+    }
+
+    /** @return true when {@code name} has the Micro-Manager 1.4 single-plane form */
+    static boolean isMm14FileName(String name) {
+        return name != null && MM14_NAME.matcher(name).matches();
+    }
+
+    /**
+     * Coordinates from a {@code FrameKey-t-c-z} block: its own indices, else the key's.
+     *
+     * @return the coordinates, or null when the key is not a frame key
+     */
+    static Coord fromFrameKey(String key, JsonElement block) {
+        Coord own = fromBlock(block);
+        if (own != null) return own;
+        Matcher m = FRAME_KEY.matcher(key);
+        if (!m.matches()) return null;
+        return new Coord(Integer.parseInt(m.group(2)), Integer.parseInt(m.group(3)), Integer.parseInt(m.group(1)));
     }
 
     /** Coordinates from a block carrying {@code ChannelIndex} and {@code FrameIndex}; null otherwise. */

@@ -35,7 +35,14 @@ final class MicroManagerFixture {
         /** One {@code <prefix>_MMStack_<label>.ome.tif} per position plus its {@code _metadata.txt}. */
         MMSTACK,
         /** A folder per position of {@code img_channelCCC_positionPPP_timeTTTTTTTTT_zZZZ.tif} files. */
-        SINGLE_PLANE
+        SINGLE_PLANE,
+        /**
+         * Micro-Manager 1.4: a folder per position of {@code img_TTTTTTTTT_<channel>_ZZZ.tif} files and
+         * a metadata.txt of {@code FrameKey-t-c-z} blocks, each naming its file
+         * ({@code TaggedImageStorageDiskDefault}, {@code mm1.4} branch). Its Summary has no
+         * StagePositions; positions come from each block's XPositionUm / YPositionUm.
+         */
+        MM14
     }
 
     final Layout layout;
@@ -49,6 +56,8 @@ final class MicroManagerFixture {
     int rolloverAfter = 0;
     /** Write only {@code FrameKey-0-0-0} in an MMStack sidecar, as a minimal sidecar does. */
     boolean firstFrameKeyOnly = false;
+    /** Write a 1.4 metadata.txt with its Summary only: planes must be read from the file names. */
+    boolean noPlaneBlocks = false;
     /** Channel names in acquisition order ({@code Summary.ChNames}). */
     String[] names = NAMES;
 
@@ -102,6 +111,11 @@ final class MicroManagerFixture {
         return this;
     }
 
+    MicroManagerFixture noPlaneBlocks() {
+        noPlaneBlocks = true;
+        return this;
+    }
+
     MicroManagerFixture firstFrameKeyOnly() {
         firstFrameKeyOnly = true;
         return this;
@@ -128,6 +142,8 @@ final class MicroManagerFixture {
             double y = (p / 2) * step() * PX_UM;
             if (layout == Layout.MMSTACK) {
                 writeMmStack(src, "MDA_region", label(p), p, x, y);
+            } else if (layout == Layout.MM14) {
+                writeMm14(src, label(p), p, x, y);
             } else {
                 writeSinglePlane(src, label(p), p, x, y);
             }
@@ -254,6 +270,68 @@ final class MicroManagerFixture {
         }
         sb.append("}");
         Files.writeString(dir.resolve("metadata.txt"), sb.toString());
+    }
+
+    private void writeMm14(Path root, String label, int p, double xUm, double yUm) throws IOException {
+        Path dir = Files.createDirectories(root.resolve(label));
+        StringBuilder sb = new StringBuilder();
+        sb.append("{\"Summary\":").append(summary14(p));
+        for (int[] k : planeOrder()) {
+            int c = k[0], z = k[1], t = k[2];
+            String name = String.format("img_%09d_%s_%03d.tif", t, names[c], z);
+            ImageIO.write(plane(value(c, z, t)), "TIFF", dir.resolve(name).toFile());
+            if (noPlaneBlocks) continue;
+            sb.append(",\"FrameKey-")
+                    .append(t)
+                    .append('-')
+                    .append(c)
+                    .append('-')
+                    .append(z)
+                    .append("\":{\"FileName\":\"")
+                    .append(name)
+                    .append("\",\"ChannelIndex\":")
+                    .append(c)
+                    .append(",\"SliceIndex\":")
+                    .append(z)
+                    .append(",\"Slice\":")
+                    .append(z)
+                    .append(",\"FrameIndex\":")
+                    .append(t)
+                    .append(",\"Frame\":")
+                    .append(t)
+                    .append(",\"PositionIndex\":")
+                    .append(p)
+                    .append(",\"PositionName\":\"")
+                    .append(label)
+                    .append("\",\"Channel\":\"")
+                    .append(names[c])
+                    .append("\",\"XPositionUm\":")
+                    .append(xUm)
+                    .append(",\"YPositionUm\":")
+                    .append(yUm)
+                    .append(",\"PixelSizeUm\":")
+                    .append(PX_UM)
+                    .append(",\"Width\":")
+                    .append(tile)
+                    .append(",\"Height\":")
+                    .append(tile)
+                    .append("}");
+        }
+        sb.append("}");
+        Files.writeString(dir.resolve("metadata.txt"), sb.toString());
+    }
+
+    /** A Micro-Manager 1.4 Summary (acq_engine.clj, mm1.4): no StagePositions, PixelSize_um not PixelSizeUm. */
+    private String summary14(int p) {
+        StringBuilder chNames = new StringBuilder();
+        for (int c = 0; c < channels; c++) {
+            chNames.append(c > 0 ? "," : "").append('"').append(names[c]).append('"');
+        }
+        return "{\"MicroManagerVersion\":\"1.4.23 20180220\",\"MetadataVersion\":10,\"Channels\":" + channels
+                + ",\"Slices\":" + slices + ",\"Frames\":" + frames + ",\"Positions\":" + POSITIONS
+                + ",\"z-step_um\":" + (slices > 1 ? "2.5" : "0.0") + ",\"PixelSize_um\":" + PX_UM
+                + ",\"ChNames\":[" + chNames + "],\"Prefix\":\"MDA_region\",\"PositionIndex\":" + p
+                + ",\"SlicesFirst\":true,\"TimeFirst\":false}";
     }
 
     /** The acquisition's Summary; as Micro-Manager writes it, the same in every sidecar, listing every position. */
