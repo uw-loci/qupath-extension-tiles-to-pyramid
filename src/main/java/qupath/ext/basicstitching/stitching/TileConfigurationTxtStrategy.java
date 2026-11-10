@@ -8,7 +8,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.basicstitching.progress.StitchPhase;
 import qupath.ext.basicstitching.progress.StitchProgressReporter;
-import qupath.ext.basicstitching.utilities.UtilityFunctions;
 import qupath.lib.regions.ImageRegion;
 
 /**
@@ -158,37 +157,33 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
                 tiffFiles.addAll(FileScanner.find(path, MAX_TILE_SEARCH_DEPTH, TileConfigurationTxtStrategy::isTiff));
             }
 
-            // Process all found TIFF files
+            // Every file's header is read (a tile set may mix sizes), on several threads, and only
+            // once per session: a registration solve and the stitch after it see the same files.
             int tileCount = tiffFiles.size();
             logger.info("Processing {} TIFF files for dimensions and mapping...", tileCount);
-            int processed = 0;
             StitchProgressReporter progress = StitchProgressReporter.current();
             if (progress != null) {
                 var w = progress.work();
                 progress.setWork(new qupath.ext.basicstitching.progress.StitchEta.Work(
                         tileCount, w.solveBandPixels(), w.writeBytes()));
             }
+            Map<Path, TileHeaders.Size> sizes = TileHeaders.readAll(tiffFiles, done -> {
+                if (progress != null) {
+                    progress.update(
+                            StitchPhase.SCAN, (double) done / Math.max(1, tileCount), done + " of " + tileCount);
+                }
+            });
             for (Path tifPath : tiffFiles) {
                 String filename = tifPath.getFileName().toString();
                 Position pos = positionMap.get(filename);
-                Map<String, Integer> dims = UtilityFunctions.getTiffDimensions(tifPath.toFile());
-                processed++;
-                if (progress != null && (processed % 50 == 0 || processed == tileCount)) {
-                    progress.update(
-                            StitchPhase.SCAN,
-                            (double) processed / Math.max(1, tileCount),
-                            processed + " of " + tileCount);
-                }
-                if (processed % 500 == 0 || processed == tileCount) {
-                    logger.info("Tile dimension progress: {}/{} files processed", processed, tileCount);
-                }
+                TileHeaders.Size dims = sizes.get(tifPath);
                 if (pos != null && dims != null) {
                     int[] zt = parseZT(path.relativize(tifPath));
                     ImageRegion region = ImageRegion.createInstance(
                             (int) Math.round(pos.x),
                             (int) Math.round(pos.y),
-                            dims.get("width"),
-                            dims.get("height"),
+                            dims.width(),
+                            dims.height(),
                             zt[0],
                             zt[1]);
                     mappings.add(new TileMapping(

@@ -21,7 +21,6 @@ import javax.imageio.ImageIO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.basicstitching.registration.Ncc;
-import qupath.ext.basicstitching.utilities.UtilityFunctions;
 import qupath.lib.regions.ImageRegion;
 
 /**
@@ -292,8 +291,9 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
         List<String> firstPageOnly = new ArrayList<>();
         List<String> unplaced = new ArrayList<>();
         List<PendingTile> pending = new ArrayList<>();
-        int processed = 0;
-        int totalTiles = tiffFiles.size();
+        List<Path> tileFiles =
+                tiffFiles.stream().filter(p -> !continuations.contains(p)).toList();
+        Map<Path, TileHeaders.Size> sizes = TileHeaders.readAll(tileFiles, null);
         for (Path tif : tiffFiles) {
             if (continuations.contains(tif)) continue;
             String filename = tif.getFileName().toString();
@@ -318,11 +318,7 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
                 logger.debug("Tile {} resolved via Summary.StagePositions label '{}'", filename, label);
             }
 
-            Map<String, Integer> tileDims = UtilityFunctions.getTiffDimensions(tif.toFile());
-            processed++;
-            if (processed % 500 == 0 || processed == totalTiles) {
-                logger.info("Tile dimension progress: {}/{} files processed", processed, totalTiles);
-            }
+            TileHeaders.Size tileDims = sizes.get(tif);
             if (tileDims == null) {
                 logger.warn("Could not read dimensions for {} -- skipping", filename);
                 continue;
@@ -340,8 +336,8 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
             // applies config.baseDownsample when it writes the pyramid.
             int x = (int) Math.round(rawX / effectivePixelSize);
             int y = (int) Math.round(rawY / effectivePixelSize);
-            int w = tileDims.get("width");
-            int h = tileDims.get("height");
+            int w = tileDims.width();
+            int h = tileDims.height();
 
             List<MicroManagerPlanes.Plane> planes =
                     planesOf(tif, stackFiles, pm, dims, onePlane, firstPageOnly, unplaced);

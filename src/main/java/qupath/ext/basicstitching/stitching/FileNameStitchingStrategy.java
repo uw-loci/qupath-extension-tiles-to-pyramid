@@ -6,7 +6,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import qupath.ext.basicstitching.utilities.UtilityFunctions;
 import qupath.lib.regions.ImageRegion;
 
 /**
@@ -37,10 +36,10 @@ public class FileNameStitchingStrategy implements StitchingStrategy {
                             // Scale by pixel size if needed
                             int xPx = (int) Math.round(x / pixelSizeInMicrons);
                             int yPx = (int) Math.round(y / pixelSizeInMicrons);
-                            Map<String, Integer> dims = UtilityFunctions.getTiffDimensions(tifPath.toFile());
+                            TileHeaders.Size dims = readSize(tifPath);
                             if (dims != null) {
-                                ImageRegion region = ImageRegion.createInstance(
-                                        xPx, yPx, dims.get("width"), dims.get("height"), 0, 0);
+                                ImageRegion region =
+                                        ImageRegion.createInstance(xPx, yPx, dims.width(), dims.height(), 0, 0);
                                 mappings.add(new TileMapping(
                                         tifPath.toFile(),
                                         region,
@@ -60,5 +59,14 @@ public class FileNameStitchingStrategy implements StitchingStrategy {
         }
         logger.info("Total tiles mapped: {}", mappings.size());
         return mappings;
+    }
+
+    private static TileHeaders.Size readSize(Path tif) {
+        try {
+            return TileHeaders.read(tif);
+        } catch (java.io.IOException e) {
+            logger.debug("{}", e.getMessage());
+            return null;
+        }
     }
 }

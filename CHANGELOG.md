@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Tile sizes are read from the TIFF header directly, on several threads, and once per file per session.** Every strategy read each tile's width and height through `javax.imageio`, which picks a reader among all installed plugins and parses the whole first image directory, serially, and again on every call: QPSC's registration solve over five channels followed by one stitch per channel read every file twice (5 x 1810 files, about 11 s per channel, before registration on the user's run). `TileHeaders` now parses the TIFF or BigTIFF header and first image directory itself (falling back to `javax.imageio` for anything it does not understand), reads up to 8 files at once, and remembers each size while the file keeps its length and modification time, so the stitches after a solve only check the files' dates. Every file is still opened and read: a tile set of mixed sizes comes out right (tested). Measured on a synthetic set of 5 channel folders x 1810 tiles written like QPSC's (tifffile, 16-bit), registration pass then stitch pass: on the Windows drive from WSL (NTFS through 9P, a slow per-file open like an acquisition PC's) 0.9.1's reads took 208-331 s and now 4.8-5.7 s (registration pass 3.5-4.3 s); on the Linux disk from the page cache 1.1-1.9 s and now 0.15-0.42 s. Not measured on Windows itself. Used by the TileConfiguration.txt, Filename[x,y] and Micro-Manager methods.
+
 ## [0.9.1] - 2026-11-07
 
 ### Fixed
