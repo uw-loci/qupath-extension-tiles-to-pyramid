@@ -232,7 +232,7 @@ pick the layout in the dialog -- the strategy detects it. Detail on each:
 - Read from `NDTiff.index`, following the format specification in the [NDTiffStorage README](https://github.com/micro-manager/NDTiffStorage) ("Specification for NDTiff v3.x"); versions 2 and 3 are read
 - Each image's `channel`, `z` and `time` axes give its plane (a channel given by name, as format 3.2 allows, is ordered by `Summary.ChNames`); every other axis (`position`, or `row` / `column`) names its position
 - A position's stage coordinates are the `XPositionUm` / `YPositionUm` of its first image's metadata, else its `Summary.StagePositions` entry; a position with neither is left out with a **WARNING**
-- Pixel size from the first image's `PixelSizeUm`, else `Summary.PixelSize_um`; z spacing from `Summary.z-step_um`
+- Pixel size from the first `PixelSizeUm` found in the metadata of each position's first image, in index order (the dialog's auto-fill reads only the dataset's first image), else `Summary.PixelSize_um`; z spacing from `Summary.z-step_um`
 - Images must be uncompressed, which is the only compression the format defines
 - Not supported: NDTiff 1.x, which kept its index inside the TIFF, or a dataset whose `NDTiff.index` is missing. When a stitch finds no tiles, the result window names such stack files under **Not supported**. Averaging time points and projecting z-slices are not offered for NDTiff; its planes are stitched as they are
 
