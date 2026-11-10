@@ -46,14 +46,145 @@ class MicroManager14Test {
     }
 
     @Test
-    void withoutPlaneBlocksTheNamesPlaceEveryPlane(@TempDir Path tmp) throws Exception {
-        // No FrameKey blocks, so no stage positions per file either: the strategy needs some
-        // position for each folder. 1.4 records none in its Summary, so this layout without blocks
-        // cannot be placed, and must say so rather than stitch everything at the origin.
+    void withNoPositionAnywhereEveryFileIsLeftOutAndSaysSo(@TempDir Path tmp) throws Exception {
+        // No FrameKey blocks, nothing saved in the files, no InitialPositionList: no position for
+        // any file. They must be left out with a visible warning, not stitched at the origin.
         Path src = MicroManagerFixture.of(Layout.MM14, 3, 2, 1).noPlaneBlocks().write(tmp);
         MicroManagerMetadataStrategy strategy = new MicroManagerMetadataStrategy();
         List<TileMapping> mappings = strategy.prepareStitching(src.toString(), MicroManagerFixture.PX_UM, 1.0, "");
         assertTrue(mappings.isEmpty(), "no position known for any file: " + mappings.size());
+        assertEquals(1, strategy.warnings().size(), strategy.warnings().toString());
+        assertTrue(strategy.warnings().get(0).startsWith("24 file(s) were left out because no stage position"));
+    }
+
+    @Test
+    void withoutBlocksTheMetadataSavedInEachFilePlacesIt(@TempDir Path tmp) throws Exception {
+        checkMapping(MicroManagerFixture.of(Layout.MM14, 3, 3, 2)
+                .noPlaneBlocks()
+                .mm14Embedded(0)
+                .write(tmp));
+    }
+
+    @Test
+    void withoutBlocksOrEmbeddedMetadataTheInitialPositionListPlacesEachFolder(@TempDir Path tmp) throws Exception {
+        checkMapping(MicroManagerFixture.of(Layout.MM14, 3, 3, 2)
+                .noPlaneBlocks()
+                .mm14InitialPositions(0)
+                .write(tmp));
+    }
+
+    @Test
+    void theBlockWinsOverTheFileAndTheFileOverThePositionList(@TempDir Path tmp) throws Exception {
+        // Each source further down the order is written 1000 um off: the mapping (one position at
+        // the origin) shows which was used.
+        checkMapping(MicroManagerFixture.of(Layout.MM14, 3, 3, 2)
+                .mm14Embedded(1000)
+                .mm14InitialPositions(2000)
+                .write(tmp.resolve("blocks")));
+        checkMapping(MicroManagerFixture.of(Layout.MM14, 3, 3, 2)
+                .noPlaneBlocks()
+                .mm14Embedded(0)
+                .mm14InitialPositions(2000)
+                .write(tmp.resolve("embedded")));
+    }
+
+    @Test
+    void anUnfinishedMetadataFileIsReadUpToItsBreak(@TempDir Path tmp) throws Exception {
+        // The last file of each position loses its block; the metadata saved in it places it.
+        Path src = MicroManagerFixture.of(Layout.MM14, 3, 3, 2)
+                .mm14Truncated()
+                .mm14Embedded(0)
+                .write(tmp);
+        MicroManagerMetadataStrategy strategy = new MicroManagerMetadataStrategy();
+        List<TileMapping> mappings = strategy.prepareStitching(src.toString(), MicroManagerFixture.PX_UM, 1.0, "");
+        assertEquals(4, strategy.warnings().size(), strategy.warnings().toString());
+        assertTrue(
+                strategy.warnings().get(0).contains("metadata.txt: ends part way"),
+                strategy.warnings().get(0));
+        assertEquals(72, mappings.size(), "every file placed");
+    }
+
+    @Test
+    void theInfoPropertyIsReadInEitherByteOrder(@TempDir Path tmp) throws Exception {
+        String json = "{\"XPositionUm\":12.5,\"Channel\":\"Cy5\"}";
+        Path be = tmp.resolve("be.tif");
+        MicroManagerFixture.writeImageJTiff(
+                be, MicroManagerFixture.of(Layout.MM14, 1, 1, 1).tile(8).plane(7), json);
+        assertEquals(json, imageJInfo(be));
+        Path le = tmp.resolve("le.tif");
+        java.nio.file.Files.write(le, littleEndianImageJTiff(json));
+        assertEquals(json, imageJInfo(le));
+        Path none = tmp.resolve("none.tif");
+        javax.imageio.ImageIO.write(
+                MicroManagerFixture.of(Layout.MM14, 1, 1, 1).tile(8).plane(7), "TIFF", none.toFile());
+        assertNull(imageJInfo(none));
+    }
+
+    @Test
+    void aPreprocessedCopyKeepsThePositionsOfFilesWithoutBlocks(@TempDir Path tmp) throws Exception {
+        for (boolean embedded : new boolean[] {true, false}) {
+            MicroManagerFixture f = MicroManagerFixture.of(Layout.MM14, 3, 3, 2).noPlaneBlocks();
+            Path src = (embedded ? f.mm14Embedded(0) : f.mm14InitialPositions(0)).write(tmp.resolve("e" + embedded));
+            var options = new qupath.ext.basicstitching.stitching.MicroManagerPreprocessor.Options(true, null, true);
+            Path copy = qupath.ext.basicstitching.stitching.MicroManagerPreprocessor.run(
+                            src, tmp.resolve("copy" + embedded), options)
+                    .output();
+            MicroManagerMetadataStrategy strategy = new MicroManagerMetadataStrategy();
+            List<TileMapping> mappings = strategy.prepareStitching(copy.toString(), MicroManagerFixture.PX_UM, 1.0, "");
+            assertEquals(List.of(), strategy.warnings(), "embedded " + embedded);
+            assertEquals(12, mappings.size(), "4 positions x 3 channels, embedded " + embedded);
+            assertEquals(
+                    3,
+                    mappings.stream()
+                            .filter(m -> m.region.getX() == 0 && m.region.getY() == 0)
+                            .count(),
+                    "one position at the origin, embedded " + embedded);
+        }
+    }
+
+    private static String imageJInfo(Path file) throws Exception {
+        var m = qupath.ext.basicstitching.stitching.TileHeaders.class.getDeclaredMethod("imageJInfo", Path.class);
+        m.setAccessible(true);
+        return (String) m.invoke(null, file);
+    }
+
+    /** A little-endian 2 x 1 8-bit TIFF with ImageJ's metadata tags, laid out by hand. */
+    private static byte[] littleEndianImageJTiff(String info) {
+        byte[] text = info.getBytes(java.nio.charset.StandardCharsets.UTF_16LE);
+        int entries = 10;
+        int ifd = 8;
+        int after = ifd + 2 + entries * 12 + 4;
+        int countsAt = after;
+        int dataAt = countsAt + 8;
+        int pixelsAt = dataAt + 12 + text.length;
+        java.nio.ByteBuffer b = java.nio.ByteBuffer.allocate(pixelsAt + 2).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        b.put((byte) 'I').put((byte) 'I').putShort((short) 42).putInt(ifd);
+        b.putShort((short) entries);
+        int[][] tags = {
+            {256, 3, 1, 2},
+            {257, 3, 1, 1},
+            {258, 3, 1, 8},
+            {259, 3, 1, 1},
+            {262, 3, 1, 1},
+            {273, 4, 1, pixelsAt},
+            {278, 3, 1, 1},
+            {279, 4, 1, 2},
+            {50838, 4, 2, countsAt},
+            {50839, 1, 12 + text.length, dataAt}
+        };
+        for (int[] t : tags) {
+            b.putShort((short) t[0]).putShort((short) t[1]).putInt(t[2]);
+            if (t[1] == 3) {
+                b.putShort((short) t[3]).putShort((short) 0);
+            } else {
+                b.putInt(t[3]);
+            }
+        }
+        b.putInt(0);
+        b.putInt(12).putInt(text.length);
+        b.putInt(0x494a494a).putInt(0x696e666f).putInt(1).put(text);
+        b.put((byte) 1).put((byte) 2);
+        return b.array();
     }
 
     private static void checkMapping(Path src) {

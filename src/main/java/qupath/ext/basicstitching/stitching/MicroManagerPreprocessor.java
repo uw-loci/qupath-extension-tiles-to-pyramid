@@ -937,6 +937,24 @@ public final class MicroManagerPreprocessor {
                 String name = f.getFileName().toString();
                 String lower = name.toLowerCase(Locale.ROOT);
                 if (name.contains(":") || !(lower.endsWith(".tif") || lower.endsWith(".tiff"))) continue;
+                if (!frameKeyOf.containsKey(name)
+                        && MicroManagerPlanes.isMm14FileName(name)
+                        && !sidecar.has("Metadata-" + label + "/" + name)) {
+                    // A 1.4 file without its FrameKey block: the metadata it carries stands in for
+                    // one, so the copy's metadata.txt places it as the stitch would the source.
+                    JsonObject md = MicroManagerPlanes.embeddedMetadata(f);
+                    MicroManagerPlanes.Coord k = md == null ? null : MicroManagerPlanes.fromMm14FileName(name, chNames);
+                    if (k == null && md != null) k = MicroManagerPlanes.fromBlock(md);
+                    if (k != null) {
+                        String key = "FrameKey-" + k.t() + "-" + k.c() + "-" + k.z();
+                        if (!sidecar.has(key)) {
+                            JsonObject block = md.deepCopy();
+                            block.addProperty("FileName", name);
+                            sidecar.add(key, block);
+                            frameKeyOf.put(name, key);
+                        }
+                    }
+                }
                 String frameKey = frameKeyOf.get(name);
                 MicroManagerPlanes.Coord c = MicroManagerPlanes.singlePlaneCoord(
                         name,

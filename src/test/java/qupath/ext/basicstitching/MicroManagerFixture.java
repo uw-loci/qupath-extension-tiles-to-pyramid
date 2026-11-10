@@ -65,6 +65,14 @@ final class MicroManagerFixture {
     boolean firstFrameKeyOnly = false;
     /** Write a 1.4 metadata.txt with its Summary only: planes must be read from the file names. */
     boolean noPlaneBlocks = false;
+    /** 1.4: save each file's metadata in it as ImageJ's "Info" property, as Micro-Manager 1.4 does. */
+    boolean mm14Embedded = false;
+    /** 1.4: the embedded metadata's stage position is this far (um, X and Y) off the block's. */
+    double mm14EmbeddedOffsetUm = 0;
+    /** 1.4: list the positions in Summary.InitialPositionList, this far (um) off the blocks' positions. */
+    Double mm14InitialPositionsOffsetUm = null;
+    /** 1.4: metadata.txt stops part way through the last file's block, as an unfinished acquisition leaves it. */
+    boolean mm14Truncated = false;
     /** NDTiff: the channel axis holds names (format 3.2) rather than indices. */
     boolean ndChannelNames = false;
     /** NDTiff: images after this many go to a second stack file ({@code _1}); 0 for one file. */
@@ -129,6 +137,22 @@ final class MicroManagerFixture {
 
     MicroManagerFixture ndSplitAfter(int images) {
         ndSplitAfter = images;
+        return this;
+    }
+
+    MicroManagerFixture mm14Embedded(double offsetUm) {
+        mm14Embedded = true;
+        mm14EmbeddedOffsetUm = offsetUm;
+        return this;
+    }
+
+    MicroManagerFixture mm14InitialPositions(double offsetUm) {
+        mm14InitialPositionsOffsetUm = offsetUm;
+        return this;
+    }
+
+    MicroManagerFixture mm14Truncated() {
+        mm14Truncated = true;
         return this;
     }
 
@@ -304,7 +328,14 @@ final class MicroManagerFixture {
         for (int[] k : planeOrder()) {
             int c = k[0], z = k[1], t = k[2];
             String name = String.format("img_%09d_%s_%03d.tif", t, names[c], z);
-            ImageIO.write(plane(value(c, z, t)), "TIFF", dir.resolve(name).toFile());
+            if (mm14Embedded) {
+                writeImageJTiff(
+                        dir.resolve(name),
+                        plane(value(c, z, t)),
+                        mm14Block(name, label, p, c, z, t, xUm + mm14EmbeddedOffsetUm, yUm + mm14EmbeddedOffsetUm));
+            } else {
+                ImageIO.write(plane(value(c, z, t)), "TIFF", dir.resolve(name).toFile());
+            }
             if (noPlaneBlocks) continue;
             sb.append(",\"FrameKey-")
                     .append(t)
@@ -312,38 +343,46 @@ final class MicroManagerFixture {
                     .append(c)
                     .append('-')
                     .append(z)
-                    .append("\":{\"FileName\":\"")
-                    .append(name)
-                    .append("\",\"ChannelIndex\":")
-                    .append(c)
-                    .append(",\"SliceIndex\":")
-                    .append(z)
-                    .append(",\"Slice\":")
-                    .append(z)
-                    .append(",\"FrameIndex\":")
-                    .append(t)
-                    .append(",\"Frame\":")
-                    .append(t)
-                    .append(",\"PositionIndex\":")
-                    .append(p)
-                    .append(",\"PositionName\":\"")
-                    .append(label)
-                    .append("\",\"Channel\":\"")
-                    .append(names[c])
-                    .append("\",\"XPositionUm\":")
-                    .append(xUm)
-                    .append(",\"YPositionUm\":")
-                    .append(yUm)
-                    .append(",\"PixelSizeUm\":")
-                    .append(PX_UM)
-                    .append(",\"Width\":")
-                    .append(tile)
-                    .append(",\"Height\":")
-                    .append(tile)
-                    .append("}");
+                    .append("\":")
+                    .append(mm14Block(name, label, p, c, z, t, xUm, yUm));
         }
-        sb.append("}");
-        Files.writeString(dir.resolve("metadata.txt"), sb.toString());
+        String text = sb.append("}").toString();
+        if (mm14Truncated) {
+            // TaggedImageStorageDiskDefault closes the brace only when the acquisition finishes.
+            text = text.substring(0, text.length() - 40);
+        }
+        Files.writeString(dir.resolve("metadata.txt"), text);
+    }
+
+    /** One image's metadata, as 1.4 writes it both in its FrameKey block and inside the file. */
+    private String mm14Block(String name, String label, int p, int c, int z, int t, double xUm, double yUm) {
+        return "{\"FileName\":\"" + name + "\",\"ChannelIndex\":" + c + ",\"SliceIndex\":" + z + ",\"Slice\":" + z
+                + ",\"FrameIndex\":" + t + ",\"Frame\":" + t + ",\"PositionIndex\":" + p + ",\"PositionName\":\""
+                + label + "\",\"Channel\":\"" + names[c] + "\",\"XPositionUm\":" + xUm + ",\"YPositionUm\":" + yUm
+                + ",\"PixelSizeUm\":" + PX_UM + ",\"Width\":" + tile + ",\"Height\":" + tile + "}";
+    }
+
+    /**
+     * A TIFF carrying {@code info} as ImageJ's "Info" property: tag 50838 the byte counts (header,
+     * then the text), tag 50839 the "IJIJ" header, one "info" entry and the text in UTF-16, in the
+     * file's byte order ({@code ij.io.TiffEncoder.writeMetaData}). The JDK writer writes big-endian.
+     */
+    static void writeImageJTiff(Path file, BufferedImage img, String info) throws IOException {
+        byte[] text = info.getBytes(java.nio.charset.StandardCharsets.UTF_16BE);
+        java.nio.ByteBuffer data = java.nio.ByteBuffer.allocate(12 + text.length);
+        data.putInt(0x494a494a).putInt(0x696e666f).putInt(1).put(text);
+        TIFFDirectory d = new TIFFDirectory(new TIFFTagSet[] {BaselineTIFFTagSet.getInstance()}, null);
+        TIFFTag counts = new TIFFTag("MetaDataByteCounts", 50838, 1 << TIFFTag.TIFF_LONG);
+        TIFFTag meta = new TIFFTag("MetaData", 50839, 1 << TIFFTag.TIFF_BYTE);
+        d.addTIFFField(new TIFFField(counts, TIFFTag.TIFF_LONG, 2, new long[] {12, text.length}));
+        d.addTIFFField(new TIFFField(meta, TIFFTag.TIFF_BYTE, data.capacity(), data.array()));
+        ImageWriter writer = ImageIO.getImageWritersByFormatName("TIFF").next();
+        try (ImageOutputStream out = ImageIO.createImageOutputStream(file.toFile())) {
+            writer.setOutput(out);
+            writer.write(new IIOImage(img, null, d.getAsMetadata()));
+        } finally {
+            writer.dispose();
+        }
     }
 
     /** A Micro-Manager 1.4 Summary (acq_engine.clj, mm1.4): no StagePositions, PixelSize_um not PixelSizeUm. */
@@ -356,7 +395,34 @@ final class MicroManagerFixture {
                 + ",\"Slices\":" + slices + ",\"Frames\":" + frames + ",\"Positions\":" + POSITIONS
                 + ",\"z-step_um\":" + (slices > 1 ? "2.5" : "0.0") + ",\"PixelSize_um\":" + PX_UM
                 + ",\"ChNames\":[" + chNames + "],\"Prefix\":\"MDA_region\",\"PositionIndex\":" + p
-                + ",\"SlicesFirst\":true,\"TimeFirst\":false}";
+                + ",\"SlicesFirst\":true,\"TimeFirst\":false" + initialPositionList14() + "}";
+    }
+
+    /**
+     * Summary.InitialPositionList as 1.4's {@code summarize-position-list} writes it (acq_engine.clj,
+     * mm1.4): Label, GridRowIndex, GridColumnIndex and DeviceCoordinatesUm, an XY stage with two
+     * coordinates and a focus drive with one.
+     */
+    private String initialPositionList14() {
+        if (mm14InitialPositionsOffsetUm == null) return "";
+        StringBuilder sb = new StringBuilder(",\"InitialPositionList\":[");
+        for (int p = 0; p < POSITIONS; p++) {
+            double x = (p % 2) * step() * PX_UM + mm14InitialPositionsOffsetUm;
+            double y = (p / 2) * step() * PX_UM + mm14InitialPositionsOffsetUm;
+            sb.append(p > 0 ? "," : "")
+                    .append("{\"Label\":\"")
+                    .append(label(p))
+                    .append("\",\"GridRowIndex\":")
+                    .append(p / 2)
+                    .append(",\"GridColumnIndex\":")
+                    .append(p % 2)
+                    .append(",\"DeviceCoordinatesUm\":{\"XYStage\":[")
+                    .append(x)
+                    .append(',')
+                    .append(y)
+                    .append("],\"Z\":[12.5]}}");
+        }
+        return sb.append("]").toString();
     }
 
     /** The acquisition's Summary; as Micro-Manager writes it, the same in every sidecar, listing every position. */

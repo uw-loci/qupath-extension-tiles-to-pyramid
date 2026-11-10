@@ -166,6 +166,15 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
         Double detectedPixelSizeUm = null;
         /** Whether any flat-MMStack (multi-series) tile was seen. */
         boolean sawMultiSeries = false;
+
+        /** Summary.InitialPositionList label -> (xUm, yUm): Micro-Manager 1.4's position list. */
+        final Map<String, double[]> labelToInitialPosUm = new HashMap<>();
+        /** Channel, slice and frame from the metadata embedded in a 1.4 file, when its name gives none. */
+        final Map<Path, MicroManagerPlanes.Coord> embeddedCoords = new HashMap<>();
+        /** Metadata files found, readable or not. */
+        int metadataFiles = 0;
+        /** Metadata files that end part way, read up to their last complete entry. */
+        final List<String> truncated = new ArrayList<>();
     }
 
     /** What the last {@link #prepareStitching} could not place as asked, for the result dialog. */
@@ -233,18 +242,12 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
         }
 
         ParsedMetadata pm = parseMetadata(rootdir);
-        if (pm.pathToRecord.isEmpty() && pm.labelToPosUm.isEmpty()) {
+        if (pm.metadataFiles == 0) {
             logger.warn("No usable MicroManager metadata (metadata.txt / *_metadata.txt) found under {}", folderPath);
             return mappings;
         }
-
-        double effectivePixelSize = choosePixelSize(pm.detectedPixelSizeUm, pixelSizeInMicrons);
-        if (effectivePixelSize <= 0) {
-            logger.error(
-                    "Effective pixel size is {} um/px (must be > 0); cannot map tiles. "
-                            + "Provide a valid pixel size via the dialog override.",
-                    effectivePixelSize);
-            return mappings;
+        for (String t : pm.truncated) {
+            warn(t);
         }
 
         // Enumerate TIFFs and build TileMappings, falling back to the
@@ -255,6 +258,35 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
             return mappings;
         }
         logger.info("Found {} TIFF file(s) under {}", tiffFiles.size(), folderPath);
+
+        // Single-plane files without a block: the metadata Micro-Manager 1.4 saved inside each one.
+        Map<Path, double[]> embeddedPosUm = new HashMap<>();
+        for (Path tif : tiffFiles) {
+            if (pm.pathToRecord.containsKey(tif) || tif.getFileName().toString().contains("_MMStack_")) continue;
+            JsonObject md = MicroManagerPlanes.embeddedMetadata(tif);
+            if (md == null) continue;
+            Double xUm = optDouble(md, "XPositionUm");
+            Double yUm = optDouble(md, "YPositionUm");
+            if (xUm != null && yUm != null) embeddedPosUm.put(tif, new double[] {xUm, yUm});
+            MicroManagerPlanes.Coord k = MicroManagerPlanes.fromBlock(md);
+            if (k != null) pm.embeddedCoords.put(tif, k);
+            Double ps = optDouble(md, "PixelSizeUm");
+            if (pm.detectedPixelSizeUm == null && ps != null && ps > 0) pm.detectedPixelSizeUm = ps;
+        }
+        if (!embeddedPosUm.isEmpty()) {
+            logger.info(
+                    "{} file(s) without a metadata.txt block placed by the metadata saved in the file",
+                    embeddedPosUm.size());
+        }
+
+        double effectivePixelSize = choosePixelSize(pm.detectedPixelSizeUm, pixelSizeInMicrons);
+        if (effectivePixelSize <= 0) {
+            logger.error(
+                    "Effective pixel size is {} um/px (must be > 0); cannot map tiles. "
+                            + "Provide a valid pixel size via the dialog override.",
+                    effectivePixelSize);
+            return mappings;
+        }
 
         String folderName =
                 rootdir.getFileName() != null ? rootdir.getFileName().toString() : "tiles";
@@ -273,6 +305,7 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
 
         List<String> firstPageOnly = new ArrayList<>();
         List<String> unplaced = new ArrayList<>();
+        List<String> noPosition = new ArrayList<>();
         List<PendingTile> pending = new ArrayList<>();
         List<Path> tileFiles =
                 tiffFiles.stream().filter(p -> !continuations.contains(p)).toList();
@@ -288,17 +321,25 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
                 label = parentFolderLabel(tif);
             }
 
+            // Its own block, else the metadata saved in the file (1.4), else its position's entry
+            // in Summary.StagePositions (2.0), else in Summary.InitialPositionList (1.4).
             double[] posUm;
             TileRecord record = pm.pathToRecord.get(tif);
             if (record != null) {
                 posUm = new double[] {record.xUm, record.yUm};
+            } else if (embeddedPosUm.containsKey(tif)) {
+                posUm = embeddedPosUm.get(tif);
             } else {
                 posUm = label != null ? pm.labelToPosUm.get(label) : null;
+                if (posUm == null && label != null) {
+                    posUm = pm.labelToInitialPosUm.get(label);
+                }
                 if (posUm == null) {
                     logger.warn("No MicroManager position found for {} -- skipping", filename);
+                    noPosition.add(rootdir.relativize(tif).toString());
                     continue;
                 }
-                logger.debug("Tile {} resolved via Summary.StagePositions label '{}'", filename, label);
+                logger.debug("Tile {} resolved via its position's Summary entry '{}'", filename, label);
             }
 
             TileHeaders.Size tileDims = sizes.get(tif);
@@ -358,6 +399,11 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
         if (!unplaced.isEmpty()) {
             warn(unplaced.size() + " file(s) were left out because their channel, z-slice and time point could not"
                     + " be read from the file name, metadata.txt or the file itself. First: " + unplaced.get(0));
+        }
+        if (!noPosition.isEmpty()) {
+            warn(noPosition.size() + " file(s) were left out because no stage position was found for them: no"
+                    + " block in metadata.txt, none saved in the file, and their folder is not listed in"
+                    + " Summary.StagePositions or Summary.InitialPositionList. First: " + noPosition.get(0));
         }
         logger.info(
                 "Total tiles mapped from MicroManager metadata: {} ({} channel(s), {} z-slice(s), {} time point(s))",
@@ -611,6 +657,7 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
             MicroManagerPlanes.Coord k = MicroManagerPlanes.singlePlaneCoord(filename);
             if (k == null) k = pm.blockCoords.get(tif);
             if (k == null) k = MicroManagerPlanes.fromMm14FileName(filename, pm.channelNames);
+            if (k == null) k = pm.embeddedCoords.get(tif);
             if (k != null) {
                 return List.of(new MicroManagerPlanes.Plane(tif, 0, k));
             }
@@ -667,11 +714,14 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
             return pm;
         }
         logger.info("Found {} MicroManager metadata file(s) under {}", metadataFiles.size(), rootdir);
+        pm.metadataFiles = metadataFiles.size();
 
         for (Path metaPath : metadataFiles) {
             Path metaParent = metaPath.getParent();
-            try (Reader reader = Files.newBufferedReader(metaPath)) {
-                JsonObject root = GSON.fromJson(reader, JsonObject.class);
+            try {
+                String where = rootdir.relativize(metaPath).toString();
+                JsonObject root = MicroManagerPlanes.readJson(
+                        metaPath, note -> pm.truncated.add(where + ": " + note.substring(note.indexOf(' ') + 1)));
                 if (root == null) {
                     logger.warn("Empty or unparseable metadata file: {}", metaPath);
                     continue;
@@ -722,6 +772,9 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
                                 pm.labelToPosUm.size(),
                                 pm.labelToSeriesIndex.size());
                     }
+                }
+                if (summary != null && pm.labelToInitialPosUm.isEmpty()) {
+                    initialPositions(summary, pm.labelToInitialPosUm);
                 }
 
                 // Walk every top-level entry; pick up per-tile blocks from
@@ -1248,6 +1301,42 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
         return (parent != null && parent.getFileName() != null)
                 ? parent.getFileName().toString()
                 : null;
+    }
+
+    /**
+     * Micro-Manager 1.4's {@code Summary.InitialPositionList} (acq_engine.clj
+     * {@code summarize-position-list}, {@code mm1.4} branch): one entry per position,
+     * {@code {"Label", "GridRowIndex", "GridColumnIndex", "DeviceCoordinatesUm": {device: [um, ...]}}}.
+     * The XY stage is the one device with two coordinates; an entry with no such device, or more
+     * than one, is skipped.
+     */
+    static void initialPositions(JsonObject summary, Map<String, double[]> out) {
+        JsonArray list = optArray(summary, "InitialPositionList");
+        if (list == null) return;
+        for (JsonElement el : list) {
+            if (!el.isJsonObject()) continue;
+            JsonObject entry = el.getAsJsonObject();
+            String label = optString(entry, "Label");
+            JsonObject devices = optObject(entry, "DeviceCoordinatesUm");
+            if (label == null || devices == null) continue;
+            double[] xy = null;
+            int xyDevices = 0;
+            for (Map.Entry<String, JsonElement> d : devices.entrySet()) {
+                if (!d.getValue().isJsonArray() || d.getValue().getAsJsonArray().size() != 2) continue;
+                try {
+                    JsonArray a = d.getValue().getAsJsonArray();
+                    xy = new double[] {a.get(0).getAsDouble(), a.get(1).getAsDouble()};
+                    xyDevices++;
+                } catch (RuntimeException e) {
+                    // not numbers
+                }
+            }
+            if (xyDevices == 1) {
+                out.put(label, xy);
+            } else {
+                logger.debug("InitialPositionList entry {} has {} two-axis devices; not used", label, xyDevices);
+            }
+        }
     }
 
     /**

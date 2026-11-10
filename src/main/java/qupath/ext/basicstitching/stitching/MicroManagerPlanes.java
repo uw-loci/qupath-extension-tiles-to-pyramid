@@ -354,11 +354,64 @@ public final class MicroManagerPlanes {
 
     /** @return the JSON object in {@code p}, or null when the file holds something else */
     static JsonObject readJson(Path p) throws IOException {
+        return readJson(p, null);
+    }
+
+    /**
+     * Read a JSON object entry by entry. Micro-Manager writes metadata.txt as it acquires and
+     * closes its brace at the end ({@code TaggedImageStorageDiskDefault}, 1.4; the 2.0 single-plane
+     * writer does the same), so an acquisition that did not finish leaves a file a strict parser
+     * refuses whole. The entries before the break are kept, and logged.
+     *
+     * @param truncated told what was kept when the file ends part way; may be null
+     * @return the object, or null when the file does not hold one
+     * @throws IOException when it cannot be read, or not even its first entry parses
+     */
+    static JsonObject readJson(Path p, java.util.function.Consumer<String> truncated) throws IOException {
+        JsonObject root = new JsonObject();
         try (Reader r = Files.newBufferedReader(p, StandardCharsets.UTF_8)) {
-            JsonElement e = JsonParser.parseReader(r);
-            return e != null && e.isJsonObject() ? e.getAsJsonObject() : null;
-        } catch (RuntimeException e) {
-            throw new IOException("Cannot parse " + p.getFileName() + ": " + e.getMessage(), e);
+            com.google.gson.stream.JsonReader in = new com.google.gson.stream.JsonReader(r);
+            in.setStrictness(com.google.gson.Strictness.LENIENT);
+            com.google.gson.stream.JsonToken first;
+            try {
+                first = in.peek();
+            } catch (java.io.EOFException e) {
+                return null; // an empty file
+            }
+            if (first != com.google.gson.stream.JsonToken.BEGIN_OBJECT) return null;
+            try {
+                in.beginObject();
+                while (in.hasNext()) {
+                    String name = in.nextName();
+                    root.add(name, JsonParser.parseReader(in));
+                }
+                in.endObject();
+            } catch (IOException | RuntimeException e) {
+                if (root.size() == 0) {
+                    throw new IOException("Cannot parse " + p.getFileName() + ": " + e.getMessage(), e);
+                }
+                String note = p.getFileName() + " ends part way (an acquisition that did not finish?); its first "
+                        + root.size() + " entries were read";
+                logger.warn("{}: {}", note, e.getMessage());
+                if (truncated != null) truncated.accept(note);
+            }
+        }
+        return root;
+    }
+
+    /**
+     * The metadata Micro-Manager 1.4 saved inside a single-plane file (ImageJ's "Info" property,
+     * {@link TileHeaders#imageJInfo}), or null when it has none that parses as a JSON object.
+     */
+    static JsonObject embeddedMetadata(Path tif) {
+        try {
+            String info = TileHeaders.imageJInfo(tif);
+            if (info == null || info.isBlank()) return null;
+            JsonElement e = JsonParser.parseString(info);
+            return e.isJsonObject() ? e.getAsJsonObject() : null;
+        } catch (IOException | RuntimeException e) {
+            logger.debug("No embedded metadata in {}: {}", tif.getFileName(), e.toString());
+            return null;
         }
     }
 

@@ -210,6 +210,90 @@ public final class TileHeaders {
         }
     }
 
+    /** ImageJ's metadata tags (TiffDecoder.META_DATA_BYTE_COUNTS, META_DATA) and its "IJIJ" / "info" codes. */
+    private static final int TAG_IJ_COUNTS = 50838;
+
+    private static final int TAG_IJ_DATA = 50839;
+    private static final int IJ_MAGIC = 0x494a494a;
+    private static final int IJ_INFO = 0x696e666f;
+
+    /**
+     * The "Info" property ImageJ saved in a TIFF's first image directory, or null when it has none.
+     * Micro-Manager 1.4 saves each single-plane file through ImageJ with the image's metadata JSON
+     * as that property ({@code TaggedImageStorageDiskDefault.saveImagePlus}, {@code mm1.4} branch).
+     * ImageJ writes it in tag 50839 after an "IJIJ" header listing each entry's type and count, with
+     * every entry's byte length in tag 50838, the text as UTF-16 in the file's byte order
+     * ({@code ij.io.TiffEncoder.writeMetaData}, read by {@code TiffDecoder.getMetaData}).
+     */
+    static String imageJInfo(Path file) throws IOException {
+        try (FileChannel ch = FileChannel.open(file, StandardOpenOption.READ)) {
+            Header h = header(ch);
+            if (h == null) return null;
+            int countBytes = h.big ? 8 : 2;
+            int entryBytes = h.big ? 20 : 12;
+            ByteBuffer c = readAt(ch, h.firstIfd, countBytes).order(h.order);
+            if (c.remaining() < countBytes) return null;
+            long count = h.big ? c.getLong(0) : Short.toUnsignedInt(c.getShort(0));
+            if (count <= 0 || count > 10_000) return null;
+            ByteBuffer e = readAt(ch, h.firstIfd + countBytes, (int) (count * entryBytes))
+                    .order(h.order);
+            long countsAt = -1, nCounts = 0, dataAt = -1;
+            int countsType = 0;
+            for (int i = 0; i < count && (i + 1) * entryBytes <= e.remaining(); i++) {
+                int q = i * entryBytes;
+                int tag = Short.toUnsignedInt(e.getShort(q));
+                if (tag != TAG_IJ_COUNTS && tag != TAG_IJ_DATA) continue;
+                int type = Short.toUnsignedInt(e.getShort(q + 2));
+                long n = h.big ? e.getLong(q + 4) : Integer.toUnsignedLong(e.getInt(q + 4));
+                int valueAt = q + (h.big ? 12 : 8);
+                long inline = h.big ? e.getLong(valueAt) : Integer.toUnsignedLong(e.getInt(valueAt));
+                if (tag == TAG_IJ_COUNTS) {
+                    countsType = type;
+                    nCounts = n;
+                    countsAt = n * typeBytes(type) <= (h.big ? 8 : 4) ? h.firstIfd + countBytes + valueAt : inline;
+                } else {
+                    dataAt = n <= (h.big ? 8 : 4) ? h.firstIfd + countBytes + valueAt : inline;
+                }
+            }
+            if (countsAt < 0 || dataAt < 0 || nCounts < 2 || nCounts > 100_000 || typeBytes(countsType) == 0) {
+                return null;
+            }
+            int tb = typeBytes(countsType);
+            ByteBuffer cb = readAt(ch, countsAt, (int) (nCounts * tb)).order(h.order);
+            if (cb.remaining() < nCounts * tb) return null;
+            long[] counts = new long[(int) nCounts];
+            for (int i = 0; i < counts.length; i++) counts[i] = value(cb, i * tb, countsType);
+            long hdrSize = counts[0];
+            if (hdrSize < 12 || hdrSize > 804) return null;
+            ByteBuffer hdr = readAt(ch, dataAt, (int) hdrSize).order(h.order);
+            if (hdr.remaining() < hdrSize || hdr.getInt(0) != IJ_MAGIC) return null;
+            // Entries follow the header in the order the header lists their types.
+            long at = dataAt + hdrSize;
+            int entry = 1;
+            for (int i = 4; i + 8 <= hdrSize; i += 8) {
+                int type = hdr.getInt(i);
+                int n = hdr.getInt(i + 4);
+                for (int k = 0; k < n && entry < counts.length; k++, entry++) {
+                    if (type == IJ_INFO) {
+                        long len = counts[entry];
+                        if (len <= 0 || len > 64L * 1024 * 1024) return null;
+                        ByteBuffer t = readAt(ch, at, (int) len);
+                        if (t.remaining() < len) return null;
+                        return new String(
+                                t.array(),
+                                0,
+                                (int) len,
+                                h.order == ByteOrder.BIG_ENDIAN
+                                        ? java.nio.charset.StandardCharsets.UTF_16BE
+                                        : java.nio.charset.StandardCharsets.UTF_16LE);
+                    }
+                    at += counts[entry];
+                }
+            }
+            return null;
+        }
+    }
+
     private record Header(ByteOrder order, boolean big, long firstIfd) {}
 
     private record Directory(int width, int height, long firstDataOffset, long next) {}
