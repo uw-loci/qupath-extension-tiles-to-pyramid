@@ -385,6 +385,13 @@ class MergeTileCopyTest {
             return "counting wrapper";
         }
 
+        /** Closes the file too: TransformingImageServer leaves it open, and Windows cannot delete it. */
+        @Override
+        public void close() throws Exception {
+            super.close();
+            getWrappedServer().close();
+        }
+
         @Override
         protected ServerBuilder<BufferedImage> createServerBuilder() {
             return null;
