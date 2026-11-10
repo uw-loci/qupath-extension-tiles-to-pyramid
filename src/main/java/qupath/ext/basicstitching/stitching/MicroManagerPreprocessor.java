@@ -44,7 +44,7 @@ import org.slf4j.LoggerFactory;
  * z-slices are max-intensity projected, in that order. Without averaging every time point is
  * reduced on its own and kept. The result is a copy in the same MicroManager layout, with one
  * frame (when averaged) and one slice (when projected) per position, which
- * {@link MicroManagerMetadataStrategy} stitches. Both MicroManager layouts are handled:
+ * {@link MicroManagerMetadataStrategy} stitches. Each MicroManager layout is handled:
  *
  * <ul>
  *   <li><b>One OME-TIFF per position</b> ({@code <prefix>_MMStack_<label>.ome.tif} plus
@@ -53,6 +53,11 @@ import org.slf4j.LoggerFactory;
  *       {@code img_channelCCC_positionPPP_timeTTTTTTTTT_zZZZ.tif} files and a
  *       {@code metadata.txt}). The copy keeps each written plane's source file name (its first
  *       frame's when averaged, its first slice's when projected).</li>
+ *   <li><b>NDTiff</b> ({@code NDTiff.index} and {@code <prefix>_NDTiffStack*.tif}, read by
+ *       {@link NdTiffDataset}). The copy is an NDTiff dataset ({@link NdTiffWriter}): each written
+ *       image keeps the axes of its source image (its first frame's when averaged, its first
+ *       slice's when projected) without the {@code time} axis when averaged and without {@code z}
+ *       when projected, and that image's metadata, so the stitch places it as it would the source.</li>
  * </ul>
  *
  * <p>Which channel, slice and frame each page holds is read by {@link MicroManagerPlanes}, the
@@ -101,7 +106,7 @@ public final class MicroManagerPreprocessor {
     }
 
     /**
-     * Frames and z-slices per position, from the acquisition's Summary.
+     * Frames and z-slices per position, from the acquisition's Summary (an NDTiff dataset's index).
      *
      * @param frames time points per position; 0 when the folder holds no MicroManager sidecar
      * @param slices z-slices per position; 0 likewise
@@ -152,6 +157,10 @@ public final class MicroManagerPreprocessor {
         if (folder == null || !folder.isDirectory()) return new Shape(0, 0);
         Path root = folder.toPath().toAbsolutePath().normalize();
         if (root.getParent() == null) return new Shape(0, 0);
+        Path nd = NdTiffDataset.locate(root);
+        if (nd != null) {
+            return ndTiffShape(nd);
+        }
         try (var files = Files.list(root)) {
             for (Path p : (Iterable<Path>) files.sorted()::iterator) {
                 String name = p.getFileName().toString();
@@ -176,6 +185,28 @@ public final class MicroManagerPreprocessor {
         return new Shape(0, 0);
     }
 
+    /**
+     * Distinct time points and z-slices among an NDTiff dataset's images, from its index alone (the
+     * dialog asks on every change of the folder field).
+     */
+    private static Shape ndTiffShape(Path dir) {
+        try {
+            Set<String> times = new HashSet<>();
+            Set<String> zs = new HashSet<>();
+            for (NdTiffDataset.Entry e : NdTiffDataset.readIndex(dir.resolve(NdTiffDataset.INDEX))) {
+                JsonElement t = e.axes().get("time");
+                JsonElement z = e.axes().get("z");
+                times.add(t == null ? "" : t.toString());
+                zs.add(z == null ? "" : z.toString());
+            }
+            if (times.isEmpty()) return new Shape(0, 0);
+            return new Shape(times.size(), zs.size());
+        } catch (IOException | RuntimeException e) {
+            logger.debug("Could not read the NDTiff index in {}: {}", dir, e.toString());
+            return new Shape(0, 0);
+        }
+    }
+
     /** @return the default output folder, beside the source: {@code <source><suffix>} */
     public static Path defaultOutput(Path source, Options options) {
         Path abs = source.toAbsolutePath().normalize();
@@ -185,8 +216,9 @@ public final class MicroManagerPreprocessor {
     /**
      * Reduce every position in {@code source} into {@code output}.
      *
-     * @param source the acquisition folder: {@code _MMStack_} files and their sidecars, or one
-     *     sub-folder per position (single-plane TIFF series)
+     * @param source the acquisition folder: {@code _MMStack_} files and their sidecars, one
+     *     sub-folder per position (single-plane TIFF series), or an NDTiff dataset (the folder
+     *     holding {@code NDTiff.index}, or its parent when that is a {@code Full resolution} folder)
      * @param output folder to write; created if absent. An existing folder is written into only
      *     when it is empty or was written by this class (it holds {@link #RECORD_FILENAME}).
      * @param options what to do, in order
@@ -205,6 +237,15 @@ public final class MicroManagerPreprocessor {
         Map<String, Integer> frames = new LinkedHashMap<>();
         Map<String, Integer> slices = new LinkedHashMap<>();
         List<String> notes = new ArrayList<>();
+        Path ndTiff = NdTiffDataset.locate(src);
+        if (ndTiff != null) {
+            ndTiffPositions(src, ndTiff, out, options, frames, slices, notes);
+            noteUneven(notes, frames, "time point");
+            noteUneven(notes, slices, "z-slice");
+            Result result = new Result(out, options, frames.size(), frames, slices, notes);
+            writeRecord(src, result);
+            return result;
+        }
         Map<String, List<Path>> filesByPosition = positionFiles(src);
         List<Path> positionDirs = filesByPosition.isEmpty() ? singlePlaneDirs(src) : List.of();
         if (filesByPosition.isEmpty() && positionDirs.isEmpty()) {
@@ -281,6 +322,104 @@ public final class MicroManagerPreprocessor {
         Result result = new Result(out, options, frames.size(), frames, slices, notes);
         writeRecord(src, result);
         return result;
+    }
+
+    /**
+     * Reduce every position of an NDTiff dataset into an NDTiff dataset in {@code out}: per position
+     * and written time point, one image per channel and slice, carrying its source image's axes (no
+     * {@code time} when averaged, no {@code z} when projected) and metadata. The images are read
+     * through {@link NdTiffDataset}: each is a page of a stack file, located by the index.
+     */
+    private static void ndTiffPositions(
+            Path src,
+            Path dir,
+            Path out,
+            Options options,
+            Map<String, Integer> frames,
+            Map<String, Integer> slices,
+            List<String> notes)
+            throws IOException {
+        NdTiffDataset ds = NdTiffDataset.read(dir);
+        Map<String, List<MicroManagerPlanes.Plane>> byPosition = new LinkedHashMap<>();
+        Map<String, NdTiffDataset.Image> byPlane = new HashMap<>();
+        Map<String, NdTiffDataset.Image> earliest = new HashMap<>();
+        for (NdTiffDataset.Image im : ds.images()) {
+            MicroManagerPlanes.Coord k = im.coord();
+            byPosition
+                    .computeIfAbsent(im.position(), p -> new ArrayList<>())
+                    .add(new MicroManagerPlanes.Plane(im.file(), im.page(), k));
+            byPlane.put(im.position() + "|" + k.t() + "|" + k.c() + "|" + k.z(), im);
+            earliest.merge(
+                    im.position() + "|" + k.c() + "|" + k.z(),
+                    im,
+                    (a, b) -> b.coord().t() < a.coord().t() ? b : a);
+        }
+        String prefix =
+                ds.images().get(0).file().getFileName().toString().replaceFirst("_NDTiffStack(_\\d+)?\\.tiff?$", "");
+        NdTiffWriter writer = null;
+        try {
+            for (var entry : byPosition.entrySet()) {
+                String pos = entry.getKey();
+                String label = "{}".equals(pos) ? "the position" : "position " + pos;
+                List<MicroManagerPlanes.Plane> planes = entry.getValue();
+                List<Integer> outFrames = outputFrames(planes, options, label, notes);
+                Planes first = null;
+                for (int frame : outFrames) {
+                    Planes p = reduce(planes, false, options, label, notes, frame);
+                    if (first == null) {
+                        first = p;
+                    } else if (p.channels != first.channels
+                            || p.slices != first.slices
+                            || p.width != first.width
+                            || p.height != first.height) {
+                        throw new IOException(label + ": time point " + frame
+                                + " has a different shape from time point " + outFrames.get(0));
+                    }
+                    if (p.pixelType != FormatTools.UINT8 && p.pixelType != FormatTools.UINT16) {
+                        throw new IOException(label + ": NDTiff holds 8- or 16-bit images, not "
+                                + FormatTools.getPixelTypeString(p.pixelType));
+                    }
+                    if (writer == null) {
+                        writer = new NdTiffWriter(
+                                out, prefix, reducedSummary(ds.summary(), p, outFrames.size(), src, options));
+                    }
+                    for (int z = 0; z < p.slices; z++) {
+                        for (int c = 0; c < p.channels; c++) {
+                            // The plane's own source image: its time point's, or its first frame's
+                            // when averaged (the first slice's when projected).
+                            NdTiffDataset.Image from = frame == ALL_FRAMES
+                                    ? earliest.get(pos + "|" + c + "|" + z)
+                                    : byPlane.get(pos + "|" + frame + "|" + c + "|" + z);
+                            if (from == null) continue;
+                            JsonObject axes = from.entry().axes().deepCopy();
+                            if (frame == ALL_FRAMES) axes.remove("time");
+                            if (p.projected()) axes.remove("z");
+                            JsonObject md = ds.metadata(from).deepCopy();
+                            annotate(md, p);
+                            writer.add(
+                                    axes,
+                                    p.width,
+                                    p.height,
+                                    p.pixelType == FormatTools.UINT16,
+                                    pack(p.mean[c + p.channels * z], p.pixelType),
+                                    md);
+                        }
+                    }
+                }
+                frames.put(pos, first.framesInSource);
+                slices.put(pos, first.slicesInSource);
+                logReduced(label, first, options);
+            }
+        } finally {
+            if (writer != null) writer.close();
+        }
+        for (Path from : List.of(dir.resolve("display_settings.txt"), src.resolve("display_settings.txt"))) {
+            if (Files.isRegularFile(from)) {
+                Files.copy(
+                        from, out.resolve("display_settings.txt"), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                break;
+            }
+        }
     }
 
     private static void noteUneven(List<String> notes, Map<String, Integer> counts, String what) {

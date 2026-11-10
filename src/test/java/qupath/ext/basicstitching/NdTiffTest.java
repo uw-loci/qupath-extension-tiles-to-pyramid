@@ -178,6 +178,127 @@ class NdTiffTest {
         }
     }
 
+    /**
+     * Opt-in, same dataset: averaged over time then max-projected over z, and projected alone (each
+     * time point kept), through the NDTiff preprocessing copy and the stitch. Every sampled pixel must
+     * equal the value computed here from the source pages. With {@code T2P_NDTIFF_KEEP=<folder>} the
+     * copies are kept there, for a check with another NDTiff reader.
+     */
+    @Test
+    @EnabledIfEnvironmentVariable(named = "T2P_NDTIFF_SAMPLE", matches = ".+")
+    void aRealDatasetAveragedAndProjectedMatchesItsPages(@TempDir Path tmp) throws Exception {
+        Path src = Path.of(System.getenv("T2P_NDTIFF_SAMPLE"));
+        Path keep = System.getenv("T2P_NDTIFF_KEEP") != null ? Path.of(System.getenv("T2P_NDTIFF_KEEP")) : tmp;
+        NdTiffDataset ds = NdTiffDataset.read(src);
+        int step = 23;
+        int n = (512 + step - 1) / step;
+        // source[c][z][t] sampled at (x, y) = (i % n * step, i / n * step)
+        int[][][][] source = new int[2][7][8][n * n];
+        for (NdTiffDataset.Image im : ds.images()) {
+            Raster r = page(im.file(), im.page());
+            var k = im.coord();
+            for (int i = 0; i < n * n; i++) {
+                source[k.c()][k.z()][k.t()][i] = r.getSample(i % n * step, i / n * step, 0);
+            }
+        }
+        for (boolean average : new boolean[] {true, false}) {
+            var options = new qupath.ext.basicstitching.stitching.MicroManagerPreprocessor.Options(average, null, true);
+            Path copy = qupath.ext.basicstitching.stitching.MicroManagerPreprocessor.run(
+                            src, keep.resolve("mm_mda_tcz_15" + options.folderSuffix()), options)
+                    .output();
+            Path out = Files.createDirectories(tmp.resolve("out" + average));
+            StitchingConfig cfg = new StitchingConfig(
+                    "MicroManager metadata (MMStack or TIFF series)",
+                    copy.toString(),
+                    out.toString(),
+                    "LZW",
+                    1.0,
+                    1.0,
+                    "",
+                    0.0,
+                    StitchingConfig.OutputFormat.OME_TIFF);
+            cfg.setOverlapBlend(OverlapBlend.LAST_WINS);
+            StitchingWorkflow.StitchingResult result = StitchingWorkflow.runDetailed(cfg);
+            assertEquals(List.of(), result.warnings());
+            assertEquals(2, result.outputs().size(), result.outputs().toString());
+            int tOut = average ? 1 : 8;
+            for (int c = 0; c < 2; c++) {
+                try (ImageServer<BufferedImage> server = ImageServers.buildServer(
+                        Path.of(result.outputs().get(c)).toUri())) {
+                    assertEquals(1, server.nZSlices());
+                    assertEquals(tOut, server.nTimepoints());
+                    for (int t = 0; t < tOut; t++) {
+                        Raster got = server.readRegion(
+                                        RegionRequest.createInstance(server.getPath(), 1, 0, 0, 512, 512, 0, t))
+                                .getRaster();
+                        for (int i = 0; i < n * n; i++) {
+                            double max = Double.NEGATIVE_INFINITY;
+                            for (int z = 0; z < 7; z++) {
+                                double v = 0;
+                                if (average) {
+                                    for (int f = 0; f < 8; f++) v += source[c][z][f][i];
+                                    v /= 8;
+                                } else {
+                                    v = source[c][z][t][i];
+                                }
+                                max = Math.max(max, v);
+                            }
+                            assertEquals(
+                                    Math.round(max),
+                                    got.getSample(i % n * step, i / n * step, 0),
+                                    "c" + c + " t" + t + " sample " + i);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Opt-in: {@code Large_aborted} from the same NDTiff test data, an acquisition stopped part way
+     * (2 channels, 16 z-slices, 368 complete time points and a 369th with 20 of its 32 images,
+     * across two stack files, 6 GB). Projected with each time point kept, the unfinished time point
+     * is left out and noted. Run with {@code T2P_NDTIFF_ABORTED=<path to Large_aborted>}; with
+     * {@code T2P_NDTIFF_KEEP} the copy is kept.
+     */
+    @Test
+    @EnabledIfEnvironmentVariable(named = "T2P_NDTIFF_ABORTED", matches = ".+")
+    void aRealAbortedDatasetLeavesItsUnfinishedTimePointOut(@TempDir Path tmp) throws Exception {
+        Path src = Path.of(System.getenv("T2P_NDTIFF_ABORTED"));
+        Path keep = System.getenv("T2P_NDTIFF_KEEP") != null ? Path.of(System.getenv("T2P_NDTIFF_KEEP")) : tmp;
+        var options = new qupath.ext.basicstitching.stitching.MicroManagerPreprocessor.Options(false, null, true);
+        long t0 = System.nanoTime();
+        var result = qupath.ext.basicstitching.stitching.MicroManagerPreprocessor.run(
+                src, keep.resolve("Large_aborted_mip"), options);
+        System.out.printf(
+                "Large_aborted projected in %.1f s; notes %s%n", (System.nanoTime() - t0) / 1e9, result.notes());
+        assertTrue(
+                result.notes().stream().anyMatch(n -> n.contains("time point 368 has 20 of 32 planes")),
+                result.notes().toString());
+        NdTiffDataset copy = NdTiffDataset.read(result.output());
+        assertEquals(368 * 2, copy.images().size(), "368 time points x 2 channels");
+        // Spot check against the source: time points 0 and 367, max over z.
+        NdTiffDataset ds = NdTiffDataset.read(src);
+        for (int t : new int[] {0, 367}) {
+            for (int c = 0; c < 2; c++) {
+                int[] max = new int[64];
+                for (NdTiffDataset.Image im : ds.images()) {
+                    if (im.coord().t() != t || im.coord().c() != c) continue;
+                    Raster r = page(im.file(), im.page());
+                    for (int i = 0; i < 64; i++) max[i] = Math.max(max[i], r.getSample(i * 8, i * 7, 0));
+                }
+                NdTiffDataset.Image written = null;
+                for (NdTiffDataset.Image im : copy.images()) {
+                    if (im.coord().t() == t && im.coord().c() == c) written = im;
+                }
+                Raster got = page(written.file(), written.page());
+                for (int i = 0; i < 64; i++) {
+                    assertEquals(max[i], got.getSample(i * 8, i * 7, 0), "t" + t + " c" + c + " sample " + i);
+                }
+            }
+        }
+    }
+
     private static int pixel(Path file, int page) throws Exception {
         return page(file, page).getSample(1, 1, 0);
     }

@@ -234,7 +234,8 @@ pick the layout in the dialog -- the strategy detects it. Detail on each:
 - A position's stage coordinates are the `XPositionUm` / `YPositionUm` of its first image's metadata, else its `Summary.StagePositions` entry; a position with neither is left out with a **WARNING**
 - Pixel size from the first `PixelSizeUm` found in the metadata of each position's first image, in index order (the dialog's auto-fill reads only the dataset's first image), else `Summary.PixelSize_um`; z spacing from `Summary.z-step_um`
 - Images must be uncompressed, which is the only compression the format defines
-- Not supported: NDTiff 1.x, which kept its index inside the TIFF, or a dataset whose `NDTiff.index` is missing. When a stitch finds no tiles, the result window names such stack files under **Not supported**. Averaging time points and projecting z-slices are not offered for NDTiff; its planes are stitched as they are
+- Not supported: NDTiff 1.x, which kept its index inside the TIFF, or a dataset whose `NDTiff.index` is missing. When a stitch finds no tiles, the result window names such stack files under **Not supported**
+- Time points can be averaged and z-slices projected first, as for the other layouts; the copy that is stitched is itself an NDTiff dataset (see [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager))
 
 **Micro-Manager 1.4 single-plane files** (a folder per position, named after the position):
 - Files are named `img_<frame, 9 digits>_<channel name>_<slice, 3 digits>.tif` (`TaggedImageStorageDiskDefault.createFileName` in Micro-Manager's `mm1.4` source)
@@ -245,7 +246,7 @@ Common to all:
 - Falls back to `Summary.StagePositions` labels if a per-tile block is missing or malformed
 - Auto-detects pixel size from the metadata's `PixelSizeUm`
 - **Channels, z-slices and time points:** every plane is placed by its own channel, z-slice and time point. A single-channel acquisition stitches into one output named after the folder; a multi-channel acquisition into one output per channel, named from `Summary.ChNames`, which **Merge the N channel stitches** combines in the acquisition's channel order. Each output keeps every z-slice and time point it was given (z spacing from `Summary.z-step_um`), unless the time points are averaged or the z-slices projected first (see [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager)). For an MMStack page without the MicroManager tag, the plane comes from the order of the `FrameKey-t-c-z` entries in its sidecar, or, with one page per channel and no z or time, page `i` is channel `i`. When none of these says what a page holds, the position is read from its first page only (always the first channel, slice and time point), and a single-plane file is left out; either is reported as a **WARNING** at the top of the result window and in the `.stitch-info.txt` record.
-- **Time series and z-stacks per position:** when the acquisition has more than one frame or z-slice per position (any layout but NDTiff), the dialog offers **Average the N time points of each position before stitching** and **Max-intensity project the N z-slices of each position**. See [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager).
+- **Time series and z-stacks per position:** when the acquisition has more than one frame or z-slice per position (any layout), the dialog offers **Average the N time points of each position before stitching** and **Max-intensity project the N z-slices of each position**. See [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager).
 - **Registration:** each channel is a candidate to measure on, in every layout: **Reference subdirectory** lists the acquisition's channels by name, and **Auto** picks among them. Every position is measured on the same plane of that channel, the middle z-slice of the first time point, and every channel, z-slice and time point of a position receives that position's correction. See [Which channel to measure on](#which-channel-to-measure-on).
 - **Acquisition metadata:** every output, and the merged image, gets a `<image stem>.mm-metadata.json` beside it with what Micro-Manager recorded about the acquisition (pixel size, exposure per channel, bit depth, start time, grid, `comments.txt`, ...). See [Micro-Manager acquisition metadata](#micro-manager-acquisition-metadata).
 - **Stage axes:** the sidecars record absolute stage coordinates, and whether a rising stage coordinate moves right and down in the camera image depends on how the stage is wired and the camera mounted. The strategy cannot infer that, so it assumes rising stage equals rising pixel. Where that is wrong, tick **Invert X axis** / **Invert Y axis** -- see [If the mosaic comes out mirrored](#if-the-mosaic-comes-out-mirrored).
@@ -907,11 +908,12 @@ laser-scanning modalities often do, and for z-stacks to be flattened by maximum 
 projection. These MicroManager layouts work: **separate image files per position**
 (`<prefix>_MMStack_<label>.ome.tif` plus `_metadata.txt`) and the **single-plane TIFF series** (a
 folder per position holding one `img_channelCCC_positionPPP_timeTTTTTTTTT_zZZZ.tif` per plane, or
-Micro-Manager 1.4's `img_TTTTTTTTT_<channel>_ZZZ.tif`, and a `metadata.txt`). NDTiff is not: its
-planes are stitched as they are. Without this step, every channel, z-slice and time point is stitched as a plane
+Micro-Manager 1.4's `img_TTTTTTTTT_<channel>_ZZZ.tif`, and a `metadata.txt`), and **NDTiff** (an
+`NDTiff.index` and `<prefix>_NDTiffStack*.tif`). Without this step, every channel, z-slice and time point is stitched as a plane
 of its own (see [Z-stacks and time series](#z-stacks-and-time-series)).
 
-When the selected folder's metadata reports more than one frame, the dialog shows **Average the N
+When the selected folder's metadata reports more than one frame (for NDTiff, when its index lists
+more than one `time` value; more than one `z` value for the z-stack option), the dialog shows **Average the N
 time points of each position before stitching**; more than one z-slice, **Max-intensity project the
 N z-slices of each position**. Both are on by default and remembered. When either is ticked, in
 this order:
@@ -929,9 +931,13 @@ this order:
    one `_MMStack_<label>.ome.tif` per position with one page per channel (and slice, when not
    projected, and time point, when not averaged), or (single-plane series) one folder per position
    holding one file per written plane, named as its source file (the `time000000000` file when
-   averaged, the `z000` file when projected). Each position's `_metadata.txt` / `metadata.txt` has
-   `Summary.Frames` 1 when averaged (and `Slices` 1 when projected) and keeps the stage
-   coordinates and pixel size. `Summary.Preprocessing` and `preprocessing.txt` record the source,
+   averaged, the `z000` file when projected), or (NDTiff) an NDTiff dataset,
+   `<prefix>_NDTiffStack.tif` and its `NDTiff.index`, written to the same specification it is read
+   by: each image keeps the axes of its source image (its first time point's when averaged, its
+   first slice's when projected) without `time` when averaged and without `z` when projected, and
+   that image's metadata, so its position is placed as before. The `Summary` of each position's
+   `_metadata.txt` / `metadata.txt` (NDTiff: the dataset's summary) has `Frames` 1 when averaged
+   (and `Slices` 1 when projected), and the stage coordinates and pixel size are kept. `Summary.Preprocessing` and `preprocessing.txt` record the source,
    the method, and the frame and slice counts. The originals are not changed.
 5. **Stitch:** that copy is stitched as usual. The output is named after it and written where the
    stitch would otherwise write; the `.stitch-info.txt` record has a *preprocessing* section.
@@ -939,11 +945,17 @@ this order:
 Which channel, frame and slice a page belongs to is read the same way the stitch reads it: from the
 MicroManager tag on every page, or, for a file without it, from the order of the `FrameKey-t-c-z`
 entries in its sidecar (a `_1.ome.tif` continuation file carries on that order); in a single-plane
-series from the file name, or the file's `Metadata-`, `Coords-` or (1.4) `FrameKey-` block. A file matching none of
+series from the file name, or the file's `Metadata-`, `Coords-` or (1.4) `FrameKey-` block; in NDTiff
+from each image's axes in `NDTiff.index`. A file matching none of
 these is refused rather than guessed. On a 500-position, 3-frame 16-bit SHG acquisition (512 x 512 tiles)
 averaging took about 2 minutes over a network-mounted drive, and every averaged plane matched an
-independent numpy mean exactly; projection is checked by unit tests on synthetic stacks, not yet on
-a real z-stack. Positions with different frame or slice counts are each reduced over their own and
+independent numpy mean exactly; projection is checked by unit tests on synthetic stacks and on two
+real NDTiff z-stacks from the NDTiff test data (doi:10.5281/zenodo.7065552): `mm_mda_tcz_15`
+(2 channels, 7 z, 8 t) averaged and projected, and projected alone, matched the values computed
+from its pages at every sampled pixel, and so did the copies when read by Micro-Manager's own
+Python reader (`ndstorage` 0.1.18; within 1 where a mean ends in .5, which numpy rounds to even);
+`Large_aborted` (2 channels, 16 z, 369 time points, the last stopped after 20 of its 32 images,
+6 GB in two stack files) projected in 28 s, leaving that time point out. Positions with different frame or slice counts are each reduced over their own and
 the record says so. A re-run overwrites a copy folder this step wrote (including one 0.7.9's frame
 averaging wrote), and refuses one that holds anything else. RGB frames are not supported.
 
