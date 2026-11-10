@@ -58,3 +58,30 @@ jobs:
       - name: Build and test (Windows)
         if: runner.os == 'Windows'
         run: ./gradlew build
+
+  # The unit tests again with the JVM in Turkish. Turkish has both locale traps at once:
+  # a dotless i for toLowerCase()/toUpperCase() without a locale, and a decimal comma for
+  # String.format without one. A writer or a comparison that forgot Locale.ROOT fails here.
+  test-turkish-locale:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java (21 daemon + 25 toolchain)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: |
+            25
+            21
+          cache: 'gradle'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Test (tr-TR)
+        run: xvfb-run ./gradlew test
+        env:
+          DISPLAY: ':99'
+          JAVA_TOOL_OPTIONS: -Duser.language=tr -Duser.country=TR
