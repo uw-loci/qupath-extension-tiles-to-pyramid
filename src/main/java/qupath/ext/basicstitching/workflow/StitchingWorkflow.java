@@ -553,7 +553,9 @@ public class StitchingWorkflow {
                                     + (config.getZSpacingSource() != null
                                             ? " (from " + config.getZSpacingSource() + ")"
                                             : "")
-                            : "unknown (not written)");
+                            : config.outputFormat == StitchingConfig.OutputFormat.OME_ZARR
+                                    ? "unknown (not written: OME-Zarr z scale 1 with no unit, no PhysicalSizeZ)"
+                                    : "unknown (not written)");
         }
         stitching.put("stage axes negated (X, Y)", flipX + ", " + flipY);
         // Report the blend that was USED, not the one that was asked for. The old wording appended

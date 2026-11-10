@@ -368,6 +368,10 @@ If the window opens with **WARNING: The tiles overlap by X% x Y%**, this means t
 - **Compatibility**: QuPath 0.7.0+, napari, Python imaging libraries
 - **Use Case**: Cloud storage, large datasets, parallel processing
 - **Extension**: `.ome.zarr` (directory)
+- **Metadata**: NGFF 0.4 `multiscales` and `omero` in `.zattrs`, plus `OME/METADATA.ome.xml` as
+  QuPath's own OME-Zarr writer writes it. QuPath reads the pixel size and z spacing from that XML
+  file only (Bio-Formats' Zarr reader keeps the `multiscales` scale as text); stitches from 0.9.1
+  and earlier have no XML file and open in QuPath without a pixel size
 - **Compression**: the same OME writer type you pick is mapped to a Blosc codec internally (e.g. `LZW`/`ZLIB` -> zlib; `J2K`/`JPEG` -> zstd, since JPEG has no Blosc equivalent; otherwise zstd). You do not choose the Blosc codec directly
 - **Best For**: Cloud storage, collaborative access, very large images (> 10GB)
 
@@ -864,8 +868,12 @@ acquisition recorded (`acquisition.z_stack.z_step_um` in a QPSC `acquisition_met
 the tile folders, or `Summary.z-step_um` for MicroManager input); else none: an OME-TIFF then has no
 `PhysicalSizeZ`. A value of 0 or less means "unknown". The `.stitch-info.txt` record gives the
 spacing and, when it was read from the acquisition, where from. (Until 0.9.1, TileConfiguration.txt
-input was always written with 1 um.) OME-Zarr output still writes a z scale of 1 when the spacing is
-unknown, since its coordinate transformations need one. Planes are written through as-is; for
+input was always written with 1 um.) In OME-Zarr output a known spacing is the z scale in
+micrometers and `PhysicalSizeZ` in `OME/METADATA.ome.xml`; an unknown one is a z scale of 1 with no
+unit on the z axis and no `PhysicalSizeZ`, and the record says so. NGFF 0.4 requires a scale for
+every axis and gives 1 as the value when no physical scale is known; an axis unit is only
+recommended ("multiscales" and "axes" metadata in the
+[0.4 specification](https://ngff.openmicroscopy.org/specifications/0.4/index.html)). Planes are written through as-is; for
 MicroManager input, time points can be averaged and z-stacks max-projected first (below).
 
 | Input layout | Z | T |

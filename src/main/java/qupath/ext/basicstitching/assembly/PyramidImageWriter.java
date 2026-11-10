@@ -5,15 +5,18 @@ import com.bc.zarr.CompressorFactory;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.List;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import qupath.ext.basicstitching.assembly.direct.DirectTiffOutputWriter;
+import qupath.ext.basicstitching.assembly.direct.ZarrOutputWriter;
 import qupath.ext.basicstitching.config.StitchingConfig;
 import qupath.ext.basicstitching.utilities.UtilityFunctions;
 import qupath.lib.images.servers.ImageServer;
@@ -309,6 +312,7 @@ public class PyramidImageWriter {
             // it through the file system and AV can hold individual chunk files.
             OMEZarrWriter writer = builder.build(tempOutput);
             writer.writeImage();
+            dropUnknownAxisUnits(Paths.get(tempOutput), pyramidServer);
             renameTempToFinalWithRetry(tempOutput, finalOutput);
 
             logger.info(
@@ -330,6 +334,25 @@ public class PyramidImageWriter {
                             closeEx.getMessage());
                 }
             }
+        }
+    }
+
+    /** See {@link ZarrOutputWriter#dropUnknownAxisUnits}; a failure leaves the units QuPath wrote. */
+    private static void dropUnknownAxisUnits(Path zarr, ImageServer<BufferedImage> server) {
+        if (server.nZSlices() <= 1 && server.nTimepoints() <= 1) {
+            return;
+        }
+        var cal = server.getPixelCalibration();
+        boolean timeKnown =
+                server.nTimepoints() > 1 && !Double.isNaN(cal.getTimepoint(0)) && !Double.isNaN(cal.getTimepoint(1));
+        try {
+            List<String> dropped =
+                    ZarrOutputWriter.dropUnknownAxisUnits(zarr, !Double.isNaN(cal.getZSpacingMicrons()), timeKnown);
+            if (!dropped.isEmpty()) {
+                logger.info("OME-Zarr: no unit on axes {} (spacing unknown; scale 1 is a slice index)", dropped);
+            }
+        } catch (IOException | RuntimeException e) {
+            logger.warn("Could not remove the units of unknown axes from {}: {}", zarr, e.getMessage());
         }
     }
 

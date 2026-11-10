@@ -7,6 +7,8 @@ import com.bc.zarr.ZarrArray;
 import com.bc.zarr.ZarrGroup;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -14,6 +16,11 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import loci.formats.MetadataTools;
+import loci.formats.ome.OMEXMLMetadata;
+import ome.units.UNITS;
+import ome.units.quantity.Length;
+import ome.xml.model.enums.DimensionOrder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,6 +33,8 @@ import org.slf4j.LoggerFactory;
  * filename.ome.zarr/
  *     .zgroup
  *     .zattrs          (NGFF 0.4 multiscales + omero metadata)
+ *     OME/METADATA.ome.xml  (OME-XML: where QuPath's Bio-Formats Zarr reader takes the pixel size
+ *                       and z spacing from; it does not read the multiscales scale)
  *     s0/              (level 0 - full resolution)
  *         .zarray
  *         .zattrs
@@ -44,6 +53,11 @@ public class ZarrOutputWriter implements AutoCloseable {
      * version it will write rather than hardcoding its own copy.
      */
     public static final String NGFF_VERSION = "0.4";
+
+    /** Group and file QuPath's OME-Zarr writer keeps the OME-XML in; Bio-Formats' Zarr reader reads it. */
+    static final String OME_GROUP = "OME";
+
+    static final String OME_XML_FILE = "METADATA.ome.xml";
 
     /** Zarr array format written: JZarr produces v2 {@code .zarray} arrays. */
     public static final String ZARR_FORMAT_VERSION = "2";
@@ -235,27 +249,153 @@ public class ZarrOutputWriter implements AutoCloseable {
 
         // Write NGFF 0.4 metadata to root .zattrs
         writeNGFFMetadata(pixelSizeMicrons, numPyramidLevels);
+        writeOmeXml(pixelSizeMicrons);
 
         logger.info("ZARR structure initialized at: {}", outputPath);
     }
 
     /**
+     * Write {@code OME/METADATA.ome.xml}, as QuPath's own OME-Zarr writer does. Bio-Formats' Zarr
+     * reader (what QuPath opens a {@code .ome.zarr} with) takes the physical sizes from this file
+     * only; without it QuPath shows the image uncalibrated. PhysicalSizeZ is written only when the
+     * z spacing is known. A failure is logged, not thrown: the pixels are still readable.
+     */
+    private void writeOmeXml(double pixelSizeMicrons) {
+        try {
+            OMEXMLMetadata meta = (OMEXMLMetadata) MetadataTools.createOMEXMLMetadata();
+            // One sample per channel (the Zarr c axis), XYZCT as QuPath's own OME-Zarr writer writes.
+            MetadataTools.populateMetadata(
+                    meta,
+                    0,
+                    stemOf(outputPath),
+                    false,
+                    DimensionOrder.XYZCT.getValue(),
+                    (bitDepth > 8 ? ome.xml.model.enums.PixelType.UINT16 : ome.xml.model.enums.PixelType.UINT8)
+                            .getValue(),
+                    imageWidth,
+                    imageHeight,
+                    sizeZ,
+                    nChannels,
+                    sizeT,
+                    1);
+            boolean named = !isRGB && channelNames.size() == nChannels;
+            for (int c = 0; c < nChannels; c++) {
+                String name = isRGB
+                        ? List.of("Red", "Green", "Blue").get(Math.min(c, 2))
+                        : named ? channelNames.get(c) : "Channel " + c;
+                meta.setChannelName(name, 0, c);
+            }
+            if (pixelSizeMicrons > 0 && Double.isFinite(pixelSizeMicrons)) {
+                meta.setPixelsPhysicalSizeX(new Length(pixelSizeMicrons, UNITS.MICROMETER), 0);
+                meta.setPixelsPhysicalSizeY(new Length(pixelSizeMicrons, UNITS.MICROMETER), 0);
+            }
+            if (zSpacingKnown()) {
+                meta.setPixelsPhysicalSizeZ(new Length(zSpacingMicrons, UNITS.MICROMETER), 0);
+            }
+            rootGroup.createSubGroup(OME_GROUP);
+            Files.writeString(
+                    outputPath.resolve(OME_GROUP).resolve(OME_XML_FILE), meta.dumpXML(), StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            logger.warn("Could not write the OME-XML of {}; QuPath will open it without a pixel size", outputPath, e);
+        }
+    }
+
+    /**
+     * Remove the unit of the z and/or time axis from an OME-Zarr written by QuPath's own
+     * {@code OMEZarrWriter} (the channel merge), when that spacing is not known. QuPath's writer
+     * gives the z axis the pixel size's unit with its default z spacing of 1, and the time axis
+     * seconds with scale 1, so an unknown spacing reads as 1 micrometer / 1 second. The scale value
+     * stays (NGFF 0.4 requires one per axis; 1 is its value for "no physical scale"); the OME-XML
+     * QuPath writes beside it already leaves PhysicalSizeZ and TimeIncrement out in that case.
+     *
+     * @param zarr the {@code .ome.zarr} folder
+     * @param zSpacingKnown whether the image has a z spacing in micrometers
+     * @param timeIncrementKnown whether the image has a time increment
+     * @return the axis names whose unit was removed
+     * @throws IOException if the attributes cannot be read or written
+     */
+    public static List<String> dropUnknownAxisUnits(Path zarr, boolean zSpacingKnown, boolean timeIncrementKnown)
+            throws IOException {
+        ZarrGroup group = ZarrGroup.open(zarr);
+        Map<String, Object> attrs = new LinkedHashMap<>(group.getAttributes());
+        List<String> dropped = new ArrayList<>();
+        if (!(attrs.get("multiscales") instanceof List<?> multiscales)) {
+            return dropped;
+        }
+        List<Object> newMultiscales = new ArrayList<>();
+        for (Object ms : multiscales) {
+            if (!(ms instanceof Map<?, ?> msMap) || !(msMap.get("axes") instanceof List<?> axes)) {
+                newMultiscales.add(ms);
+                continue;
+            }
+            List<Object> newAxes = new ArrayList<>();
+            for (Object axis : axes) {
+                if (axis instanceof Map<?, ?> axisMap && axisMap.containsKey("unit")) {
+                    Object name = axisMap.get("name");
+                    boolean drop = ("z".equals(name) && !zSpacingKnown) || ("t".equals(name) && !timeIncrementKnown);
+                    if (drop) {
+                        Map<Object, Object> copy = new LinkedHashMap<>(axisMap);
+                        copy.remove("unit");
+                        newAxes.add(copy);
+                        dropped.add(String.valueOf(name));
+                        continue;
+                    }
+                }
+                newAxes.add(axis);
+            }
+            Map<Object, Object> msCopy = new LinkedHashMap<>(msMap);
+            msCopy.put("axes", newAxes);
+            newMultiscales.add(msCopy);
+        }
+        if (!dropped.isEmpty()) {
+            attrs.put("multiscales", newMultiscales);
+            group.writeAttributes(attrs);
+        }
+        return dropped;
+    }
+
+    private static String stemOf(Path path) {
+        String name = path.getFileName().toString();
+        return name.endsWith(".ome.zarr") ? name.substring(0, name.length() - ".ome.zarr".length()) : name;
+    }
+
+    private boolean zSpacingKnown() {
+        return zSpacingMicrons > 0 && Double.isFinite(zSpacingMicrons);
+    }
+
+    /**
      * Write NGFF 0.4 multiscales and omero metadata to root .zattrs.
+     *
+     * <p>NGFF 0.4 ("multiscales" metadata) requires one scale value per axis and, when the physical
+     * scale is not known, the scale relative to the first resolution, 1.0 for an axis that is not
+     * downsampled. An axis "unit" is only a SHOULD ("axes" metadata). So an unknown z spacing is
+     * written as scale 1 with no unit (a z-slice index), never as 1 micrometer, and the time axis,
+     * whose interval is never known here, as scale 1 with no unit.
      */
     private void writeNGFFMetadata(double pixelSizeMicrons, int numPyramidLevels) throws IOException {
         // Build axes (present axes only, TCZYX order)
         List<Map<String, Object>> axes = new ArrayList<>();
         if (hasT()) {
-            axes.add(Map.of("name", "t", "type", "time", "unit", "second"));
+            axes.add(Map.of("name", "t", "type", "time"));
         }
         if (hasC()) {
             axes.add(Map.of("name", "c", "type", "channel"));
         }
         if (hasZ()) {
-            axes.add(Map.of("name", "z", "type", "space", "unit", "micrometer"));
+            axes.add(
+                    zSpacingKnown()
+                            ? Map.of("name", "z", "type", "space", "unit", "micrometer")
+                            : Map.of("name", "z", "type", "space"));
         }
-        axes.add(Map.of("name", "y", "type", "space", "unit", "micrometer"));
-        axes.add(Map.of("name", "x", "type", "space", "unit", "micrometer"));
+        // An unknown pixel size the same way: scale 2^level, no unit (a scale of 0 is not valid).
+        boolean pixelSizeKnown = pixelSizeMicrons > 0 && Double.isFinite(pixelSizeMicrons);
+        double xyUnitScale = pixelSizeKnown ? pixelSizeMicrons : 1.0;
+        for (String name : List.of("y", "x")) {
+            axes.add(
+                    pixelSizeKnown
+                            ? Map.of("name", name, "type", "space", "unit", "micrometer")
+                            : Map.of("name", name, "type", "space"));
+        }
 
         // Build datasets with coordinate transformations
         List<Map<String, Object>> datasets = new ArrayList<>();
@@ -265,9 +405,9 @@ public class ZarrOutputWriter implements AutoCloseable {
             List<Double> scaleValues = new ArrayList<>();
             if (hasT()) scaleValues.add(1.0);
             if (hasC()) scaleValues.add(1.0);
-            if (hasZ()) scaleValues.add(zSpacingMicrons > 0 ? zSpacingMicrons : 1.0);
-            scaleValues.add(pixelSizeMicrons * scale);
-            scaleValues.add(pixelSizeMicrons * scale);
+            if (hasZ()) scaleValues.add(zSpacingKnown() ? zSpacingMicrons : 1.0);
+            scaleValues.add(xyUnitScale * scale);
+            scaleValues.add(xyUnitScale * scale);
 
             Map<String, Object> transform = new LinkedHashMap<>();
             transform.put("type", "scale");
