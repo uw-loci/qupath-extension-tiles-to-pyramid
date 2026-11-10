@@ -280,7 +280,7 @@ public final class MicroManagerPreprocessor {
             List<MicroManagerPlanes.Plane> pagePlanes = MicroManagerPlanes.stackPlanes(
                     files, () -> sidecar, MicroManagerPlanes.Dims.of(summaryOf(sidecar)));
             List<Integer> outFrames = outputFrames(pagePlanes, options, label, notes);
-            Planes planes = reduce(pagePlanes, false, options, label, notes, outFrames.get(0));
+            Planes planes = reduce(pagePlanes, false, false, options, label, notes, outFrames.get(0));
             frames.put(label, planes.framesInSource);
             slices.put(label, planes.slicesInSource);
 
@@ -295,7 +295,7 @@ public final class MicroManagerPreprocessor {
                     t -> {
                         Planes p = t == 0
                                 ? firstFrame
-                                : reduce(pagePlanes, false, options, label, notes, outFrames.get(t));
+                                : reduce(pagePlanes, false, false, options, label, notes, outFrames.get(t));
                         if (p.channels != firstFrame.channels
                                 || p.slices != firstFrame.slices
                                 || p.width != firstFrame.width
@@ -341,18 +341,12 @@ public final class MicroManagerPreprocessor {
             throws IOException {
         NdTiffDataset ds = NdTiffDataset.read(dir);
         Map<String, List<MicroManagerPlanes.Plane>> byPosition = new LinkedHashMap<>();
-        Map<String, NdTiffDataset.Image> byPlane = new HashMap<>();
-        Map<String, NdTiffDataset.Image> earliest = new HashMap<>();
+        Map<String, List<NdTiffDataset.Image>> imagesOf = new HashMap<>();
         for (NdTiffDataset.Image im : ds.images()) {
-            MicroManagerPlanes.Coord k = im.coord();
             byPosition
                     .computeIfAbsent(im.position(), p -> new ArrayList<>())
-                    .add(new MicroManagerPlanes.Plane(im.file(), im.page(), k));
-            byPlane.put(im.position() + "|" + k.t() + "|" + k.c() + "|" + k.z(), im);
-            earliest.merge(
-                    im.position() + "|" + k.c() + "|" + k.z(),
-                    im,
-                    (a, b) -> b.coord().t() < a.coord().t() ? b : a);
+                    .add(new MicroManagerPlanes.Plane(im.file(), im.page(), im.coord()));
+            imagesOf.computeIfAbsent(im.position(), p -> new ArrayList<>()).add(im);
         }
         String prefix =
                 ds.images().get(0).file().getFileName().toString().replaceFirst("_NDTiffStack(_\\d+)?\\.tiff?$", "");
@@ -365,7 +359,7 @@ public final class MicroManagerPreprocessor {
                 List<Integer> outFrames = outputFrames(planes, options, label, notes);
                 Planes first = null;
                 for (int frame : outFrames) {
-                    Planes p = reduce(planes, false, options, label, notes, frame);
+                    Planes p = reduce(planes, false, true, options, label, notes, frame);
                     if (first == null) {
                         first = p;
                     } else if (p.channels != first.channels
@@ -385,15 +379,15 @@ public final class MicroManagerPreprocessor {
                     }
                     for (int z = 0; z < p.slices; z++) {
                         for (int c = 0; c < p.channels; c++) {
+                            if (p.mean[c + p.channels * z] == null) continue;
                             // The plane's own source image: its time point's, or its first frame's
-                            // when averaged (the first slice's when projected).
-                            NdTiffDataset.Image from = frame == ALL_FRAMES
-                                    ? earliest.get(pos + "|" + c + "|" + z)
-                                    : byPlane.get(pos + "|" + frame + "|" + c + "|" + z);
+                            // when averaged (its first slice's when projected).
+                            NdTiffDataset.Image from =
+                                    sourceImage(imagesOf.get(pos), c, options.maxProjectZ() ? -1 : z, frame);
                             if (from == null) continue;
                             JsonObject axes = from.entry().axes().deepCopy();
                             if (frame == ALL_FRAMES) axes.remove("time");
-                            if (p.projected()) axes.remove("z");
+                            if (options.maxProjectZ()) axes.remove("z");
                             JsonObject md = ds.metadata(from).deepCopy();
                             annotate(md, p);
                             writer.add(
@@ -420,6 +414,24 @@ public final class MicroManagerPreprocessor {
                 break;
             }
         }
+    }
+
+    /**
+     * The earliest image (by time point, then slice) of a position with channel {@code c}, slice
+     * {@code z} (any when negative) and time point {@code frame} (any when {@link #ALL_FRAMES}).
+     */
+    private static NdTiffDataset.Image sourceImage(List<NdTiffDataset.Image> images, int c, int z, int frame) {
+        NdTiffDataset.Image best = null;
+        for (NdTiffDataset.Image im : images) {
+            MicroManagerPlanes.Coord k = im.coord();
+            if (k.c() != c || (z >= 0 && k.z() != z) || (frame != ALL_FRAMES && k.t() != frame)) continue;
+            if (best == null
+                    || k.t() < best.coord().t()
+                    || (k.t() == best.coord().t() && k.z() < best.coord().z())) {
+                best = im;
+            }
+        }
+        return best;
     }
 
     private static void noteUneven(List<String> notes, Map<String, Integer> counts, String what) {
@@ -519,17 +531,19 @@ public final class MicroManagerPreprocessor {
      * planes. The correction must come before the projection: a sum would otherwise take the offset
      * off once for many planes, and averaging is unaffected either way.
      *
+     * @param sparse see {@link #combineFrames}
      * @param frame the time point to reduce, or {@link #ALL_FRAMES} to average them
      */
     private static Planes reduce(
             List<MicroManagerPlanes.Plane> planes,
             boolean singlePlane,
+            boolean sparse,
             Options options,
             String label,
             List<String> notes,
             int frame)
             throws IOException {
-        Planes p = combineFrames(planes, singlePlane, frame);
+        Planes p = combineFrames(planes, singlePlane, sparse, frame);
         if (p.missing > 0) {
             notes.add(label + ": " + p.missing + " of " + p.frames * p.planeCount()
                     + " planes absent; those planes averaged over the frames present");
@@ -537,7 +551,7 @@ public final class MicroManagerPreprocessor {
         if (options.flatfield() != null) {
             for (int z = 0; z < p.slices; z++) {
                 for (int c = 0; c < p.channels; c++) {
-                    if (options.flatfield().appliesTo(c)) {
+                    if (options.flatfield().appliesTo(c) && p.mean[c + p.channels * z] != null) {
                         options.flatfield().correct(p.mean[c + p.channels * z], p.width, p.height);
                     }
                 }
@@ -554,10 +568,13 @@ public final class MicroManagerPreprocessor {
      *
      * @param planes the position's planes, in the order MicroManager wrote them
      * @param singlePlane each file is a single-plane TIFF series file and must hold one page
+     * @param sparse a (channel, slice) this position has at no time point is left null rather than
+     *     refused: an NDTiff position may hold only some of the dataset's z-slices (Magellan explores
+     *     each tile over its own z range); the slices are those of the whole dataset
      * @param frame the time point to take, or {@link #ALL_FRAMES} to average them all
      */
-    private static Planes combineFrames(List<MicroManagerPlanes.Plane> planes, boolean singlePlane, int frame)
-            throws IOException {
+    private static Planes combineFrames(
+            List<MicroManagerPlanes.Plane> planes, boolean singlePlane, boolean sparse, int frame) throws IOException {
         boolean averageFrames = frame == ALL_FRAMES;
         Map<Path, List<MicroManagerPlanes.Plane>> byFile = new LinkedHashMap<>();
         for (MicroManagerPlanes.Plane plane : planes) {
@@ -614,9 +631,15 @@ public final class MicroManagerPreprocessor {
             }
         }
 
+        Set<Long> present = new HashSet<>();
+        Set<Integer> presentZ = new HashSet<>();
+        for (MicroManagerPlanes.Plane plane : planes) {
+            present.add(((long) plane.coord().z() << 32) | plane.coord().c());
+            presentZ.add(plane.coord().z());
+        }
         p.channels = maxC + 1;
         p.slices = maxZ + 1;
-        p.slicesInSource = p.slices;
+        p.slicesInSource = sparse ? presentZ.size() : p.slices;
         p.framesInSource = maxT + 1;
         p.frames = averageFrames ? p.framesInSource : 1;
         p.mean = new double[p.planeCount()][];
@@ -626,6 +649,9 @@ public final class MicroManagerPreprocessor {
                 double[] sum = sums.get(key);
                 int n = counts.getOrDefault(key, 0);
                 if (sum == null || n == 0) {
+                    if (sparse && !present.contains(key)) {
+                        continue;
+                    }
                     throw new IOException("Channel " + c + ", slice " + z + " has no "
                             + (averageFrames ? "frames" : "plane at time point " + frame) + " in "
                             + planes.get(0).file());
@@ -638,14 +664,19 @@ public final class MicroManagerPreprocessor {
         return p;
     }
 
-    /** Replace each channel's slices by their per-pixel maximum. */
+    /** Replace each channel's slices by their per-pixel maximum; a null (absent) slice is skipped. */
     static void maxProject(Planes p) {
         if (p.slices <= 1) return;
         double[][] out = new double[p.channels][];
         for (int c = 0; c < p.channels; c++) {
-            double[] max = p.mean[c].clone();
-            for (int z = 1; z < p.slices; z++) {
+            double[] max = null;
+            for (int z = 0; z < p.slices; z++) {
                 double[] plane = p.mean[c + p.channels * z];
+                if (plane == null) continue;
+                if (max == null) {
+                    max = plane.clone();
+                    continue;
+                }
                 for (int k = 0; k < max.length; k++) {
                     if (plane[k] > max[k]) max[k] = plane[k];
                 }
@@ -944,7 +975,7 @@ public final class MicroManagerPreprocessor {
         Set<String> kept = new HashSet<>();
         Planes firstPlanes = null;
         for (int frame : outFrames) {
-            Planes planes = reduce(filePlanes, true, options, label, notes, frame);
+            Planes planes = reduce(filePlanes, true, false, options, label, notes, frame);
             if (firstPlanes == null) firstPlanes = planes;
             for (int z = 0; z < planes.slices; z++) {
                 for (int c = 0; c < planes.channels; c++) {

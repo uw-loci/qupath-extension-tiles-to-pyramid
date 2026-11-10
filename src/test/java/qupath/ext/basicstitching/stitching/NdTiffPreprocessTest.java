@@ -230,6 +230,52 @@ class NdTiffPreprocessTest {
     }
 
     @Test
+    void aPositionWithOnlySomeSlicesIsReducedOverThose(@TempDir Path tmp) throws Exception {
+        // As a Magellan explore writes it: each tile over its own z range. Position 1 lacks z 0.
+        Path src = tmp.resolve("explore");
+        try (NdTiffWriter w = new NdTiffWriter(src, "explore", new JsonObject())) {
+            for (int t = 0; t < 2; t++) {
+                for (int p = 0; p < 2; p++) {
+                    for (int z = p; z < 3; z++) {
+                        ByteBuffer px = ByteBuffer.allocate(W * H * 2).order(ByteOrder.LITTLE_ENDIAN);
+                        for (int i = 0; i < W * H; i++) px.putShort((short) (100 * p + 10 * z + t));
+                        JsonObject axes = new JsonObject();
+                        axes.addProperty("z", z - 1);
+                        axes.addProperty("time", t);
+                        axes.addProperty("position", p);
+                        JsonObject md = new JsonObject();
+                        md.addProperty("XPositionUm", 100.0 * p);
+                        md.addProperty("YPositionUm", 0.0);
+                        md.addProperty("Slice", z);
+                        w.add(axes, W, H, true, px.array(), md);
+                    }
+                }
+            }
+        }
+        var mip = MicroManagerPreprocessor.run(src, tmp.resolve("mip"), new Options(true, null, true));
+        Map<String, int[]> px = pixels(tmp.resolve("mip"));
+        assertEquals(2, px.size());
+        assertEquals(Math.round(20.5), px.get("position=0;")[0]);
+        assertEquals(Math.round(120.5), px.get("position=1;")[0]);
+        assertTrue(
+                mip.notes().stream().anyMatch(n -> n.contains("different z-slice counts (2 to 3)")),
+                mip.notes().toString());
+        assertEquals(
+                1,
+                NdTiffDataset.read(tmp.resolve("mip"))
+                        .metadata(
+                                NdTiffDataset.read(tmp.resolve("mip")).images().get(1))
+                        .get("Slice")
+                        .getAsInt(),
+                "position 1's first slice is its own z 1");
+
+        MicroManagerPreprocessor.run(src, tmp.resolve("avg"), new Options(true, null, false));
+        Map<String, int[]> avg = pixels(tmp.resolve("avg"));
+        assertEquals(5, avg.size(), "3 slices of position 0, 2 of position 1");
+        assertEquals(Math.round(110.5), avg.get("position=1;z=0;")[0], "z values are kept as written");
+    }
+
+    @Test
     void theDialogSeesTheShapeFromTheIndex(@TempDir Path tmp) throws Exception {
         Path src = dataset(tmp.resolve("acq_1"), 2, 2, 3, 4, null);
         assertEquals(new MicroManagerPreprocessor.Shape(4, 3), MicroManagerPreprocessor.shape(src.toFile()));
