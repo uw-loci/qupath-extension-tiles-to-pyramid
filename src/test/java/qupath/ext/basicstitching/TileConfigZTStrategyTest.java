@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 import javax.imageio.ImageIO;
@@ -35,7 +36,7 @@ public class TileConfigZTStrategyTest {
             Path group = Files.createDirectory(root.resolve("group1"));
             writeTileConfig(group, 2 /* dims in config line */);
             for (int z = 0; z < 3; z++) {
-                Path zdir = Files.createDirectories(group.resolve(String.format("z%02d", z)));
+                Path zdir = Files.createDirectories(group.resolve(String.format(Locale.ROOT, "z%02d", z)));
                 writeMosaicTiles(zdir);
             }
 
@@ -67,8 +68,8 @@ public class TileConfigZTStrategyTest {
             writeTileConfig(group, 2);
             for (int t = 0; t < 2; t++) {
                 for (int z = 0; z < 2; z++) {
-                    Path dir = Files.createDirectories(
-                            group.resolve(String.format("t%02d", t)).resolve(String.format("z%02d", z)));
+                    Path dir = Files.createDirectories(group.resolve(String.format(Locale.ROOT, "t%02d", t))
+                            .resolve(String.format(Locale.ROOT, "z%02d", z)));
                     writeMosaicTiles(dir);
                 }
             }
@@ -157,7 +158,8 @@ public class TileConfigZTStrategyTest {
         int idx = 0;
         for (int row = 0; row < ROWS; row++) {
             for (int col = 0; col < COLS; col++) {
-                File f = dir.resolve(String.format("tile_%03d.tif", idx)).toFile();
+                File f = dir.resolve(String.format(Locale.ROOT, "tile_%03d.tif", idx))
+                        .toFile();
                 writeConstantTile(f, 50 + idx * 10);
                 idx++;
             }
@@ -171,13 +173,13 @@ public class TileConfigZTStrategyTest {
         int idx = 0;
         for (int row = 0; row < ROWS; row++) {
             for (int col = 0; col < COLS; col++) {
-                String name = String.format("tile_%03d.tif", idx);
+                String name = String.format(Locale.ROOT, "tile_%03d.tif", idx);
                 double x = col * (double) TILE;
                 double y = row * (double) TILE;
                 if (dims == 3) {
-                    sb.append(String.format("%s; ; (%.1f, %.1f, 0.0)%n", name, x, y));
+                    sb.append(String.format(Locale.ROOT, "%s; ; (%.1f, %.1f, 0.0)%n", name, x, y));
                 } else {
-                    sb.append(String.format("%s; ; (%.1f, %.1f)%n", name, x, y));
+                    sb.append(String.format(Locale.ROOT, "%s; ; (%.1f, %.1f)%n", name, x, y));
                 }
                 idx++;
             }

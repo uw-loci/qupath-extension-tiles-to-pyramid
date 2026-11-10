@@ -1,5 +1,7 @@
 package qupath.ext.basicstitching.channel;
 
+import java.util.Locale;
+
 /**
  * How a channel's values may be combined when they are averaged, interpolated or blended.
  *
@@ -55,7 +57,7 @@ public enum ResamplePolicy {
         if (value == null || value.isBlank()) {
             return LINEAR;
         }
-        String normalized = value.trim().toLowerCase();
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
         for (ResamplePolicy policy : values()) {
             if (normalized.equals(policy.declared)) {
                 return policy;

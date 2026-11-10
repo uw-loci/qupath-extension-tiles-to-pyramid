@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.Locale;
 import javax.imageio.ImageIO;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -86,7 +87,7 @@ class TileConfigZSpacingTest {
         Path tz = Files.createDirectories(tmp.resolve("tz/State0"));
         for (int t = 0; t < 2; t++) {
             for (int z = 0; z < 4; z++) {
-                Files.createDirectories(tz.resolve(String.format("t%02d/z%02d", t, z)));
+                Files.createDirectories(tz.resolve(String.format(Locale.ROOT, "t%02d/z%02d", t, z)));
             }
         }
         assertEquals(4, TileConfigurationTxtStrategy.countZSlices(tmp.resolve("tz"), "*"));
@@ -110,11 +111,11 @@ class TileConfigZSpacingTest {
         Path group = Files.createDirectories(root.resolve("State0"));
         StringBuilder cfg = new StringBuilder("dim = 2\n");
         for (int i = 0; i < 2; i++) {
-            cfg.append(String.format("%d.tif; ; (%.1f, 0.0)%n", i, i * TILE * 0.9));
+            cfg.append(String.format(Locale.ROOT, "%d.tif; ; (%.1f, 0.0)%n", i, i * TILE * 0.9));
         }
         Files.writeString(group.resolve("TileConfiguration.txt"), cfg.toString());
         for (int z = 0; z < slices; z++) {
-            Path zdir = Files.createDirectories(group.resolve(String.format("z%02d", z)));
+            Path zdir = Files.createDirectories(group.resolve(String.format(Locale.ROOT, "z%02d", z)));
             for (int i = 0; i < 2; i++) {
                 BufferedImage img = new BufferedImage(TILE, TILE, BufferedImage.TYPE_BYTE_GRAY);
                 byte[] px = ((java.awt.image.DataBufferByte) img.getRaster().getDataBuffer()).getData();

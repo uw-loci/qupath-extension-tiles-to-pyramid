@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import qupath.ext.basicstitching.assembly.direct.DirectTileStitcher;
@@ -82,8 +83,8 @@ public class RealTileFigureTest {
                         ".",
                         1.0,
                         StitchingConfig.OutputFormat.OME_TIFF);
-                String written =
-                        DirectTileStitcher.stitch(maps, out.toString(), ch.toLowerCase() + "_" + mode, cfg, null);
+                String written = DirectTileStitcher.stitch(
+                        maps, out.toString(), ch.toLowerCase(Locale.ROOT) + "_" + mode, cfg, null);
                 System.out.println("WROTE " + ch + " " + mode + " -> " + written);
             }
         }

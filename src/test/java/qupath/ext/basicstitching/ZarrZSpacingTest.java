@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 import javax.imageio.ImageIO;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -163,11 +164,11 @@ class ZarrZSpacingTest {
         Path group = Files.createDirectories(root.resolve("State0"));
         StringBuilder cfg = new StringBuilder("dim = 2\n");
         for (int i = 0; i < 2; i++) {
-            cfg.append(String.format("%d.tif; ; (%.1f, 0.0)%n", i, i * TILE * 0.9));
+            cfg.append(String.format(Locale.ROOT, "%d.tif; ; (%.1f, 0.0)%n", i, i * TILE * 0.9));
         }
         Files.writeString(group.resolve("TileConfiguration.txt"), cfg.toString());
         for (int z = 0; z < slices; z++) {
-            Path zdir = Files.createDirectories(group.resolve(String.format("z%02d", z)));
+            Path zdir = Files.createDirectories(group.resolve(String.format(Locale.ROOT, "z%02d", z)));
             for (int i = 0; i < 2; i++) {
                 BufferedImage img = new BufferedImage(
                         TILE, TILE, offset > 0 ? BufferedImage.TYPE_USHORT_GRAY : BufferedImage.TYPE_BYTE_GRAY);

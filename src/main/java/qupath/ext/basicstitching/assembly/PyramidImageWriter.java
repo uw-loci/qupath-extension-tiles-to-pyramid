@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -370,7 +371,7 @@ public class PyramidImageWriter {
         }
 
         // Map common TIFF compression types to ZARR equivalents
-        String algorithm = compressionType.toLowerCase();
+        String algorithm = compressionType.toLowerCase(Locale.ROOT);
         switch (algorithm) {
             case "lzw":
             case "deflate":
