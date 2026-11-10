@@ -398,8 +398,12 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
     }
 
     /**
-     * Tiles of an NDTiff dataset: every image a plane of its position, placed by the stage position
-     * in the metadata of the position's first image ({@link NdTiffDataset}).
+     * Tiles of an NDTiff dataset: every image a plane of its position ({@link NdTiffDataset}). A
+     * position is placed by the stage position in the metadata of its first image
+     * ({@code XPositionUm}/{@code YPositionUm}), else by its {@code Summary.StagePositions} entry.
+     * When not every position has one, a dataset whose positions are {@code row}/{@code column}
+     * axes (Micro-Manager Magellan and other tiled acquisitions) is placed on that grid instead; see
+     * {@link #ndTiffGridPixel}. A dataset of one position needs no coordinates.
      */
     private List<TileMapping> prepareNdTiff(
             Path dir, Path rootdir, double callerPixelSize, boolean flipX, boolean flipY) {
@@ -421,7 +425,6 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
         JsonArray stage = NdTiffDataset.stagePositions(ds.summary());
         Map<String, double[]> posUm = new HashMap<>();
         Double detected = null;
-        List<String> unplaced = new ArrayList<>();
         for (Map.Entry<String, NdTiffDataset.Image> e : firsts.entrySet()) {
             JsonObject md;
             try {
@@ -445,11 +448,9 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
                     }
                 }
             }
-            if (xy == null) {
-                unplaced.add(e.getKey());
-                continue;
+            if (xy != null) {
+                posUm.put(e.getKey(), xy);
             }
-            posUm.put(e.getKey(), xy);
             Double ps = optDouble(md, "PixelSizeUm");
             if (detected == null && ps != null && ps > 0) detected = ps;
         }
@@ -462,6 +463,41 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
             logger.error("Effective pixel size is {} um/px (must be > 0); cannot map tiles", px);
             return mappings;
         }
+
+        // Pixel position of each position's tile: from the stage when every position has one,
+        // else from the row/column grid when every position has one, else what can be placed.
+        Map<String, int[]> posPx = new HashMap<>();
+        List<String> unplaced = new ArrayList<>();
+        Map<String, int[]> grid = posUm.size() == firsts.size() ? null : ndTiffGrid(ds, firsts.keySet());
+        if (grid != null) {
+            posPx.putAll(grid);
+            logger.info(
+                    "NDTiff positions placed on their row/column grid ({} of {} have stage coordinates;"
+                            + " GridPixelOverlapX/Y {}, {}); the stage axis inversion does not apply",
+                    posUm.size(),
+                    firsts.size(),
+                    ds.summary().get("GridPixelOverlapX"),
+                    ds.summary().get("GridPixelOverlapY"));
+            if (!posUm.isEmpty()) {
+                warn(posUm.size() + " of " + firsts.size() + " NDTiff positions record stage coordinates; all are"
+                        + " placed by their row and column instead, so that they share one frame of reference");
+            }
+        } else if (posUm.isEmpty() && firsts.size() == 1) {
+            posPx.put(firsts.keySet().iterator().next(), new int[] {0, 0});
+            logger.info("NDTiff dataset of one position without stage coordinates: placed at the origin");
+        } else {
+            for (String pos : firsts.keySet()) {
+                double[] xy = posUm.get(pos);
+                if (xy == null) {
+                    unplaced.add(pos);
+                    continue;
+                }
+                double rawX = flipX ? -xy[0] : xy[0];
+                double rawY = flipY ? -xy[1] : xy[1];
+                posPx.put(pos, new int[] {(int) Math.round(rawX / px), (int) Math.round(rawY / px)});
+            }
+        }
+
         List<String> channelNames =
                 channelGroupNames(ds.channelNames(), Math.max(ds.channelNames().size(), ds.channelCount()));
         if (channelNames.size() > 1) {
@@ -470,27 +506,78 @@ public class MicroManagerMetadataStrategy implements StitchingStrategy {
         String folderName =
                 rootdir.getFileName() != null ? rootdir.getFileName().toString() : "tiles";
         for (NdTiffDataset.Image im : ds.images()) {
-            double[] xy = posUm.get(im.position());
+            int[] xy = posPx.get(im.position());
             if (xy == null) continue;
-            double rawX = flipX ? -xy[0] : xy[0];
-            double rawY = flipY ? -xy[1] : xy[1];
             MicroManagerPlanes.Coord k = im.coord();
             ImageRegion region = ImageRegion.createInstance(
-                    (int) Math.round(rawX / px),
-                    (int) Math.round(rawY / px),
-                    im.entry().width(),
-                    im.entry().height(),
-                    k.z(),
-                    k.t());
+                    xy[0], xy[1], im.entry().width(), im.entry().height(), k.z(), k.t());
             String subdir = channelNames.size() > 1 ? channelNames.get(k.c()) : folderName;
             mappings.add(new TileMapping(im.file().toFile(), region, subdir, im.page()));
         }
         if (!unplaced.isEmpty()) {
             warn(unplaced.size() + " NDTiff position(s) were left out: their images record no XPositionUm /"
-                    + " YPositionUm and Summary.StagePositions does not list them. First: " + unplaced.get(0));
+                    + " YPositionUm, Summary.StagePositions does not list them, and the positions are not all"
+                    + " row/column tiles with Summary.GridPixelOverlapX/Y. First: " + unplaced.get(0));
         }
         logger.info("Total tiles mapped from NDTiff: {}", mappings.size());
         return mappings;
+    }
+
+    /**
+     * Pixel positions of a tiled NDTiff dataset's positions from their {@code row} and
+     * {@code column} axes, or null unless every position has integer ones and the summary has
+     * {@code GridPixelOverlapX} and {@code GridPixelOverlapY}.
+     */
+    private static Map<String, int[]> ndTiffGrid(NdTiffDataset ds, java.util.Set<String> positions) {
+        Integer overlapX = optIntOrNull(ds.summary(), "GridPixelOverlapX");
+        Integer overlapY = optIntOrNull(ds.summary(), "GridPixelOverlapY");
+        if (overlapX == null || overlapY == null || ds.images().isEmpty()) {
+            return null;
+        }
+        // NDTiffStorage takes the tile size from the dataset's first image.
+        NdTiffDataset.Entry first = ds.images().get(0).entry();
+        Map<String, int[]> out = new HashMap<>();
+        for (String pos : positions) {
+            JsonObject axes = com.google.gson.JsonParser.parseString(pos).getAsJsonObject();
+            Long row = integerAxis(axes, "row");
+            Long column = integerAxis(axes, "column");
+            if (row == null || column == null) {
+                return null;
+            }
+            out.put(pos, ndTiffGridPixel(row, column, first.width(), first.height(), overlapX, overlapY));
+        }
+        return out;
+    }
+
+    /**
+     * The top-left pixel of a tile at {@code row}, {@code column} of a tiled acquisition:
+     * {@code x = column * (width - overlapX)}, {@code y = row * (height - overlapY)}, as
+     * {@code CameraTilingStageTranslator.getDisplayedPixel} (AcqEngJ, commit 9f46e53) and
+     * {@code NDTiffStorage.getImageBounds} (NDTiffStorage, commit b2b8383) lay tiles out. Columns
+     * run along x and rows along y in image pixels, whatever the stage orientation (the
+     * acquisition maps pixels to the stage through its affine transform), so no stage inversion
+     * applies. Indices may be negative.
+     */
+    static int[] ndTiffGridPixel(long row, long column, int width, int height, int overlapX, int overlapY) {
+        return new int[] {Math.toIntExact(column * (width - overlapX)), Math.toIntExact(row * (height - overlapY))};
+    }
+
+    private static Long integerAxis(JsonObject axes, String name) {
+        JsonElement v = axes.get(name);
+        if (v == null || !v.isJsonPrimitive() || !v.getAsJsonPrimitive().isNumber()) {
+            return null;
+        }
+        double d = v.getAsDouble();
+        return d == Math.rint(d) ? (long) d : null;
+    }
+
+    private static Integer optIntOrNull(JsonObject parent, String key) {
+        try {
+            JsonElement e = parent == null ? null : parent.get(key);
+            return e == null || e.isJsonNull() ? null : e.getAsInt();
+        } catch (RuntimeException ex) {
+            return null;
+        }
     }
 
     /** A plane at its tile's place, before its channel's output name is known. */

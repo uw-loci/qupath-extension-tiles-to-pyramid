@@ -231,7 +231,9 @@ pick the layout in the dialog -- the strategy detects it. Detail on each:
 **NDTiff** (select the folder holding `NDTiff.index`, or its parent when the images sit in a `Full resolution` sub-folder):
 - Read from `NDTiff.index`, following the format specification in the [NDTiffStorage README](https://github.com/micro-manager/NDTiffStorage) ("Specification for NDTiff v3.x"); versions 2 and 3 are read
 - Each image's `channel`, `z` and `time` axes give its plane (a channel given by name, as format 3.2 allows, is ordered by `Summary.ChNames`); every other axis (`position`, or `row` / `column`) names its position
-- A position's stage coordinates are the `XPositionUm` / `YPositionUm` of its first image's metadata, else its `Summary.StagePositions` entry; a position with neither is left out with a **WARNING**
+- A position's stage coordinates are the `XPositionUm` / `YPositionUm` of its first image's metadata, else its `Summary.StagePositions` entry
+- **Tiled datasets without stage coordinates** (Micro-Manager Magellan explore acquisitions, and other tiled acquisitions whose positions are `row` / `column` axes): when not every position has stage coordinates, but every position has integer `row` and `column` axes and the summary has `GridPixelOverlapX` / `GridPixelOverlapY`, each tile goes at `x = column * (width - GridPixelOverlapX)`, `y = row * (height - GridPixelOverlapY)` pixels, width and height being the dataset's first image's. That is how Micro-Manager lays such tiles out (`CameraTilingStageTranslator.getDisplayedPixel` in AcqEngJ; `NDTiffStorage.getImageBounds`): columns run along x and rows along y in the image, so **Invert X / Y axis** does not apply and the pixel size does not move the tiles. Negative and missing indices keep their places. If some positions do have stage coordinates, all are placed on the grid and a **WARNING** says so
+- A dataset of a single position needs no coordinates. Any other position that can be placed neither way is left out with a **WARNING**
 - Pixel size from the first `PixelSizeUm` found in the metadata of each position's first image, in index order (the dialog's auto-fill reads only the dataset's first image), else `Summary.PixelSize_um`; z spacing from `Summary.z-step_um`
 - Images must be uncompressed, which is the only compression the format defines
 - Not supported: NDTiff 1.x, which kept its index inside the TIFF, or a dataset whose `NDTiff.index` is missing. When a stitch finds no tiles, the result window names such stack files under **Not supported**
@@ -950,7 +952,7 @@ from each image's axes in `NDTiff.index`. A file matching none of
 these is refused rather than guessed. On a 500-position, 3-frame 16-bit SHG acquisition (512 x 512 tiles)
 averaging took about 2 minutes over a network-mounted drive, and every averaged plane matched an
 independent numpy mean exactly; projection is checked by unit tests on synthetic stacks and on two
-real NDTiff z-stacks from the NDTiff test data (doi:10.5281/zenodo.7065552): `mm_mda_tcz_15`
+real NDTiff z-stacks from the NDTiff test data (doi:10.5281/zenodo.7065552). `mm_mda_tcz_15`
 (2 channels, 7 z, 8 t) averaged and projected, and projected alone, matched the values computed
 from its pages at every sampled pixel, and so did the copies when read by Micro-Manager's own
 Python reader (`ndstorage` 0.1.18; within 1 where a mean ends in .5, which numpy rounds to even);
