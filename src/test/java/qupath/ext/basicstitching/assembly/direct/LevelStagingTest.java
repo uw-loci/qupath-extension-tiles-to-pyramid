@@ -326,8 +326,15 @@ class LevelStagingTest {
         int failAt = -1;
         Runnable beforeFailing = () -> {};
         private final ImageServerMetadata metadata;
+        private final int seed;
 
         PlanesServer(int c, int z, int t, PixelType type) {
+            this(c, z, t, type, 0);
+        }
+
+        /** As above; a different {@code seed} gives different pixels in every plane. */
+        PlanesServer(int c, int z, int t, PixelType type, int seed) {
+            this.seed = seed;
             List<ImageChannel> channels = new ArrayList<>();
             for (int i = 0; i < c; i++) {
                 channels.add(ImageChannel.getInstance("c" + i, ImageChannel.getDefaultChannelColor(i)));
@@ -362,7 +369,7 @@ class LevelStagingTest {
                     int gy = tile.getImageY() + y;
                     for (int x = 0; x < w; x++) {
                         int gx = tile.getImageX() + x;
-                        int plane = b + 3 * tile.getZ() + 7 * tile.getT();
+                        int plane = b + 3 * tile.getZ() + 7 * tile.getT() + 11 * seed;
                         boolean canvas = ((gx + 13 * plane) / 97 + gy / 89) % 5 == 0 || gx < (gy % (31 + plane));
                         int hash = (gx * 73856093) ^ (gy * 19349663) ^ ((plane + 1) * 83492791);
                         r.setSample(x, y, b, canvas ? 0 : 1 + Math.floorMod(hash, max));

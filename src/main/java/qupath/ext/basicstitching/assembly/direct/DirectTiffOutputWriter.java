@@ -75,6 +75,11 @@ import qupath.lib.regions.RegionRequest;
  * cache cannot hold the level before. The Bio-Formats writer still performs a single
  * close-time reopen of the finished file to patch in the OME-XML footer; that
  * is internal to Bio-Formats and is not the rename failure addressed above.
+ *
+ * <p><b>Merges.</b> When a {@link ChannelStack}'s parts are OME-TIFFs already stored as the
+ * output will be (see {@link CompressedTileCopy}), each tile's compressed bytes are copied from its
+ * part through Bio-Formats' {@code saveCompressedBytes}, with no decode or encode; otherwise an
+ * INFO line names the first mismatch and the tiles are decoded and encoded as above.
  */
 public final class DirectTiffOutputWriter {
 
@@ -200,6 +205,33 @@ public final class DirectTiffOutputWriter {
                 * (long) sizeT;
         boolean bigTiff = estimatedBytes >= (Integer.MAX_VALUE - 1024L * 1024L * 100L);
 
+        // A merge of OME-TIFFs stored as this output will be: copy their compressed tiles.
+        if (!exportRGB
+                && baseDownsample == 1.0
+                && source instanceof ChannelStack stack
+                && isSplittable(source, stack)) {
+            CompressedTileCopy copy = null;
+            try {
+                copy = CompressedTileCopy.open(source, stack, compression.getOMEString(source), tileSize, downsamples);
+            } catch (CompressedTileCopy.NotCopyable e) {
+                logger.info("Merge: decoding and encoding every tile again, since {}", e.getMessage());
+            }
+            if (copy != null) {
+                try (CompressedTileCopy tiles = copy) {
+                    writeCopied(
+                            source,
+                            tiles,
+                            finalOutputPath,
+                            compression,
+                            tileSize,
+                            downsamples,
+                            bigTiff,
+                            progressCallback);
+                }
+                return;
+            }
+        }
+
         // Staged levels: each plane read straight from its source image, each level the source
         // lacks made from a staged copy of the level before.
         PlaneSource[] sources = stagedSources(source, exportRGB, channelPlanes, tileSize, baseDownsample, downsamples);
@@ -286,30 +318,8 @@ public final class DirectTiffOutputWriter {
         long writtenBytes = 0;
 
         try (ImageWriter imageWriter = new ImageWriter()) {
-            imageWriter.setWriteSequentially(true);
-            imageWriter.setMetadataRetrieve(meta);
-
-            // getWriter resolves the .ome.tif extension to an OME-TIFF writer
-            // (an OMETiffWriter, a TiffWriter subclass). BigTiff must be set on it
-            // before setId().
-            ((TiffWriter) imageWriter.getWriter(finalOutputPath)).setBigTiff(bigTiff);
-            // Compression must be set before setId(), otherwise it is ignored.
-            imageWriter.setCompression(compression.getOMEString(source));
-            try {
-                imageWriter.setId(finalOutputPath);
-            } catch (FormatException e) {
-                throw new IOException("Failed to open OME-TIFF writer for " + finalOutputPath, e);
-            }
-            // IMPORTANT: fetch the active writer AFTER setId(). setId() is where the
-            // writer reads the metadata and configures interleaving; a reference
-            // grabbed before setId() has interleaving unset and silently writes RGB
-            // as planar (harmless for single-sample data, scrambles RGB).
-            TiffWriter tiffWriter = (TiffWriter) imageWriter.getWriter();
-            // The writer has its own interleaved flag (separate from the OME
-            // PixelsInterleaved metadata) that governs how saveBytes interprets the
-            // byte[]. RGB is supplied as interleaved R,G,B; planar channels are
-            // supplied one channel-plane at a time.
-            tiffWriter.setInterleaved(exportRGB);
+            TiffWriter tiffWriter = startWriter(
+                    imageWriter, meta, finalOutputPath, bigTiff, compression.getOMEString(source), exportRGB);
 
             for (int level = 0; level < numLevels; level++) {
                 long levelStart = System.nanoTime();
@@ -431,6 +441,130 @@ public final class DirectTiffOutputWriter {
             }
         }
 
+        File out = new File(finalOutputPath);
+        if (!out.exists() || out.length() == 0) {
+            throw new IOException("OME-TIFF writer produced no output at " + finalOutputPath);
+        }
+        logger.info("Direct OME-TIFF complete: {}", finalOutputPath);
+    }
+
+    /**
+     * Open the sequential OME-TIFF writer for {@code meta} at {@code path}.
+     *
+     * @param interleaved whether planes are handed over as interleaved R, G, B
+     */
+    private static TiffWriter startWriter(
+            ImageWriter imageWriter,
+            IMetadata meta,
+            String path,
+            boolean bigTiff,
+            String omeCompression,
+            boolean interleaved)
+            throws IOException, FormatException {
+        imageWriter.setWriteSequentially(true);
+        imageWriter.setMetadataRetrieve(meta);
+
+        // getWriter resolves the .ome.tif extension to an OME-TIFF writer
+        // (an OMETiffWriter, a TiffWriter subclass). BigTiff must be set on it
+        // before setId().
+        ((TiffWriter) imageWriter.getWriter(path)).setBigTiff(bigTiff);
+        // Compression must be set before setId(), otherwise it is ignored.
+        imageWriter.setCompression(omeCompression);
+        try {
+            imageWriter.setId(path);
+        } catch (FormatException e) {
+            throw new IOException("Failed to open OME-TIFF writer for " + path, e);
+        }
+        // IMPORTANT: fetch the active writer AFTER setId(). setId() is where the
+        // writer reads the metadata and configures interleaving; a reference
+        // grabbed before setId() has interleaving unset and silently writes RGB
+        // as planar (harmless for single-sample data, scrambles RGB).
+        TiffWriter tiffWriter = (TiffWriter) imageWriter.getWriter();
+        // The writer has its own interleaved flag (separate from the OME
+        // PixelsInterleaved metadata) that governs how saveBytes interprets the
+        // byte[]. RGB is supplied as interleaved R,G,B; planar channels are
+        // supplied one channel-plane at a time.
+        tiffWriter.setInterleaved(interleaved);
+        return tiffWriter;
+    }
+
+    /**
+     * Write a merge by copying each tile's compressed bytes from the part that holds its channel:
+     * same planes, levels, tiles and OME-XML as the decode path, without decoding or encoding.
+     */
+    private static void writeCopied(
+            ImageServer<BufferedImage> source,
+            CompressedTileCopy copy,
+            String finalOutputPath,
+            OMEPyramidWriter.CompressionType compression,
+            int tileSize,
+            double[] downsamples,
+            boolean bigTiff,
+            Consumer<Double> progressCallback)
+            throws IOException {
+        int fullWidth = source.getWidth();
+        int fullHeight = source.getHeight();
+        PixelType pixelType = source.getPixelType();
+        int bytesPerPixel = pixelType.getBytesPerPixel();
+        int nChannels = source.nChannels();
+        int sizeZ = Math.max(1, source.nZSlices());
+        int sizeT = Math.max(1, source.nTimepoints());
+        int numLevels = downsamples.length;
+        IMetadata meta = MetadataTools.createOMEXMLMetadata();
+        initializeMetadata(meta, source, pixelType, false, fullWidth, fullHeight, downsamples);
+        long totalBytes = pyramidBytes(fullWidth, fullHeight, nChannels, bytesPerPixel, downsamples)
+                * (long) sizeZ
+                * (long) sizeT;
+        long writtenBytes = 0;
+        logger.info("Merge: copying the compressed tiles of the {} channels, not decoding them", nChannels);
+        try (ImageWriter imageWriter = new ImageWriter()) {
+            TiffWriter tiffWriter =
+                    startWriter(imageWriter, meta, finalOutputPath, bigTiff, compression.getOMEString(source), false);
+            for (int level = 0; level < numLevels; level++) {
+                long levelStart = System.nanoTime();
+                int levelW = (int) (fullWidth / downsamples[level]);
+                int levelH = (int) (fullHeight / downsamples[level]);
+                tiffWriter.setSeries(0);
+                tiffWriter.setResolution(level);
+                // The writer's own tile size (not an IFD tag, as on the decode path) is what
+                // saveCompressedBytes tiles by.
+                if (tiffWriter.setTileSizeX(tileSize) != tileSize || tiffWriter.setTileSizeY(tileSize) != tileSize) {
+                    throw new IOException("Bio-Formats would not write tiles of " + tileSize + " px");
+                }
+                // XYCZT, as declared in the metadata and as the decode path writes.
+                int planeIndex = 0;
+                for (int t = 0; t < sizeT; t++) {
+                    for (int z = 0; z < sizeZ; z++) {
+                        for (int c = 0; c < nChannels; c++) {
+                            for (int yy = 0; yy < levelH; yy += tileSize) {
+                                int hh = Math.min(tileSize, levelH - yy);
+                                for (int xx = 0; xx < levelW; xx += tileSize) {
+                                    int ww = Math.min(tileSize, levelW - xx);
+                                    byte[] tile = copy.readTile(planeIndex, level, xx / tileSize, yy / tileSize);
+                                    tiffWriter.saveCompressedBytes(planeIndex, tile, xx, yy, ww, hh);
+                                    writtenBytes += (long) ww * hh * bytesPerPixel;
+                                    if (progressCallback != null && totalBytes > 0) {
+                                        progressCallback.accept(Math.min(1.0, (double) writtenBytes / totalBytes));
+                                    }
+                                }
+                            }
+                            planeIndex++;
+                        }
+                    }
+                }
+                logger.info(
+                        "Wrote resolution level {}/{} ({}x{}) in {} s, copying the compressed tiles",
+                        level + 1,
+                        numLevels,
+                        levelW,
+                        levelH,
+                        String.format("%.1f", (System.nanoTime() - levelStart) / 1e9));
+            }
+        } catch (IOException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException("Direct OME-TIFF write failed for " + finalOutputPath, e);
+        }
         File out = new File(finalOutputPath);
         if (!out.exists() || out.length() == 0) {
             throw new IOException("OME-TIFF writer produced no output at " + finalOutputPath);

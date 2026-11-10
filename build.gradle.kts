@@ -104,6 +104,9 @@ dependencies {
     testImplementation(libs.bundles.qupath)
     testImplementation("io.github.qupath:qupath-extension-bioformats:0.7.0")
     testImplementation("dev.zarr:jzarr:0.4.2")
+    // Compile-only: the bioformats extension above puts this same version on the test runtime;
+    // tests that read TIFF structure directly (MergeTileCopyTest) need it to compile.
+    testCompileOnly("ome:formats-gpl:8.4.0")
     testImplementation(libs.junit)
     // Same version QuPath already puts on the test runtime classpath; compile-only so tests can read log output.
     testCompileOnly("ch.qos.logback:logback-classic:1.5.23")
