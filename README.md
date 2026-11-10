@@ -957,8 +957,9 @@ averaging took about 2 minutes over a network-mounted drive, and every averaged 
 independent numpy mean exactly; projection is checked by unit tests on synthetic stacks and on two
 real NDTiff z-stacks from the NDTiff test data (doi:10.5281/zenodo.7065552). `mm_mda_tcz_15`
 (2 channels, 7 z, 8 t) averaged and projected, and projected alone, matched the values computed
-from its pages at every sampled pixel, and so did the copies when read by Micro-Manager's own
-Python reader (`ndstorage` 0.1.18; within 1 where a mean ends in .5, which numpy rounds to even);
+from its pages at every sampled pixel; read with Micro-Manager's own Python reader (`ndstorage`
+0.1.18), the averaged copy equals the mean over time, maximum over z, rounded half up, and the
+projected one the maximum over z of each time point, at every pixel;
 `Large_aborted` (2 channels, 16 z, 369 time points, the last stopped after 20 of its 32 images,
 6 GB in two stack files) projected in 28 s, leaving that time point out. Positions with different frame or slice counts are each reduced over their own and
 the record says so. A re-run overwrites a copy folder this step wrote (including one 0.7.9's frame
