@@ -925,7 +925,9 @@ this order:
    every time point is kept and the steps below are applied to each one on its own, so a C x Z x T
    acquisition projects to C x 1 x T. A time point the acquisition stopped part way through (a
    channel or slice missing) is left out, with any after it, and the record says so.
-2. **Project:** each channel's z-slices are reduced to their per-pixel maximum.
+2. **Project:** each channel's z-slices are reduced to their per-pixel maximum. An NDTiff position
+   that holds only some of the dataset's z-slices (a Magellan tile explored over its own z range)
+   is reduced over the slices it has.
 3. **Round:** values are rounded to the original bit depth only when written (8- or 16-bit stay 8-
    or 16-bit, clamped to the type's range; 32-bit float stays float).
 4. **Write:** the result goes to a copy beside the acquisition folder, named `<folder>_averaged`,
