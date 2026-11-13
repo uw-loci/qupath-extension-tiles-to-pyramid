@@ -80,7 +80,7 @@ Developers of qpsc may want to also run the following to enable working with qps
    want share. It starts empty and remembers what you last typed.
 7. Click **Stitch**. Pressing Enter in a field does not start it.
 
-A notification says the stitch has started. QuPath stays usable, but a second stitch cannot start
+A **Tiles to Pyramid progress** window opens and follows the stitch (see [The stitch dialog](#the-stitch-dialog-field-by-field)). QuPath stays usable, but a second stitch cannot start
 until this one finishes. When it does, a **Tiles to Pyramid - Result** window lists the full path of
 each output file (you can copy the paths from it), and an **Open output folder** button to go straight
 there. Output is written into the folder you selected.
