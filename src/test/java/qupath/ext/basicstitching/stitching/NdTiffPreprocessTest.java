@@ -119,7 +119,7 @@ class NdTiffPreprocessTest {
     @Test
     void averageFlatfieldAndProjectWriteAnNdTiffCopy(@TempDir Path tmp) throws Exception {
         Path src = dataset(tmp.resolve("acq_1"), 2, 2, 2, 3, null);
-        Options options = new Options(true, profile(), true);
+        Options options = new Options(PlaneProjection.MEAN, profile(), PlaneProjection.MAX);
         Path out = MicroManagerPreprocessor.defaultOutput(src, options);
         var result = MicroManagerPreprocessor.run(src, out, options);
         assertEquals(2, result.positions());
@@ -158,7 +158,7 @@ class NdTiffPreprocessTest {
     void projectionAloneKeepsEachTimePointWithItsOwnMetadata(@TempDir Path tmp) throws Exception {
         Path src = dataset(tmp.resolve("acq_1"), 1, 2, 3, 2, null);
         Path out = tmp.resolve("mip");
-        MicroManagerPreprocessor.run(src, out, new Options(false, null, true));
+        MicroManagerPreprocessor.run(src, out, new Options(PlaneProjection.NONE, null, PlaneProjection.MAX));
         Map<String, int[]> px = pixels(out);
         assertEquals(4, px.size(), "2 channels x 2 time points");
         for (int t = 0; t < 2; t++) {
@@ -179,7 +179,8 @@ class NdTiffPreprocessTest {
     void anUnfinishedLastTimePointIsLeftOutAndNoted(@TempDir Path tmp) throws Exception {
         Path src = dataset(tmp.resolve("acq_1"), 1, 2, 2, 3, "2,1,1");
         Path out = tmp.resolve("mip");
-        var result = MicroManagerPreprocessor.run(src, out, new Options(false, null, true));
+        var result =
+                MicroManagerPreprocessor.run(src, out, new Options(PlaneProjection.NONE, null, PlaneProjection.MAX));
         assertTrue(
                 result.notes().stream().anyMatch(n -> n.contains("time point 2 has 3 of 4 planes")),
                 result.notes().toString());
@@ -189,7 +190,8 @@ class NdTiffPreprocessTest {
     @Test
     void averagingCountsTheFramesAnImageHas(@TempDir Path tmp) throws Exception {
         Path src = dataset(tmp.resolve("acq_1"), 1, 1, 1, 3, "2,0,0");
-        var result = MicroManagerPreprocessor.run(src, tmp.resolve("avg"), new Options(true, null, false));
+        var result = MicroManagerPreprocessor.run(
+                src, tmp.resolve("avg"), new Options(PlaneProjection.MEAN, null, PlaneProjection.NONE));
         int[] v = pixels(tmp.resolve("avg")).get("channel=0;position=0;z=0;");
         assertEquals(Math.round(1000 + 0.5), v[0], "mean over the two frames present");
         assertEquals("2", result.frameSummary());
@@ -218,7 +220,7 @@ class NdTiffPreprocessTest {
             }
         }
         Path out = tmp.resolve("avg");
-        MicroManagerPreprocessor.run(src, out, new Options(true, null, false));
+        MicroManagerPreprocessor.run(src, out, new Options(PlaneProjection.MEAN, null, PlaneProjection.NONE));
         Map<String, int[]> px = pixels(out);
         assertEquals(505, px.get("channel=\"SHG\";")[0]);
         assertEquals(905, px.get("channel=\"TPEF\";")[0]);
@@ -252,7 +254,8 @@ class NdTiffPreprocessTest {
                 }
             }
         }
-        var mip = MicroManagerPreprocessor.run(src, tmp.resolve("mip"), new Options(true, null, true));
+        var mip = MicroManagerPreprocessor.run(
+                src, tmp.resolve("mip"), new Options(PlaneProjection.MEAN, null, PlaneProjection.MAX));
         Map<String, int[]> px = pixels(tmp.resolve("mip"));
         assertEquals(2, px.size());
         assertEquals(Math.round(20.5), px.get("position=0;")[0]);
@@ -269,7 +272,8 @@ class NdTiffPreprocessTest {
                         .getAsInt(),
                 "position 1's first slice is its own z 1");
 
-        MicroManagerPreprocessor.run(src, tmp.resolve("avg"), new Options(true, null, false));
+        MicroManagerPreprocessor.run(
+                src, tmp.resolve("avg"), new Options(PlaneProjection.MEAN, null, PlaneProjection.NONE));
         Map<String, int[]> avg = pixels(tmp.resolve("avg"));
         assertEquals(5, avg.size(), "3 slices of position 0, 2 of position 1");
         assertEquals(Math.round(110.5), avg.get("position=1;z=0;")[0], "z values are kept as written");

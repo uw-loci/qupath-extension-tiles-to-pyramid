@@ -19,14 +19,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javafx.application.Platform;
+import javafx.geometry.Pos;
 import javafx.geometry.Rectangle2D;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.control.CheckBox;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
@@ -35,6 +36,7 @@ import javafx.scene.layout.Region;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Modality;
 import javafx.stage.Screen;
+import javafx.stage.Stage;
 import javafx.stage.Window;
 import javafx.util.StringConverter;
 import org.slf4j.Logger;
@@ -54,13 +56,13 @@ import qupath.ext.basicstitching.stitching.FolderDiagnosis;
 import qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy;
 import qupath.ext.basicstitching.stitching.MicroManagerOutputMetadata;
 import qupath.ext.basicstitching.stitching.MicroManagerPreprocessor;
+import qupath.ext.basicstitching.stitching.PlaneProjection;
 import qupath.ext.basicstitching.stitching.TileConfigurationTxtStrategy;
 import qupath.ext.basicstitching.stitching.TileDirectories;
 import qupath.ext.basicstitching.utilities.QPPreferences;
 import qupath.ext.basicstitching.utilities.RegistrationPreferences;
 import qupath.ext.basicstitching.workflow.StitchInfoFile;
 import qupath.ext.basicstitching.workflow.StitchingWorkflow;
-import qupath.fx.dialogs.Dialogs;
 import qupath.lib.common.GeneralTools;
 import qupath.lib.gui.QuPathGUI;
 import qupath.lib.gui.scripting.QPEx;
@@ -69,7 +71,6 @@ import qupath.lib.gui.scripting.QPEx;
  * GUI class for the Basic Stitching Extension.
  * Provides a dialog interface for configuring stitching parameters and executing stitching operations.
  *
- * TODO: Progress bar for stitching
  * TODO: Estimate size of stitched image to predict necessary memory
  * TODO: Warn user if size exceeds QuPath's allowed limits.
  */
@@ -79,6 +80,10 @@ public class StitchingGUI {
 
     // One dialog-launched stitch at a time: it runs in the background, so the menu stays live.
     private static final AtomicBoolean STITCH_RUNNING = new AtomicBoolean(false);
+    /** The running stitch's progress window; null when none runs. FX thread only. */
+    private static StitchProgressWindow progressWindow;
+    /** The open options dialog, so choosing the menu item again brings it forward. FX thread only. */
+    private static Dialog<ButtonType> openDialog;
 
     // GUI components are per-dialog: a JavaFX node can have only one parent, so reusing static
     // nodes threw "duplicate children added" on the second open. Values carry over through
@@ -100,9 +105,13 @@ public class StitchingGUI {
     // Shown only when the folder holds 2+ matching single-channel subdirectories (RGB is not channels).
     private final CheckBox mergeChannelsCheckbox = new CheckBox("Merge channels into one multichannel image");
     // Shown only for a MicroManager acquisition with more than one time point per position.
-    private final CheckBox averageFramesCheckbox = new CheckBox("Average time points before stitching");
+    private final Label timeProjectionLabel = new Label("Combine time points:");
+    private final ComboBox<PlaneProjection> timeProjectionBox = new ComboBox<>();
+    private final HBox timeProjectionRow = new HBox(8, timeProjectionLabel, timeProjectionBox);
     // Shown only for a MicroManager acquisition with more than one z-slice per position.
-    private final CheckBox maxProjectCheckbox = new CheckBox("Max-intensity project z-slices before stitching");
+    private final Label zProjectionLabel = new Label("Combine z-slices:");
+    private final ComboBox<PlaneProjection> zProjectionBox = new ComboBox<>();
+    private final HBox zProjectionRow = new HBox(8, zProjectionLabel, zProjectionBox);
     // Only for the methods whose positions are stage coordinates: see addStageInvertComponents.
     private final CheckBox invertXCheckbox = new CheckBox("Invert X axis");
     private final CheckBox invertYCheckbox = new CheckBox("Invert Y axis");
@@ -167,7 +176,20 @@ public class StitchingGUI {
      */
     public static void createGUI() {
         if (STITCH_RUNNING.get()) {
-            showAlertDialog("A stitch is already running. Wait for it to finish before starting another.");
+            if (progressWindow != null) {
+                // The progress window is the way back to a stitch whose window was closed.
+                progressWindow.show();
+            } else {
+                showAlertDialog("A stitch is already running. Wait for it to finish before starting another.");
+            }
+            return;
+        }
+        if (openDialog != null && openDialog.isShowing()) {
+            Window w = openDialog.getDialogPane().getScene().getWindow();
+            if (w instanceof Stage stage) {
+                stage.setIconified(false);
+                stage.toFront();
+            }
             return;
         }
         new StitchingGUI().show();
@@ -175,7 +197,8 @@ public class StitchingGUI {
 
     private void show() {
         Dialog<ButtonType> dlg = new Dialog<>();
-        dlg.initModality(Modality.APPLICATION_MODAL);
+        // Not modal: the user can look at images or the project while choosing options.
+        dlg.initModality(Modality.NONE);
         var qupath = QuPathGUI.getInstance();
         if (qupath != null && qupath.getStage() != null) {
             dlg.initOwner(qupath.getStage());
@@ -205,10 +228,14 @@ public class StitchingGUI {
         // stitch. Only an explicit click should.
         ((Button) dlg.getDialogPane().lookupButton(stitchType)).setDefaultButton(false);
 
-        Optional<ButtonType> result = dlg.showAndWait();
-        if (result.isPresent() && result.get() == stitchType) {
-            processDialogResult();
-        }
+        dlg.setOnHidden(e -> {
+            openDialog = null;
+            if (dlg.getResult() == stitchType) {
+                processDialogResult();
+            }
+        });
+        openDialog = dlg;
+        dlg.show();
     }
 
     /**
@@ -347,13 +374,15 @@ public class StitchingGUI {
                 QPPreferences.setStageInvertXSaved(invertX);
                 QPPreferences.setStageInvertYSaved(invertY);
             }
-            boolean averageFrames = averageFramesCheckbox.isVisible() && averageFramesCheckbox.isSelected();
-            boolean maxProject = maxProjectCheckbox.isVisible() && maxProjectCheckbox.isSelected();
-            if (averageFramesCheckbox.isVisible()) {
-                QPPreferences.setAverageFramesSaved(averageFramesCheckbox.isSelected());
+            PlaneProjection timeProjection =
+                    timeProjectionRow.isVisible() ? orNone(timeProjectionBox.getValue()) : PlaneProjection.NONE;
+            PlaneProjection zProjection =
+                    zProjectionRow.isVisible() ? orNone(zProjectionBox.getValue()) : PlaneProjection.NONE;
+            if (timeProjectionRow.isVisible()) {
+                QPPreferences.setTimeProjectionSaved(timeProjection);
             }
-            if (maxProjectCheckbox.isVisible()) {
-                QPPreferences.setMaxProjectZSaved(maxProjectCheckbox.isSelected());
+            if (zProjectionRow.isVisible()) {
+                QPPreferences.setZProjectionSaved(zProjection);
             }
             boolean applyFlatfield = flatfieldRow.isVisible() && flatfieldCheckbox.isSelected();
             if (flatfieldRow.isVisible()) {
@@ -363,9 +392,10 @@ public class StitchingGUI {
             FlatfieldProfile flatfield = applyFlatfield
                     ? FlatfieldProfile.load(Paths.get(flatfieldField.getText().trim()))
                     : null;
-            MicroManagerPreprocessor.Options preprocess = averageFrames || maxProject || applyFlatfield
-                    ? new MicroManagerPreprocessor.Options(averageFrames, flatfield, maxProject)
-                    : null;
+            MicroManagerPreprocessor.Options preprocess =
+                    timeProjection.reduces() || zProjection.reduces() || applyFlatfield
+                            ? new MicroManagerPreprocessor.Options(timeProjection, flatfield, zProjection)
+                            : null;
             boolean merge = mergeOffered && mergeChannelsCheckbox.isSelected();
             runInBackground(config, merge, merge ? countChannelFolders() : 0, preprocess, invertX, invertY);
 
@@ -396,8 +426,13 @@ public class StitchingGUI {
             showAlertDialog("A stitch is already running. Wait for it to finish before starting another.");
             return;
         }
-        Dialogs.showInfoNotification(
-                "Tiles to Pyramid", "Stitching started in the background. You will be told when it finishes.");
+        StitchProgressWindow window = new StitchProgressWindow(new File(requested.folderPath.trim()).getName());
+        progressWindow = window;
+        window.show();
+        int stepCount = 1 + (preprocess != null ? 1 : 0) + (mergeChannels ? 1 : 0);
+        String preprocessStep = "Step 1 of " + stepCount + ": Preprocessing (" + preprocess(preprocess) + ")";
+        String stitchStep = "Step " + (preprocess != null ? 2 : 1) + " of " + stepCount + ": Stitching";
+        String mergeStep = "Step " + stepCount + " of " + stepCount + ": Merging channels";
         Thread worker = new Thread(
                 () -> {
                     boolean ok = false;
@@ -422,9 +457,12 @@ public class StitchingGUI {
                     try {
                         String reduced = null;
                         if (preprocess != null) {
-                            config = preprocessedCopy(requested, preprocess);
+                            window.update(preprocessStep, -1, "", "");
+                            config = preprocessedCopy(requested, preprocess, window, preprocessStep);
                             reduced = "Preprocessed (" + preprocess.describe() + ") into " + config.folderPath;
                         }
+                        window.update(stitchStep, -1, "", "");
+                        config.setProgressListener(p -> window.update(stitchStep, p));
                         StitchingWorkflow.StitchingResult result = StitchingWorkflow.runDetailed(config);
                         if (reduced != null) {
                             message.append(reduced).append("\n\n");
@@ -472,7 +510,9 @@ public class StitchingGUI {
                                 String merged = null;
                                 String reason = "See the log for details.";
                                 try {
-                                    merged = mergeChannelOutputs(outputs, result.acquisitionOrder(), config);
+                                    window.update(mergeStep, 0, "", "");
+                                    merged = mergeChannelOutputs(
+                                            outputs, result.acquisitionOrder(), config, window, mergeStep);
                                 } catch (Exception e) {
                                     logger.error("Channel merge failed", e);
                                     if (e.getMessage() != null) {
@@ -503,11 +543,31 @@ public class StitchingGUI {
                     boolean success = ok;
                     boolean none = nothing[0];
                     String outputDir = config.outputPath;
-                    Platform.runLater(() -> showResultDialog(success, none, message.toString(), outputDir));
+                    Platform.runLater(() -> {
+                        if (progressWindow == window) {
+                            progressWindow = null;
+                        }
+                        window.close();
+                        showResultDialog(success, none, message.toString(), outputDir);
+                    });
                 },
                 "tiles-to-pyramid-stitch");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    /** "mean over time points, then ..." without the rounding note, for the step line. */
+    private static String preprocess(MicroManagerPreprocessor.Options options) {
+        if (options == null) {
+            return "";
+        }
+        String d = options.describe();
+        int cut = d.indexOf(';');
+        return cut > 0 ? d.substring(0, cut) : d;
+    }
+
+    private static PlaneProjection orNone(PlaneProjection p) {
+        return p == null ? PlaneProjection.NONE : p;
     }
 
     /**
@@ -537,11 +597,20 @@ public class StitchingGUI {
      * beside the folder, and return the config that stitches that copy, carrying a record of what
      * was done for the stitch-info file.
      */
-    private static StitchingConfig preprocessedCopy(StitchingConfig config, MicroManagerPreprocessor.Options options)
+    private static StitchingConfig preprocessedCopy(
+            StitchingConfig config, MicroManagerPreprocessor.Options options, StitchProgressWindow window, String step)
             throws IOException {
         Path source = Paths.get(config.folderPath.trim());
-        MicroManagerPreprocessor.Result r =
-                MicroManagerPreprocessor.run(source, MicroManagerPreprocessor.defaultOutput(source, options), options);
+        long start = System.nanoTime();
+        MicroManagerPreprocessor.Result r = MicroManagerPreprocessor.run(
+                source, MicroManagerPreprocessor.defaultOutput(source, options), options, (done, total) -> {
+                    double f = total > 0 ? (double) done / total : -1;
+                    window.update(
+                            step,
+                            f,
+                            done + " of " + total + " positions",
+                            StitchProgressWindow.timeText((System.nanoTime() - start) / 1e9, f));
+                });
         Map<String, String> entries = new java.util.LinkedHashMap<>();
         entries.put("method", options.describe());
         entries.put("acquisition folder", source.toString());
@@ -562,7 +631,13 @@ public class StitchingGUI {
      *     {@code Summary.ChNames}) and are merged in that order; otherwise they are merged in file
      *     name order, since channel folders record no acquisition order
      */
-    private static String mergeChannelOutputs(List<String> outputs, boolean acquisitionOrder, StitchingConfig config) {
+    private static String mergeChannelOutputs(
+            List<String> outputs,
+            boolean acquisitionOrder,
+            StitchingConfig config,
+            StitchProgressWindow window,
+            String step) {
+        // window: shows the merge's progress; null for none
         List<String> ordered = new ArrayList<>(outputs);
         if (!acquisitionOrder) {
             Collections.sort(ordered);
@@ -571,8 +646,20 @@ public class StitchingGUI {
                 ordered.stream().map(p -> channelNameOf(new File(p).getName())).toList();
         String stem = new File(config.folderPath).getName() + "_merged";
         logger.info("Merging {} channel stitches {} into {}", ordered.size(), names, stem);
+        long start = System.nanoTime();
+        String detail = ordered.size() + " channels into " + stem;
         String merged = ChannelMerger.merge(
-                ordered, names, config.outputPath, stem, config.compressionType, config.outputFormat);
+                ordered,
+                names,
+                null,
+                config.outputPath,
+                stem,
+                config.compressionType,
+                config.outputFormat,
+                window == null
+                        ? null
+                        : f -> window.update(
+                                step, f, detail, StitchProgressWindow.timeText((System.nanoTime() - start) / 1e9, f)));
         if (merged != null) {
             writeMergedAcquisitionMetadata(Paths.get(merged), names, config);
             tidyChannelStitches(ordered, config, stem);
@@ -791,30 +878,36 @@ public class StitchingGUI {
     /**
      * Adds the preprocessing options for a MicroManager acquisition with several time points or
      * z-slices per position (e.g. SHG collected as a short time series, or a z-stack), in either
-     * MicroManager layout. Time points are averaged first (or each kept), then z-slices
-     * max-projected; the result
-     * is written beside the folder ({@code <folder>_averaged}, {@code _mip} or {@code _averaged_mip})
-     * in the same MicroManager layout, and that copy is what gets stitched.
+     * MicroManager layout. Time points are combined first (mean, maximum or minimum, or each kept),
+     * then z-slices; the result is written beside the folder (e.g. {@code <folder>_averaged},
+     * {@code _mip} or {@code _averaged_mip}) in the same MicroManager layout, and that copy is what
+     * gets stitched.
      */
     private void addPreprocessComponents(GridPane pane) {
-        averageFramesCheckbox.setSelected(QPPreferences.getAverageFramesSaved());
-        averageFramesCheckbox.setTooltip(
-                new Tooltip("Each position holds several time points. When ticked, every channel\n"
-                        + "and z-slice is averaged over them (mean, rounded to the original bit\n"
-                        + "depth) and written to a copy of the acquisition beside the original, in\n"
-                        + "the same MicroManager layout. That copy is stitched.\n"
-                        + "When clear, nothing is averaged: each time point is stitched as a time\n"
-                        + "point of the output image (with max-intensity projection ticked, each\n"
-                        + "time point is projected on its own)."));
-        maxProjectCheckbox.setSelected(QPPreferences.getMaxProjectZSaved());
-        maxProjectCheckbox.setTooltip(
-                new Tooltip("Each position holds a z-stack. When ticked, each channel is reduced to\n"
-                        + "the brightest value at every pixel over its z-slices (maximum intensity\n"
-                        + "projection), after the time points are averaged if that is ticked too,\n"
-                        + "and written to the copy that is stitched.\n"
-                        + "With time points present and averaging clear, each time point is\n"
-                        + "projected on its own and kept as a time point of the output image.\n"
-                        + "When clear, each z-slice is stitched as a z-slice of the output image."));
+        timeProjectionBox.getItems().setAll(PlaneProjection.values());
+        timeProjectionBox.setValue(QPPreferences.getTimeProjectionSaved());
+        Tooltip timeTip = new Tooltip("Each position holds several time points. Mean, Max Intensity or Min\n"
+                + "Intensity combines every channel and z-slice over them, per pixel\n"
+                + "(rounded to the original bit depth), into a copy of the acquisition\n"
+                + "beside the original, in the same MicroManager layout. That copy is\n"
+                + "stitched.\n"
+                + "None keeps them: each time point is stitched as a time point of the\n"
+                + "output image (and z-slices, if combined, are combined per time point).");
+        timeProjectionLabel.setTooltip(timeTip);
+        timeProjectionBox.setTooltip(timeTip);
+        zProjectionBox.getItems().setAll(PlaneProjection.values());
+        zProjectionBox.setValue(QPPreferences.getZProjectionSaved());
+        Tooltip zTip = new Tooltip("Each position holds a z-stack. Max Intensity keeps the brightest\n"
+                + "value at every pixel over the z-slices (standard for fluorescence and\n"
+                + "SHG), Min Intensity the darkest, Mean their average. This runs after\n"
+                + "the time points are combined and after any flat-field correction, and\n"
+                + "is written to the copy that is stitched.\n"
+                + "None keeps them: each z-slice is stitched as a z-slice of the output image.");
+        zProjectionLabel.setTooltip(zTip);
+        zProjectionBox.setTooltip(zTip);
+        for (HBox row : List.of(timeProjectionRow, zProjectionRow)) {
+            row.setAlignment(Pos.CENTER_LEFT);
+        }
         flatfieldCheckbox.setSelected(QPPreferences.getApplyFlatfieldSaved());
         flatfieldCheckbox.setTooltip(new Tooltip("For a detector with no background image, such as a PMT. Each plane\n"
                 + "is corrected with a profile fitted from tiles in QP Scope, before any\n"
@@ -840,7 +933,7 @@ public class StitchingGUI {
             }
         });
         flatfieldRow.getChildren().addAll(flatfieldCheckbox, flatfieldField, flatfieldBrowse);
-        for (Node node : List.of(averageFramesCheckbox, flatfieldRow, maxProjectCheckbox)) {
+        for (Node node : List.of(timeProjectionRow, flatfieldRow, zProjectionRow)) {
             Integer row = guiElementPositions.get(node);
             if (row != null) {
                 pane.add(node, 0, row, 2, 1);
@@ -859,15 +952,14 @@ public class StitchingGUI {
                         ? MicroManagerPreprocessor.shape(new File(path.trim()))
                         : new MicroManagerPreprocessor.Shape(0, 0);
         flatfieldRow.setVisible(shape.frames() > 0);
-        averageFramesCheckbox.setVisible(shape.frames() > 1);
+        timeProjectionRow.setVisible(shape.frames() > 1);
         if (shape.frames() > 1) {
-            averageFramesCheckbox.setText(
-                    "Average the " + shape.frames() + " time points of each position before stitching");
+            timeProjectionLabel.setText("Combine the " + shape.frames() + " time points of each position:");
         }
-        maxProjectCheckbox.setVisible(shape.slices() > 1);
+        zProjectionRow.setVisible(shape.slices() > 1);
         if (shape.slices() > 1) {
-            maxProjectCheckbox.setText("Max-intensity project the " + shape.slices() + " z-slices of each position"
-                    + (shape.frames() > 1 ? " (after averaging)" : ""));
+            zProjectionLabel.setText("Combine the " + shape.slices() + " z-slices of each position"
+                    + (shape.frames() > 1 ? " (after time points):" : ":"));
         }
     }
 
@@ -1200,9 +1292,9 @@ public class StitchingGUI {
         guiElementPositions.put(matchStringLabel, currentPosition++);
         guiElementPositions.put(zSpacingLabel, currentPosition++);
         guiElementPositions.put(invertLabel, currentPosition++);
-        guiElementPositions.put(averageFramesCheckbox, currentPosition++);
+        guiElementPositions.put(timeProjectionRow, currentPosition++);
         guiElementPositions.put(flatfieldRow, currentPosition++);
-        guiElementPositions.put(maxProjectCheckbox, currentPosition++);
+        guiElementPositions.put(zProjectionRow, currentPosition++);
         guiElementPositions.put(mergeChannelsCheckbox, currentPosition++);
         guiElementPositions.put(resolveOverlapsCheckbox, currentPosition++);
         guiElementPositions.put(registrationOptionsPane, currentPosition++);
@@ -1723,17 +1815,20 @@ public class StitchingGUI {
         }
 
         DialogOwner.own(alert);
-        Optional<ButtonType> choice = alert.showAndWait();
-        if (choice.isEmpty()) {
-            return;
-        }
-        if (choice.get() == openFolder) {
-            openDirectory(dir);
-        } else if (choice.get() == backToSettings) {
-            // Every field is restored from the preferences the run just saved, so the dialog comes
-            // back holding what they tried, ready to be corrected.
-            Platform.runLater(StitchingGUI::createGUI);
-        }
+        // Not modal: a stitch can end while the user is working in QuPath, and the result should
+        // not block that work until it is read.
+        alert.initModality(Modality.NONE);
+        alert.setOnHidden(e -> {
+            ButtonType choice = alert.getResult();
+            if (choice == openFolder) {
+                openDirectory(dir);
+            } else if (choice == backToSettings) {
+                // Every field is restored from the preferences the run just saved, so the dialog
+                // comes back holding what they tried, ready to be corrected.
+                Platform.runLater(StitchingGUI::createGUI);
+            }
+        });
+        alert.show();
     }
 
     /**

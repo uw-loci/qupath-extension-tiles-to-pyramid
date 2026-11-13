@@ -21,6 +21,7 @@ import qupath.ext.basicstitching.assembly.direct.OverlapBlend;
 import qupath.ext.basicstitching.config.StitchingConfig;
 import qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy;
 import qupath.ext.basicstitching.stitching.MicroManagerPreprocessor;
+import qupath.ext.basicstitching.stitching.PlaneProjection;
 import qupath.ext.basicstitching.workflow.StitchingWorkflow;
 import qupath.lib.images.servers.ImageServer;
 import qupath.lib.images.servers.ImageServers;
@@ -121,7 +122,10 @@ class MicroManagerCztStitchTest {
 
         Path folder = src;
         if (opt != Opt.NONE) {
-            var options = new MicroManagerPreprocessor.Options(opt.average, null, opt.project);
+            var options = new MicroManagerPreprocessor.Options(
+                    (opt.average ? PlaneProjection.MEAN : PlaneProjection.NONE),
+                    null,
+                    (opt.project ? PlaneProjection.MAX : PlaneProjection.NONE));
             folder = MicroManagerPreprocessor.run(src, MicroManagerPreprocessor.defaultOutput(src, options), options)
                     .output();
         }

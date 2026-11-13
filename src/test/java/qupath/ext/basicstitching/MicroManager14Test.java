@@ -14,6 +14,7 @@ import qupath.ext.basicstitching.MicroManagerFixture.Layout;
 import qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy;
 import qupath.ext.basicstitching.stitching.MicroManagerPlanes;
 import qupath.ext.basicstitching.stitching.MicroManagerPlanes.Coord;
+import qupath.ext.basicstitching.stitching.PlaneProjection;
 import qupath.ext.basicstitching.stitching.TileMapping;
 
 /**
@@ -125,7 +126,8 @@ class MicroManager14Test {
         for (boolean embedded : new boolean[] {true, false}) {
             MicroManagerFixture f = MicroManagerFixture.of(Layout.MM14, 3, 3, 2).noPlaneBlocks();
             Path src = (embedded ? f.mm14Embedded(0) : f.mm14InitialPositions(0)).write(tmp.resolve("e" + embedded));
-            var options = new qupath.ext.basicstitching.stitching.MicroManagerPreprocessor.Options(true, null, true);
+            var options = new qupath.ext.basicstitching.stitching.MicroManagerPreprocessor.Options(
+                    PlaneProjection.MEAN, null, PlaneProjection.MAX);
             Path copy = qupath.ext.basicstitching.stitching.MicroManagerPreprocessor.run(
                             src, tmp.resolve("copy" + embedded), options)
                     .output();

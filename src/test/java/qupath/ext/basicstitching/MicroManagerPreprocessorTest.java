@@ -25,6 +25,7 @@ import org.junit.jupiter.api.io.TempDir;
 import qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy;
 import qupath.ext.basicstitching.stitching.MicroManagerPreprocessor;
 import qupath.ext.basicstitching.stitching.MicroManagerPreprocessor.Options;
+import qupath.ext.basicstitching.stitching.PlaneProjection;
 import qupath.ext.basicstitching.stitching.TileMapping;
 
 /**
@@ -38,8 +39,8 @@ class MicroManagerPreprocessorTest {
     private static int W = 12;
     private static int H = 8;
     private static final double PIXEL_UM = 0.5;
-    private static final Options AVERAGE = new Options(true, null, false);
-    private static final Options BOTH = new Options(true, null, true);
+    private static final Options AVERAGE = new Options(PlaneProjection.MEAN, null, PlaneProjection.NONE);
+    private static final Options BOTH = new Options(PlaneProjection.MEAN, null, PlaneProjection.MAX);
 
     /** Frames 0..3 of a plane differ by 0, 1, 3, 7. */
     private static final int[] T_STEP = {0, 1, 3, 7};
@@ -167,6 +168,62 @@ class MicroManagerPreprocessorTest {
     }
 
     /**
+     * Maximum over time, then minimum over z: each pixel is its brightest time point's darkest
+     * slice. Frames add 0, 1, 3, so the maximum adds 3; per column the darkest slice adds 10, 0, 0.
+     * Progress is reported once per position.
+     */
+    @Test
+    void maxOverTimeThenMinOverZ(@TempDir Path tmp) throws IOException {
+        Path src = Files.createDirectories(tmp.resolve("shg"));
+        writePosition(src, "Pos0", 0, 0.0, 0.0, 2, 3, 3, true);
+        writePosition(src, "Pos1", 1, 4.0, 0.0, 2, 3, 3, true);
+        Options options = new Options(PlaneProjection.MAX, null, PlaneProjection.MIN);
+        Path out = MicroManagerPreprocessor.defaultOutput(src, options);
+        assertEquals(tmp.resolve("shg_tmax_zmin"), out);
+        List<String> progress = new ArrayList<>();
+        MicroManagerPreprocessor.run(src, out, options, (done, total) -> progress.add(done + "/" + total));
+        assertEquals(List.of("1/2", "2/2"), progress);
+
+        List<int[]> pages = readPages(out.resolve("acq_MMStack_Pos1.ome.tif"));
+        assertEquals(2, pages.size(), "one page per channel: no frames, no slices");
+        int[] zMin = {10, 0, 0};
+        for (int c = 0; c < 2; c++) {
+            int[] px = pages.get(c);
+            for (int i = 0; i < px.length; i++) {
+                int x = i % W;
+                assertEquals(2000 + 100 * c + 3 + zMin[x % 3], px[i], "channel " + c + ", x " + x);
+            }
+        }
+        JsonObject rec = JsonParser.parseString(Files.readString(out.resolve("acq_MMStack_Pos1_metadata.txt")))
+                .getAsJsonObject()
+                .getAsJsonObject("Summary")
+                .getAsJsonObject("Preprocessing");
+        assertEquals("MAX", rec.get("TimeProjection").getAsString());
+        assertEquals("MIN", rec.get("ZProjection").getAsString());
+        assertTrue(rec.get("Method").getAsString().startsWith("maximum intensity over time points"));
+    }
+
+    /** Minimum over time (adds 0), then the mean over z: (40+30+10)/3 = 26.67 in every column, so 27. */
+    @Test
+    void minOverTimeThenMeanOverZ(@TempDir Path tmp) throws IOException {
+        Path src = Files.createDirectories(tmp.resolve("shg"));
+        writePosition(src, "Pos0", 0, 0.0, 0.0, 2, 3, 3, true);
+        writePosition(src, "Pos1", 1, 4.0, 0.0, 2, 3, 3, true);
+        Options options = new Options(PlaneProjection.MIN, null, PlaneProjection.MEAN);
+        Path out = MicroManagerPreprocessor.defaultOutput(src, options);
+        assertEquals(tmp.resolve("shg_tmin_zmean"), out);
+        MicroManagerPreprocessor.run(src, out, options);
+
+        List<int[]> pages = readPages(out.resolve("acq_MMStack_Pos1.ome.tif"));
+        assertEquals(2, pages.size());
+        for (int c = 0; c < 2; c++) {
+            for (int v : pages.get(c)) {
+                assertEquals(2000 + 100 * c + 27, v, "channel " + c);
+            }
+        }
+    }
+
+    /**
      * Projection without averaging projects every time point on its own and keeps them all. Until
      * 2026-11 it used the first time point and dropped the rest.
      */
@@ -175,7 +232,7 @@ class MicroManagerPreprocessorTest {
         Path src = Files.createDirectories(tmp.resolve("shg"));
         writePosition(src, "Pos0", 0, 0.0, 0.0, 2, 3, 4, true);
         writePosition(src, "Pos1", 1, 4.0, 0.0, 2, 3, 4, true);
-        Options mipOnly = new Options(false, null, true);
+        Options mipOnly = new Options(PlaneProjection.NONE, null, PlaneProjection.MAX);
         Path out = MicroManagerPreprocessor.defaultOutput(src, mipOnly);
         assertEquals(tmp.resolve("shg_mip"), out);
         var result = MicroManagerPreprocessor.run(src, out, mipOnly);
@@ -220,7 +277,7 @@ class MicroManagerPreprocessorTest {
         Path src = Files.createDirectories(tmp.resolve("shg"));
         writeSinglePlanePosition(src, "Tile_R0_C0", 0, 0.0, 0.0, 3, 2);
         writeSinglePlanePosition(src, "Tile_R0_C1", 1, 4.0, 0.0, 3, 2);
-        Options mipOnly = new Options(false, null, true);
+        Options mipOnly = new Options(PlaneProjection.NONE, null, PlaneProjection.MAX);
         Path out = MicroManagerPreprocessor.defaultOutput(src, mipOnly);
         MicroManagerPreprocessor.run(src, out, mipOnly);
         Path pos = out.resolve("Tile_R0_C0");
@@ -259,7 +316,7 @@ class MicroManagerPreprocessorTest {
         Path src = Files.createDirectories(tmp.resolve("shg"));
         writeSinglePlanePosition(src, "Tile_R0_C0", 0, 0.0, 0.0, 3, 2);
         Files.delete(src.resolve("Tile_R0_C0/img_channel000_position000_time000000001_z002.tif"));
-        Options mipOnly = new Options(false, null, true);
+        Options mipOnly = new Options(PlaneProjection.NONE, null, PlaneProjection.MAX);
         var result = MicroManagerPreprocessor.run(src, tmp.resolve("out"), mipOnly);
         assertTrue(
                 result.notes().stream().anyMatch(n -> n.contains("time point 1 has 2 of 3 planes")),

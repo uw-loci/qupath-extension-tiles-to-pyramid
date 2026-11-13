@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **A progress window for stitches started from the dialog.** After **Stitch**, **Tiles to Pyramid progress** shows the step (preprocessing, stitching, merging channels, as the run needs, numbered "Step 2 of 3"), a progress bar, the channel or output being written, and the time used and left (the stitch's own estimate; for preprocessing and the merge, extrapolated from the rate so far). Before, the only sign was a notification at the start and the result window at the end. Closing the window does not stop the stitch, and choosing **Tiles to Pyramid** again while it runs brings the window back. The preprocessing copy reports each finished position and the channel merge reports how much it has written (`MicroManagerPreprocessor.run` and `ChannelMerger.merge` take an optional progress callback). There is still no way to cancel a running stitch.
+- **Time points and z-slices can be combined by Mean, Max Intensity or Min Intensity** (or kept, **None**), for every MicroManager layout, from two dropdowns, **Combine the N time points of each position** and **Combine the N z-slices of each position**, which replace the **Average ... time points** and **Max-intensity project ... z-slices** checkboxes. The choices and labels are QP Scope's (its Sum and Std Deviation are left out: the copy keeps the source bit depth, which a sum overflows and a standard deviation does not suit). Defaults are Mean over time and Max Intensity over z, as before, and a choice made with the old checkboxes carries over (ticked gives Mean and Max Intensity, clear gives None). The copy is named `_averaged`, `_tmax` or `_tmin`, then `_ff`, then `_mip`, `_zmin` or `_zmean`, and its records gain `TimeProjection` and `ZProjection`. A maximum or minimum over time commutes with the flat-field correction (a per-pixel increasing function), so the order of the steps is unchanged. Tested on synthetic C x Z x T acquisitions (maximum over time then minimum over z, minimum over time then mean over z, checked at every pixel) and end to end in QuPath on a 3-channel, 3-slice, 3-time-point acquisition. `MicroManagerPreprocessor.Options` now takes two `PlaneProjection` values instead of two booleans.
+
+### Changed
+- **The Tiles to Pyramid dialog and its result window no longer block QuPath.** Both were application-modal, so nothing else in QuPath could be used while the options were open or until the result was dismissed. Choosing **Tiles to Pyramid** while the dialog is open brings it to the front instead of opening a second one.
+
 ## [0.10.1] - 2026-11-10
 
 ### Fixed

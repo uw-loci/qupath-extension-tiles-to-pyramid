@@ -80,6 +80,32 @@ public class ChannelMerger {
             String outputFilename,
             String compression,
             StitchingConfig.OutputFormat outputFormat) {
+        return merge(
+                inputPaths,
+                channelNames,
+                channelColors,
+                outputDirectory,
+                outputFilename,
+                compression,
+                outputFormat,
+                null);
+    }
+
+    /**
+     * As {@link #merge(List, List, List, String, String, String, StitchingConfig.OutputFormat)},
+     * reporting how much of the merged image has been written.
+     *
+     * @param progress receives the fraction written, 0 to 1; may be null
+     */
+    public static String merge(
+            List<String> inputPaths,
+            List<String> channelNames,
+            List<Integer> channelColors,
+            String outputDirectory,
+            String outputFilename,
+            String compression,
+            StitchingConfig.OutputFormat outputFormat,
+            java.util.function.Consumer<Double> progress) {
         if (inputPaths == null || inputPaths.isEmpty()) {
             logger.warn("ChannelMerger.merge called with no input paths");
             return null;
@@ -135,7 +161,7 @@ public class ChannelMerger {
 
             List<String> warnings = new ArrayList<>();
             String outPath = PyramidImageWriter.write(
-                    merged, outputDirectory, outputFilename, compression, 1.0, outputFormat, null, warnings::add);
+                    merged, outputDirectory, outputFilename, compression, 1.0, outputFormat, progress, warnings::add);
 
             if (outPath != null) {
                 logger.info("ChannelMerger: merge succeeded -> {}", outPath);

@@ -5,6 +5,7 @@ package qupath.ext.basicstitching.utilities;
 
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.StringProperty;
+import qupath.ext.basicstitching.stitching.PlaneProjection;
 import qupath.lib.gui.prefs.PathPrefs;
 
 /**
@@ -80,6 +81,14 @@ public class QPPreferences {
 
     private static final BooleanProperty maxProjectZSaved =
             PathPrefs.createPersistentPreference("basicstitching.dialog.maxProjectZ", true);
+
+    // How time points and z-slices are combined (PlaneProjection names). Blank until first chosen;
+    // until then the two checkboxes they replaced decide (ticked = Mean over time, Max over z).
+    private static final StringProperty timeProjectionSaved =
+            PathPrefs.createPersistentPreference("basicstitching.dialog.timeProjection", "");
+
+    private static final StringProperty zProjectionSaved =
+            PathPrefs.createPersistentPreference("basicstitching.dialog.zProjection", "");
 
     private static final BooleanProperty applyFlatfieldSaved =
             PathPrefs.createPersistentPreference("basicstitching.dialog.applyFlatfield", false);
@@ -203,20 +212,28 @@ public class QPPreferences {
         outputFormatSaved.setValue(format);
     }
 
-    public static boolean getAverageFramesSaved() {
-        return averageFramesSaved.getValue();
+    public static PlaneProjection getTimeProjectionSaved() {
+        String v = timeProjectionSaved.getValue();
+        if (v == null || v.isBlank()) {
+            return averageFramesSaved.getValue() ? PlaneProjection.MEAN : PlaneProjection.NONE;
+        }
+        return PlaneProjection.parse(v);
     }
 
-    public static void setAverageFramesSaved(final boolean average) {
-        averageFramesSaved.setValue(average);
+    public static void setTimeProjectionSaved(final PlaneProjection projection) {
+        timeProjectionSaved.setValue(projection.name());
     }
 
-    public static boolean getMaxProjectZSaved() {
-        return maxProjectZSaved.getValue();
+    public static PlaneProjection getZProjectionSaved() {
+        String v = zProjectionSaved.getValue();
+        if (v == null || v.isBlank()) {
+            return maxProjectZSaved.getValue() ? PlaneProjection.MAX : PlaneProjection.NONE;
+        }
+        return PlaneProjection.parse(v);
     }
 
-    public static void setMaxProjectZSaved(final boolean project) {
-        maxProjectZSaved.setValue(project);
+    public static void setZProjectionSaved(final PlaneProjection projection) {
+        zProjectionSaved.setValue(projection.name());
     }
 
     public static boolean getApplyFlatfieldSaved() {

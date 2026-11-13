@@ -288,7 +288,7 @@ class NdTiffGridTest {
         Path src = Path.of(System.getenv("T2P_NDTIFF_DATA"))
                 .resolve("v3/Magellan_expolore_negative_indices_and_overwritten");
         NdTiffDataset ds = NdTiffDataset.read(NdTiffDataset.locate(src));
-        var options = new MicroManagerPreprocessor.Options(false, null, true);
+        var options = new MicroManagerPreprocessor.Options(PlaneProjection.NONE, null, PlaneProjection.MAX);
         Path copy =
                 MicroManagerPreprocessor.run(src, tmp.resolve("mip"), options).output();
         var result = stitch(copy, tmp.resolve("out"), false);

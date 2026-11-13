@@ -15,6 +15,7 @@ import org.junit.jupiter.api.io.TempDir;
 import qupath.ext.basicstitching.stitching.FlatfieldProfile;
 import qupath.ext.basicstitching.stitching.MicroManagerPreprocessor;
 import qupath.ext.basicstitching.stitching.MicroManagerPreprocessor.Options;
+import qupath.ext.basicstitching.stitching.PlaneProjection;
 
 /**
  * Applying a profile written by {@code microscope_imageprocessing}: the fixture is the Python
@@ -42,7 +43,7 @@ class FlatfieldPreprocessingTest {
     void correctsOnlyTheProfilesChannelAfterAveraging(@TempDir Path tmp) throws Exception {
         Path src = Files.createDirectories(tmp.resolve("shg"));
         MicroManagerPreprocessorTest.writePosition(src, "Pos-1-000_000", 0, 0.0, 0.0, 2, 1, 3, true);
-        Options options = new Options(true, profile(), false);
+        Options options = new Options(PlaneProjection.MEAN, profile(), PlaneProjection.NONE);
 
         Path out = MicroManagerPreprocessor.defaultOutput(src, options);
         assertEquals(tmp.resolve("shg_averaged_ff"), out);
@@ -60,7 +61,7 @@ class FlatfieldPreprocessingTest {
     void correctsBeforeTheMaxProjection(@TempDir Path tmp) throws Exception {
         Path src = Files.createDirectories(tmp.resolve("stack"));
         MicroManagerPreprocessorTest.writePosition(src, "Pos-1-000_000", 0, 0.0, 0.0, 1, 3, 1, true);
-        Options options = new Options(false, profile(), true);
+        Options options = new Options(PlaneProjection.NONE, profile(), PlaneProjection.MAX);
 
         Path out = MicroManagerPreprocessor.defaultOutput(src, options);
         assertEquals(tmp.resolve("stack_ff_mip"), out);
@@ -83,7 +84,10 @@ class FlatfieldPreprocessingTest {
             MicroManagerPreprocessorTest.writePosition(other, "Pos-1-000_000", 0, 0.0, 0.0, 1, 1, 1, true);
             IOException error = assertThrows(
                     IOException.class,
-                    () -> MicroManagerPreprocessor.run(other, tmp.resolve("out"), new Options(false, profile, false)));
+                    () -> MicroManagerPreprocessor.run(
+                            other,
+                            tmp.resolve("out"),
+                            new Options(PlaneProjection.NONE, profile, PlaneProjection.NONE)));
             assertTrue(error.getMessage().contains("another scan size"), error.getMessage());
         } finally {
             MicroManagerPreprocessorTest.setSize(W, H);
@@ -98,7 +102,7 @@ class FlatfieldPreprocessingTest {
 
     @Test
     void theRecordNamesTheProfile() throws Exception {
-        String method = new Options(true, profile(), true).describe();
+        String method = new Options(PlaneProjection.MEAN, profile(), PlaneProjection.MAX).describe();
         assertTrue(method.contains("top PMT, 10x"), method);
         assertTrue(method.indexOf("flat-field") < method.indexOf("maximum intensity"), method);
     }

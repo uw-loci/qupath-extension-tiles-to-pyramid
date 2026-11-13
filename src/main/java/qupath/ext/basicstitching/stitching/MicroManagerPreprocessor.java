@@ -22,6 +22,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.BiConsumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.imageio.ImageIO;
@@ -85,23 +86,46 @@ public final class MicroManagerPreprocessor {
     /**
      * What to do to each position, applied in this order.
      *
-     * @param averageFrames average the time points; when false, each time point is reduced on its
-     *     own and kept
-     * @param flatfield corrects each plane before any projection; null for none
-     * @param maxProjectZ take the per-pixel maximum over the z-slices
+     * @param time how the time points are combined into one; {@link PlaneProjection#NONE} reduces
+     *     each time point on its own and keeps it (null means NONE)
+     * @param flatfield corrects each plane before any z projection; null for none
+     * @param z how the z-slices are combined into one; {@link PlaneProjection#NONE} keeps them (null
+     *     means NONE)
      */
-    public record Options(boolean averageFrames, FlatfieldProfile flatfield, boolean maxProjectZ) {
-        /** @return the default output folder's suffix: any of {@code _averaged}, {@code _ff}, {@code _mip} */
+    public record Options(PlaneProjection time, FlatfieldProfile flatfield, PlaneProjection z) {
+        public Options {
+            time = time == null ? PlaneProjection.NONE : time;
+            z = z == null ? PlaneProjection.NONE : z;
+        }
+
+        /**
+         * @return the default output folder's suffix, from {@code _averaged}, {@code _tmax} or
+         *     {@code _tmin}, then {@code _ff}, then {@code _mip}, {@code _zmean} or {@code _zmin}
+         */
         public String folderSuffix() {
-            return (averageFrames ? "_averaged" : "") + (flatfield != null ? "_ff" : "") + (maxProjectZ ? "_mip" : "");
+            String t =
+                    switch (time) {
+                        case MEAN -> "_averaged";
+                        case MAX -> "_tmax";
+                        case MIN -> "_tmin";
+                        case NONE -> "";
+                    };
+            String zs =
+                    switch (z) {
+                        case MAX -> "_mip";
+                        case MEAN -> "_zmean";
+                        case MIN -> "_zmin";
+                        case NONE -> "";
+                    };
+            return t + (flatfield != null ? "_ff" : "") + zs;
         }
 
         /** @return the method in words, for records */
         public String describe() {
-            String frames = averageFrames ? "mean over time points" : "each time point kept";
+            String frames = time.reduces() ? time.words() + " over time points" : "each time point kept";
             String shading = flatfield != null ? ", then " + flatfield.describe() : "";
-            String z = maxProjectZ ? ", then maximum intensity over z-slices" : "";
-            return frames + shading + z + "; rounded to the source bit depth";
+            String zs = z.reduces() ? ", then " + z.words() + " over z-slices" : "";
+            return frames + shading + zs + "; rounded to the source bit depth";
         }
     }
 
@@ -207,6 +231,12 @@ public final class MicroManagerPreprocessor {
         }
     }
 
+    private static void report(BiConsumer<Integer, Integer> progress, int done, int total) {
+        if (progress != null) {
+            progress.accept(done, total);
+        }
+    }
+
     /** @return the default output folder, beside the source: {@code <source><suffix>} */
     public static Path defaultOutput(Path source, Options options) {
         Path abs = source.toAbsolutePath().normalize();
@@ -227,6 +257,16 @@ public final class MicroManagerPreprocessor {
      *     or the output folder belongs to something else
      */
     public static Result run(Path source, Path output, Options options) throws IOException {
+        return run(source, output, options, null);
+    }
+
+    /**
+     * As {@link #run(Path, Path, Options)}, reporting each finished position.
+     *
+     * @param progress receives (positions done, positions in all) after each position; may be null
+     */
+    public static Result run(Path source, Path output, Options options, BiConsumer<Integer, Integer> progress)
+            throws IOException {
         Path src = source.toAbsolutePath().normalize();
         Path out = output.toAbsolutePath().normalize();
         if (src.equals(out)) {
@@ -239,7 +279,7 @@ public final class MicroManagerPreprocessor {
         List<String> notes = new ArrayList<>();
         Path ndTiff = NdTiffDataset.locate(src);
         if (ndTiff != null) {
-            ndTiffPositions(src, ndTiff, out, options, frames, slices, notes);
+            ndTiffPositions(src, ndTiff, out, options, frames, slices, notes, progress);
             noteUneven(notes, frames, "time point");
             noteUneven(notes, slices, "z-slice");
             Result result = new Result(out, options, frames.size(), frames, slices, notes);
@@ -252,6 +292,8 @@ public final class MicroManagerPreprocessor {
             throw new IOException("No MicroManager acquisition in " + src + ": neither *_MMStack_*.ome.tif files"
                     + " nor position folders holding a metadata.txt");
         }
+        int positionCount = positionDirs.size() + filesByPosition.size();
+        int positionsDone = 0;
         for (Path dir : positionDirs) {
             Planes planes =
                     singlePlanePosition(dir, out.resolve(dir.getFileName().toString()), src, options, notes);
@@ -259,6 +301,7 @@ public final class MicroManagerPreprocessor {
                 frames.put(dir.getFileName().toString(), planes.framesInSource);
                 slices.put(dir.getFileName().toString(), planes.slicesInSource);
             }
+            report(progress, ++positionsDone, positionCount);
         }
         for (String extra : ROOT_EXTRAS) {
             Path f = src.resolve(extra);
@@ -315,6 +358,7 @@ public final class MicroManagerPreprocessor {
                         StandardCharsets.UTF_8);
             }
             logReduced(label, planes, options);
+            report(progress, ++positionsDone, positionCount);
         }
 
         noteUneven(notes, frames, "time point");
@@ -337,7 +381,8 @@ public final class MicroManagerPreprocessor {
             Options options,
             Map<String, Integer> frames,
             Map<String, Integer> slices,
-            List<String> notes)
+            List<String> notes,
+            BiConsumer<Integer, Integer> progress)
             throws IOException {
         NdTiffDataset ds = NdTiffDataset.read(dir);
         Map<String, List<MicroManagerPlanes.Plane>> byPosition = new LinkedHashMap<>();
@@ -351,6 +396,7 @@ public final class MicroManagerPreprocessor {
         String prefix =
                 ds.images().get(0).file().getFileName().toString().replaceFirst("_NDTiffStack(_\\d+)?\\.tiff?$", "");
         NdTiffWriter writer = null;
+        int positionsDone = 0;
         try {
             for (var entry : byPosition.entrySet()) {
                 String pos = entry.getKey();
@@ -382,12 +428,12 @@ public final class MicroManagerPreprocessor {
                             if (p.mean[c + p.channels * z] == null) continue;
                             // The plane's own source image: its time point's, or its first frame's
                             // when averaged (its first slice's when projected).
-                            NdTiffDataset.Image from =
-                                    sourceImage(imagesOf.get(pos), c, options.maxProjectZ() ? -1 : z, frame);
+                            NdTiffDataset.Image from = sourceImage(
+                                    imagesOf.get(pos), c, options.z().reduces() ? -1 : z, frame);
                             if (from == null) continue;
                             JsonObject axes = from.entry().axes().deepCopy();
                             if (frame == ALL_FRAMES) axes.remove("time");
-                            if (options.maxProjectZ()) axes.remove("z");
+                            if (options.z().reduces()) axes.remove("z");
                             JsonObject md = ds.metadata(from).deepCopy();
                             annotate(md, p);
                             writer.add(
@@ -403,6 +449,7 @@ public final class MicroManagerPreprocessor {
                 frames.put(pos, first.framesInSource);
                 slices.put(pos, first.slicesInSource);
                 logReduced(label, first, options);
+                report(progress, ++positionsDone, byPosition.size());
             }
         } finally {
             if (writer != null) writer.close();
@@ -450,9 +497,11 @@ public final class MicroManagerPreprocessor {
                 "{}: {} time point(s) {}, {} z-slice(s) {}, {} channel(s)",
                 label,
                 p.framesInSource,
-                options.averageFrames() ? "averaged" : "kept",
+                options.time().reduces() ? "combined by " + options.time().words() : "kept",
                 p.slicesInSource,
-                p.slicesInSource > 1 && options.maxProjectZ() ? "max-projected" : "kept",
+                p.slicesInSource > 1 && options.z().reduces()
+                        ? "combined by " + options.z().words()
+                        : "kept",
                 p.channels);
     }
 
@@ -463,8 +512,12 @@ public final class MicroManagerPreprocessor {
         int channels;
         /** Slices written: 1 after projection. */
         int slices;
-        /** Frames combined into each plane: the frame count when averaged, else 1. */
+        /** Frames combined into each plane: the frame count when combined, else 1. */
         int frames;
+        /** How the frames were combined; NONE when one time point was taken. */
+        PlaneProjection timeProjection = PlaneProjection.NONE;
+        /** How the slices were combined; NONE when kept. */
+        PlaneProjection zProjection = PlaneProjection.NONE;
 
         int framesInSource;
         int slicesInSource;
@@ -484,7 +537,7 @@ public final class MicroManagerPreprocessor {
         }
     }
 
-    /** Frame selection meaning every time point, averaged. */
+    /** Frame selection meaning every time point, combined. */
     private static final int ALL_FRAMES = -1;
 
     /**
@@ -496,7 +549,7 @@ public final class MicroManagerPreprocessor {
      */
     private static List<Integer> outputFrames(
             List<MicroManagerPlanes.Plane> planes, Options options, String label, List<String> notes) {
-        if (options.averageFrames()) {
+        if (options.time().reduces()) {
             return List.of(ALL_FRAMES);
         }
         TreeMap<Integer, Set<Long>> byFrame = new TreeMap<>();
@@ -527,12 +580,12 @@ public final class MicroManagerPreprocessor {
     }
 
     /**
-     * Average (or take one time point), correct the shading, then project if asked, noting missing
+     * Combine the time points (or take one), correct the shading, then project z if asked, noting missing
      * planes. The correction must come before the projection: a sum would otherwise take the offset
      * off once for many planes, and averaging is unaffected either way.
      *
      * @param sparse see {@link #combineFrames}
-     * @param frame the time point to reduce, or {@link #ALL_FRAMES} to average them
+     * @param frame the time point to reduce, or {@link #ALL_FRAMES} to combine them
      */
     private static Planes reduce(
             List<MicroManagerPlanes.Plane> planes,
@@ -543,10 +596,10 @@ public final class MicroManagerPreprocessor {
             List<String> notes,
             int frame)
             throws IOException {
-        Planes p = combineFrames(planes, singlePlane, sparse, frame);
+        Planes p = combineFrames(planes, singlePlane, sparse, frame, options.time());
         if (p.missing > 0) {
-            notes.add(label + ": " + p.missing + " of " + p.frames * p.planeCount()
-                    + " planes absent; those planes averaged over the frames present");
+            notes.add(label + ": " + p.missing + " of " + p.frames * p.planeCount() + " planes absent; those planes' "
+                    + options.time().words() + " taken over the frames present");
         }
         if (options.flatfield() != null) {
             for (int z = 0; z < p.slices; z++) {
@@ -557,25 +610,29 @@ public final class MicroManagerPreprocessor {
                 }
             }
         }
-        if (options.maxProjectZ()) {
-            maxProject(p);
+        if (options.z().reduces()) {
+            projectZ(p, options.z());
         }
         return p;
     }
 
     /**
-     * Mean over frames for every (channel, slice), or one time point's planes.
+     * Every (channel, slice) combined over the frames, or one time point's planes.
      *
      * @param planes the position's planes, in the order MicroManager wrote them
      * @param singlePlane each file is a single-plane TIFF series file and must hold one page
      * @param sparse a (channel, slice) this position has at no time point is left null rather than
      *     refused: an NDTiff position may hold only some of the dataset's z-slices (Magellan explores
      *     each tile over its own z range); the slices are those of the whole dataset
-     * @param frame the time point to take, or {@link #ALL_FRAMES} to average them all
+     * @param frame the time point to take, or {@link #ALL_FRAMES} to combine them all
+     * @param time how the frames are combined when {@code frame} is {@link #ALL_FRAMES}
      */
     private static Planes combineFrames(
-            List<MicroManagerPlanes.Plane> planes, boolean singlePlane, boolean sparse, int frame) throws IOException {
+            List<MicroManagerPlanes.Plane> planes, boolean singlePlane, boolean sparse, int frame, PlaneProjection time)
+            throws IOException {
         boolean averageFrames = frame == ALL_FRAMES;
+        // One time point is a sum of one plane, divided by one.
+        PlaneProjection combine = averageFrames && time.reduces() ? time : PlaneProjection.MEAN;
         Map<Path, List<MicroManagerPlanes.Plane>> byFile = new LinkedHashMap<>();
         for (MicroManagerPlanes.Plane plane : planes) {
             byFile.computeIfAbsent(plane.file(), k -> new ArrayList<>()).add(plane);
@@ -621,8 +678,9 @@ public final class MicroManagerPreprocessor {
                                     + r.getHeight() + ", not " + p.width + " x " + p.height);
                         }
                         long key = ((long) coord.z() << 32) | coord.c();
+                        boolean firstPlane = !sums.containsKey(key);
                         double[] sum = sums.computeIfAbsent(key, k -> new double[p.width * p.height]);
-                        accumulate(r, sum);
+                        accumulate(r, sum, combine, firstPlane);
                         counts.merge(key, 1, Integer::sum);
                     }
                 } finally {
@@ -642,6 +700,7 @@ public final class MicroManagerPreprocessor {
         p.slicesInSource = sparse ? presentZ.size() : p.slices;
         p.framesInSource = maxT + 1;
         p.frames = averageFrames ? p.framesInSource : 1;
+        p.timeProjection = averageFrames ? combine : PlaneProjection.NONE;
         p.mean = new double[p.planeCount()][];
         for (int z = 0; z < p.slices; z++) {
             for (int c = 0; c < p.channels; c++) {
@@ -657,34 +716,58 @@ public final class MicroManagerPreprocessor {
                             + planes.get(0).file());
                 }
                 p.missing += p.frames - n;
-                for (int k = 0; k < sum.length; k++) sum[k] /= n;
+                if (combine == PlaneProjection.MEAN) {
+                    for (int k = 0; k < sum.length; k++) sum[k] /= n;
+                }
                 p.mean[c + p.channels * z] = sum;
             }
         }
         return p;
     }
 
-    /** Replace each channel's slices by their per-pixel maximum; a null (absent) slice is skipped. */
-    static void maxProject(Planes p) {
-        if (p.slices <= 1) return;
+    /**
+     * Replace each channel's slices by their per-pixel mean, maximum or minimum; a null (absent)
+     * slice is skipped.
+     */
+    static void projectZ(Planes p, PlaneProjection mode) {
+        if (p.slices <= 1 || !mode.reduces()) return;
         double[][] out = new double[p.channels][];
         for (int c = 0; c < p.channels; c++) {
-            double[] max = null;
+            double[] acc = null;
+            int n = 0;
             for (int z = 0; z < p.slices; z++) {
                 double[] plane = p.mean[c + p.channels * z];
                 if (plane == null) continue;
-                if (max == null) {
-                    max = plane.clone();
+                n++;
+                if (acc == null) {
+                    acc = plane.clone();
                     continue;
                 }
-                for (int k = 0; k < max.length; k++) {
-                    if (plane[k] > max[k]) max[k] = plane[k];
-                }
+                combineInto(acc, plane, mode);
             }
-            out[c] = max;
+            if (acc != null && mode == PlaneProjection.MEAN) {
+                for (int k = 0; k < acc.length; k++) acc[k] /= n;
+            }
+            out[c] = acc;
         }
         p.mean = out;
         p.slices = 1;
+        p.zProjection = mode;
+    }
+
+    /** Fold {@code plane} into {@code acc}: sum for MEAN (divided later), else maximum or minimum. */
+    private static void combineInto(double[] acc, double[] plane, PlaneProjection mode) {
+        switch (mode) {
+            case MAX -> {
+                for (int k = 0; k < acc.length; k++) if (plane[k] > acc[k]) acc[k] = plane[k];
+            }
+            case MIN -> {
+                for (int k = 0; k < acc.length; k++) if (plane[k] < acc[k]) acc[k] = plane[k];
+            }
+            default -> {
+                for (int k = 0; k < acc.length; k++) acc[k] += plane[k];
+            }
+        }
     }
 
     /**
@@ -692,14 +775,20 @@ public final class MicroManagerPreprocessor {
      * frames cannot wrap or lose precision below about 10^11 frames; the type's range is applied
      * only to the final value, in {@link #pack}.
      */
-    private static void accumulate(Raster r, double[] sum) {
+    private static void accumulate(Raster r, double[] sum, PlaneProjection mode, boolean first) {
         int w = r.getWidth();
         int h = r.getHeight();
         double[] row = new double[w];
         for (int y = 0; y < h; y++) {
             r.getSamples(r.getMinX(), r.getMinY() + y, w, 1, 0, row);
             int off = y * w;
-            for (int x = 0; x < w; x++) sum[off + x] += row[x];
+            if (first || mode == PlaneProjection.MEAN) {
+                for (int x = 0; x < w; x++) sum[off + x] += row[x];
+            } else if (mode == PlaneProjection.MAX) {
+                for (int x = 0; x < w; x++) if (row[x] > sum[off + x]) sum[off + x] = row[x];
+            } else {
+                for (int x = 0; x < w; x++) if (row[x] < sum[off + x]) sum[off + x] = row[x];
+            }
         }
     }
 
@@ -860,8 +949,10 @@ public final class MicroManagerPreprocessor {
     /** Per-plane note of what went into the plane. */
     private static void annotate(JsonObject block, Planes p) {
         block.addProperty("FramesAveraged", p.frames);
+        block.addProperty("TimeProjection", p.timeProjection.name());
         if (p.projected()) {
             block.addProperty("SlicesMaxProjected", p.slicesInSource);
+            block.addProperty("ZProjection", p.zProjection.name());
         }
     }
 
@@ -1083,6 +1174,8 @@ public final class MicroManagerPreprocessor {
         rec.addProperty("FramesAveraged", p.frames);
         rec.addProperty("SlicesInSource", p.slicesInSource);
         rec.addProperty("SlicesMaxProjected", p.projected() ? p.slicesInSource : 0);
+        rec.addProperty("TimeProjection", p.timeProjection.name());
+        rec.addProperty("ZProjection", p.zProjection.name());
         s.add("Preprocessing", rec);
         return s;
     }

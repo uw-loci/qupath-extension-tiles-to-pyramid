@@ -24,6 +24,7 @@ import qupath.ext.basicstitching.config.StitchingConfig;
 import qupath.ext.basicstitching.stitching.FolderDiagnosis;
 import qupath.ext.basicstitching.stitching.MicroManagerMetadataStrategy;
 import qupath.ext.basicstitching.stitching.NdTiffDataset;
+import qupath.ext.basicstitching.stitching.PlaneProjection;
 import qupath.ext.basicstitching.stitching.TileMapping;
 import qupath.ext.basicstitching.workflow.StitchingWorkflow;
 import qupath.lib.images.servers.ImageServer;
@@ -202,7 +203,8 @@ class NdTiffTest {
             }
         }
         for (boolean average : new boolean[] {true, false}) {
-            var options = new qupath.ext.basicstitching.stitching.MicroManagerPreprocessor.Options(average, null, true);
+            var options = new qupath.ext.basicstitching.stitching.MicroManagerPreprocessor.Options(
+                    (average ? PlaneProjection.MEAN : PlaneProjection.NONE), null, PlaneProjection.MAX);
             Path copy = qupath.ext.basicstitching.stitching.MicroManagerPreprocessor.run(
                             src, keep.resolve("mm_mda_tcz_15" + options.folderSuffix()), options)
                     .output();
@@ -266,7 +268,8 @@ class NdTiffTest {
     void aRealAbortedDatasetLeavesItsUnfinishedTimePointOut(@TempDir Path tmp) throws Exception {
         Path src = Path.of(System.getenv("T2P_NDTIFF_ABORTED"));
         Path keep = System.getenv("T2P_NDTIFF_KEEP") != null ? Path.of(System.getenv("T2P_NDTIFF_KEEP")) : tmp;
-        var options = new qupath.ext.basicstitching.stitching.MicroManagerPreprocessor.Options(false, null, true);
+        var options = new qupath.ext.basicstitching.stitching.MicroManagerPreprocessor.Options(
+                PlaneProjection.NONE, null, PlaneProjection.MAX);
         long t0 = System.nanoTime();
         var result = qupath.ext.basicstitching.stitching.MicroManagerPreprocessor.run(
                 src, keep.resolve("Large_aborted_mip"), options);

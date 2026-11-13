@@ -248,8 +248,8 @@ pick the layout in the dialog -- the strategy detects it. Detail on each:
 Common to all:
 - Where a file's per-tile block is missing or malformed, its position comes from the metadata saved inside the file (Micro-Manager 1.4, see above), else from its folder's `Summary.StagePositions` label (Micro-Manager 2) or `Summary.InitialPositionList` entry (1.4)
 - Auto-detects pixel size from the metadata's `PixelSizeUm`
-- **Channels, z-slices and time points:** every plane is placed by its own channel, z-slice and time point. A single-channel acquisition stitches into one output named after the folder; a multi-channel acquisition into one output per channel, named from `Summary.ChNames`, which **Merge the N channel stitches** combines in the acquisition's channel order. Each output keeps every z-slice and time point it was given (z spacing from `Summary.z-step_um`), unless the time points are averaged or the z-slices projected first (see [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager)). For an MMStack page without the MicroManager tag, the plane comes from the order of the `FrameKey-t-c-z` entries in its sidecar, or, with one page per channel and no z or time, page `i` is channel `i`. When none of these says what a page holds, the position is read from its first page only (always the first channel, slice and time point), and a single-plane file is left out; either is reported as a **WARNING** at the top of the result window and in the `.stitch-info.txt` record.
-- **Time series and z-stacks per position:** when the acquisition has more than one frame or z-slice per position (any layout), the dialog offers **Average the N time points of each position before stitching** and **Max-intensity project the N z-slices of each position**. See [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager).
+- **Channels, z-slices and time points:** every plane is placed by its own channel, z-slice and time point. A single-channel acquisition stitches into one output named after the folder; a multi-channel acquisition into one output per channel, named from `Summary.ChNames`, which **Merge the N channel stitches** combines in the acquisition's channel order. Each output keeps every z-slice and time point it was given (z spacing from `Summary.z-step_um`), unless the time points or z-slices are combined first (see [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager)). For an MMStack page without the MicroManager tag, the plane comes from the order of the `FrameKey-t-c-z` entries in its sidecar, or, with one page per channel and no z or time, page `i` is channel `i`. When none of these says what a page holds, the position is read from its first page only (always the first channel, slice and time point), and a single-plane file is left out; either is reported as a **WARNING** at the top of the result window and in the `.stitch-info.txt` record.
+- **Time series and z-stacks per position:** when the acquisition has more than one frame or z-slice per position (any layout), the dialog offers **Combine the N time points of each position** and **Combine the N z-slices of each position**, each a dropdown of **None**, **Mean**, **Max Intensity** and **Min Intensity** (the choices QP Scope's acquisition dialog offers). See [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager).
 - **Registration:** each channel is a candidate to measure on, in every layout: **Reference subdirectory** lists the acquisition's channels by name, and **Auto** picks among them. Every position is measured on the same plane of that channel, the middle z-slice of the first time point, and every channel, z-slice and time point of a position receives that position's correction. See [Which channel to measure on](#which-channel-to-measure-on).
 - **Acquisition metadata:** every output, and the merged image, gets a `<image stem>.mm-metadata.json` beside it with what Micro-Manager recorded about the acquisition (pixel size, exposure per channel, bit depth, start time, grid, `comments.txt`, ...). See [Micro-Manager acquisition metadata](#micro-manager-acquisition-metadata).
 - **Stage axes:** the sidecars record absolute stage coordinates, and whether a rising stage coordinate moves right and down in the camera image depends on how the stage is wired and the camera mounted. The strategy cannot infer that, so it assumes rising stage equals rising pixel. Where that is wrong, tick **Invert X axis** / **Invert Y axis** -- see [If the mosaic comes out mirrored](#if-the-mosaic-comes-out-mirrored).
@@ -327,6 +327,8 @@ input_folder/             Method: Filename[x,y]; sub-folder text: slide
 
 ## The stitch dialog, field by field
 
+The dialog does not block QuPath: you can keep working, or look at images, while you fill it in. After **Stitch**, a **Tiles to Pyramid progress** window shows the step (preprocessing, stitching, merging channels, as the run needs), a progress bar, the channel or output being written, and the time used and left. Closing it does not stop the stitch; choosing **Tiles to Pyramid** again while the stitch runs brings it back. A stitch cannot be canceled once started. When it ends, the result window opens; it does not block QuPath either.
+
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | **Stitching Method** | How tile positions are read: "Vectra tiles with metadata", "Filename[x,y] with coordinates in microns", "TileConfiguration.txt file", or "MicroManager (MMStack, TIFF series or NDTiff)". Remembered as soon as it is changed | Last-used (initially TileConfiguration.txt file) |
@@ -337,9 +339,9 @@ input_folder/             Method: Filename[x,y]; sub-folder text: slide
 | **Output format** | **OME-TIFF (single file)**: one pyramidal `.ome.tif` with OME-XML metadata, widely readable. **OME-Zarr (NGFF 0.4, Zarr v2)**: an `.ome.zarr` directory of chunks, written in parallel, suited to cloud storage; the versions written are what QuPath's bundled reader opens, so check what your other tools accept | Last-used (initially OME-TIFF) |
 | **Sub-folders to stitch (\* = all)** | Which folders are stitched, and how many images come out. **Empty** stitches the selected folder itself, and only that folder -- one image. **`*`** stitches every sub-folder, one image each. **Any other text** stitches the sub-folders whose name contains it, one image each; matching is case-sensitive. Not used by the MicroManager method, which finds its own positions | Last-used (initially empty) |
 | **Stage axes: Invert X axis / Invert Y axis** | Shown for the two methods whose tile positions are stage coordinates -- MicroManager and TileConfiguration.txt. Negates stage X and/or Y before converting to pixels, for a scope whose stage runs opposite to its camera on that axis. Leave both clear for a Fiji-written TileConfiguration.txt, which is already in image space. See [If the mosaic comes out mirrored](#if-the-mosaic-comes-out-mirrored). Remembered, since it describes the microscope | Off, off |
-| **Average the N time points of each position before stitching** | Shown only for the MicroManager method when the acquisition has more than one frame per position. Averages each position's frames into a copy beside the folder and stitches that. See [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager). Choice is remembered | On |
-| **Correct uneven brightness with a flat-field profile** | Shown only for the MicroManager method. For a detector with no background image, such as a PMT. Choose a profile folder fitted with **QP Scope > Utilities > Image Quality > Estimate Flat-Field from Tiles (BaSiC)...**, or with `python -m microscope_imageprocessing.correction.flatfield`. Each plane is corrected after averaging and before any z projection, as `(raw - offset) / flatfield + offset`, so the background keeps its value. The copy that is stitched gets `_ff` in its name, and the stitch record names the profile. A profile fits one detector, objective, zoom and channel; other channels are left alone, and a profile of a different size is refused. It evens out brightness but does not improve signal to noise. |
-| **Max-intensity project the N z-slices of each position** | Shown only for the MicroManager method when the acquisition has more than one z-slice per position. Takes the per-pixel maximum over each channel's slices, after averaging the time points when that is ticked too, into the same copy. Choice is remembered | On |
+| **Combine the N time points of each position** | Shown only for the MicroManager method when the acquisition has more than one frame per position. **Mean**, **Max Intensity** or **Min Intensity** reduces each position's frames, per pixel, into a copy beside the folder and stitches that; **None** keeps every time point. See [Averaging time points and projecting z-stacks](#averaging-time-points-and-projecting-z-stacks-micromanager). Choice is remembered | Mean |
+| **Correct uneven brightness with a flat-field profile** | Shown only for the MicroManager method. For a detector with no background image, such as a PMT. Choose a profile folder fitted with **QP Scope > Utilities > Image Quality > Estimate Flat-Field from Tiles (BaSiC)...**, or with `python -m microscope_imageprocessing.correction.flatfield`. Each plane is corrected after the time points are combined and before any z projection, as `(raw - offset) / flatfield + offset`, so the background keeps its value. The copy that is stitched gets `_ff` in its name, and the stitch record names the profile. A profile fits one detector, objective, zoom and channel; other channels are left alone, and a profile of a different size is refused. It evens out brightness but does not improve signal to noise. |
+| **Combine the N z-slices of each position** | Shown only for the MicroManager method when the acquisition has more than one z-slice per position. **Max Intensity** takes the per-pixel maximum over each channel's slices (the usual choice for fluorescence and SHG), **Min Intensity** the minimum, **Mean** the average, after the time points are combined, into the same copy; **None** keeps every slice. Choice is remembered | Max Intensity |
 | **Merge the N channel stitches into one multichannel image** | Shown only when 2+ matching sub-folders of single-channel (non-RGB) tiles will be stitched, or when a MicroManager acquisition has multiple channels. Combines the per-channel stitches into one multichannel `<folder>_merged` image; the per-channel images are kept. When the stitch produces fewer images than N, the result window says so. See [Merging channels in the dialog](#merging-channels-in-the-dialog). Choice is remembered | On |
 | **Z spacing (um), N z-slices** | Shown only for the TileConfiguration.txt method when the tile folders hold `z{nn}/` folders (2 or more). The distance between z-slices written to the output. Filled from the `acquisition_metadata.json` a QP Scope acquisition writes beside its tile folders (`acquisition.z_stack.z_step_um`), looked for in the selected folder and then its parent. Left empty, the spacing is unknown: the stitch still takes it from that file if it finds one, and otherwise the output records no z spacing. MicroManager input takes `Summary.z-step_um` instead, with no field. See [Z-stacks and time series](#z-stacks-and-time-series) | From `acquisition_metadata.json`; empty without one |
 | **Solve tile overlaps (content-based registration)** | Checkbox to enable overlap measurement and correction. When enabled, measures the real overlap between neighboring tiles and corrects their positions before stitching, closing seams caused by stage backlash and drift. Writes a `TileRegistration.txt` solution file beside the tiles. Choice is remembered between sessions. See [Tile registration](#tile-registration) for details. | Off (faster, nominal positions) |
@@ -907,8 +909,8 @@ the two levels are matched independently, so `z{nn}/t{nn}/` nesting works as wel
 ### Averaging time points and projecting z-stacks (MicroManager)
 
 For acquisitions that take several frames at each position to average out noise, as SHG and other
-laser-scanning modalities often do, and for z-stacks to be flattened by maximum intensity
-projection. These MicroManager layouts work: **separate image files per position**
+laser-scanning modalities often do, and for z-stacks to be flattened by a projection (maximum,
+minimum or mean intensity). These MicroManager layouts work: **separate image files per position**
 (`<prefix>_MMStack_<label>.ome.tif` plus `_metadata.txt`) and the **single-plane TIFF series** (a
 folder per position holding one `img_channelCCC_positionPPP_timeTTTTTTTTT_zZZZ.tif` per plane, or
 Micro-Manager 1.4's `img_TTTTTTTTT_<channel>_ZZZ.tif`, and a `metadata.txt`), and **NDTiff** (an
@@ -916,34 +918,41 @@ Micro-Manager 1.4's `img_TTTTTTTTT_<channel>_ZZZ.tif`, and a `metadata.txt`), an
 of its own (see [Z-stacks and time series](#z-stacks-and-time-series)).
 
 When the selected folder's metadata reports more than one frame (for NDTiff, when its index lists
-more than one `time` value; more than one `z` value for the z-stack option), the dialog shows **Average the N
-time points of each position before stitching**; more than one z-slice, **Max-intensity project the
-N z-slices of each position**. Both are on by default and remembered. When either is ticked, in
-this order:
+more than one `time` value; more than one `z` value for the z-stack option), the dialog shows
+**Combine the N time points of each position**; more than one z-slice, **Combine the N z-slices of
+each position**. Each is a dropdown of **None**, **Mean**, **Max Intensity** and **Min Intensity**;
+the defaults are Mean over time and Max Intensity over z, and the choices are remembered. When
+either is not None, in this order:
 
-1. **Average:** each channel and z-slice of each position is averaged over its frames. Sums are
-   kept in double precision, so bright or saturated frames cannot overflow. With averaging clear,
-   every time point is kept and the steps below are applied to each one on its own, so a C x Z x T
-   acquisition projects to C x 1 x T. A time point the acquisition stopped part way through (a
-   channel or slice missing) is left out, with any after it, and the record says so.
-2. **Project:** each channel's z-slices are reduced to their per-pixel maximum. An NDTiff position
-   that holds only some of the dataset's z-slices (a Magellan tile explored over its own z range)
-   is reduced over the slices it has.
+1. **Combine time points:** each channel and z-slice of each position is reduced over its frames,
+   per pixel, to their mean, maximum or minimum. Sums for the mean are kept in double precision, so
+   bright or saturated frames cannot overflow. With **None**, every time point is kept and the
+   steps below are applied to each one on its own, so a C x Z x T acquisition projects to C x 1 x T.
+   A time point the acquisition stopped part way through (a channel or slice missing) is left out,
+   with any after it, and the record says so.
+2. **Project z:** each channel's z-slices are reduced to their per-pixel maximum, minimum or mean.
+   An NDTiff position that holds only some of the dataset's z-slices (a Magellan tile explored over
+   its own z range) is reduced over the slices it has.
 3. **Round:** values are rounded to the original bit depth only when written (8- or 16-bit stay 8-
    or 16-bit, clamped to the type's range; 32-bit float stays float).
-4. **Write:** the result goes to a copy beside the acquisition folder, named `<folder>_averaged`,
-   `<folder>_mip` or `<folder>_averaged_mip` after what was done, in the same MicroManager layout:
+4. **Write:** the result goes to a copy beside the acquisition folder, named after what was done:
+   `_averaged`, `_tmax` or `_tmin` for the time points (mean, maximum, minimum), then `_ff` for a
+   flat-field correction, then `_mip` (maximum), `_zmin` or `_zmean` for z, e.g.
+   `<folder>_averaged_mip` or `<folder>_tmax_zmin`, in the same MicroManager layout:
    one `_MMStack_<label>.ome.tif` per position with one page per channel (and slice, when not
-   projected, and time point, when not averaged), or (single-plane series) one folder per position
+   projected, and time point, when not combined), or (single-plane series) one folder per position
    holding one file per written plane, named as its source file (the `time000000000` file when
-   averaged, the `z000` file when projected), or (NDTiff) an NDTiff dataset,
+   combined, the `z000` file when projected), or (NDTiff) an NDTiff dataset,
    `<prefix>_NDTiffStack.tif` and its `NDTiff.index`, written to the same specification it is read
-   by: each image keeps the axes of its source image (its first time point's when averaged, its
-   first slice's when projected) without `time` when averaged and without `z` when projected, and
+   by: each image keeps the axes of its source image (its first time point's when combined, its
+   first slice's when projected) without `time` when combined and without `z` when projected, and
    that image's metadata, so its position is placed as before. The `Summary` of each position's
-   `_metadata.txt` / `metadata.txt` (NDTiff: the dataset's summary) has `Frames` 1 when averaged
+   `_metadata.txt` / `metadata.txt` (NDTiff: the dataset's summary) has `Frames` 1 when combined
    (and `Slices` 1 when projected), and the stage coordinates and pixel size are kept. `Summary.Preprocessing` and `preprocessing.txt` record the source,
-   the method, and the frame and slice counts. The originals are not changed.
+   the method (`TimeProjection` and `ZProjection` name the choices: `NONE`, `MEAN`, `MAX`, `MIN`),
+   and the frame and slice counts (`FramesAveraged` and `SlicesMaxProjected` keep their names from
+   before the other projections existed: they count the frames and slices combined, whatever the
+   projection). The originals are not changed.
 5. **Stitch:** that copy is stitched as usual. The output is named after it and written where the
    stitch would otherwise write; the `.stitch-info.txt` record has a *preprocessing* section.
 

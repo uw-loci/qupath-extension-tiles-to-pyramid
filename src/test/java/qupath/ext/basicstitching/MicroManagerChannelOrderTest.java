@@ -129,8 +129,13 @@ class MicroManagerChannelOrderTest {
 
     private static String merge(List<String> outputs, boolean acquisitionOrder, StitchingConfig cfg) throws Exception {
         Method m = StitchingGUI.class.getDeclaredMethod(
-                "mergeChannelOutputs", List.class, boolean.class, StitchingConfig.class);
+                "mergeChannelOutputs",
+                List.class,
+                boolean.class,
+                StitchingConfig.class,
+                Class.forName("qupath.ext.basicstitching.functions.StitchProgressWindow"),
+                String.class);
         m.setAccessible(true);
-        return (String) m.invoke(null, outputs, acquisitionOrder, cfg);
+        return (String) m.invoke(null, outputs, acquisitionOrder, cfg, null, "");
     }
 }
