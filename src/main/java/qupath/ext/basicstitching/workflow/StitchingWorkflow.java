@@ -102,7 +102,8 @@ public class StitchingWorkflow {
      * subdirectory; a caller should show them to the user. {@code acquisitionOrder} is
      * true when {@code outputs} follow the order the input recorded for its groups
      * ({@link StitchingStrategy#groupOrder()}, Micro-Manager's channel order); otherwise their
-     * order means nothing.
+     * order means nothing. {@code failureReasons} gives, for each of {@code failedSubdirs} in the
+     * same order, why it failed ("DAPI: OutOfMemoryError: Java heap space").
      */
     public record StitchingResult(
             List<String> outputs,
@@ -110,11 +111,13 @@ public class StitchingWorkflow {
             int failureCount,
             List<String> failedSubdirs,
             List<String> warnings,
-            boolean acquisitionOrder) {
+            boolean acquisitionOrder,
+            List<String> failureReasons) {
         public StitchingResult {
             outputs = List.copyOf(outputs);
             failedSubdirs = List.copyOf(failedSubdirs);
             warnings = List.copyOf(warnings);
+            failureReasons = List.copyOf(failureReasons);
         }
 
         /** True if at least one subdirectory was stitched successfully. */
@@ -134,7 +137,8 @@ public class StitchingWorkflow {
 
         /** A result with no outputs and no failures that still reports the strategy's warnings. */
         static StitchingResult withWarnings(List<String> warnings) {
-            return new StitchingResult(Collections.emptyList(), 0, 0, Collections.emptyList(), warnings, false);
+            return new StitchingResult(
+                    Collections.emptyList(), 0, 0, Collections.emptyList(), warnings, false, Collections.emptyList());
         }
     }
 
@@ -225,16 +229,20 @@ public class StitchingWorkflow {
             Map<String, List<TileMapping>> groupedMappings =
                     allMappings.stream().collect(Collectors.groupingBy(mapping -> mapping.subdirName));
             List<String> groupOrder = strategy.groupOrder();
-            if (!groupOrder.isEmpty()) {
-                groupedMappings = inGroupOrder(groupedMappings, groupOrder);
-            }
+            // By name when the input records no order, so images are written in the order the
+            // pre-run check listed them.
+            groupedMappings = groupOrder.isEmpty()
+                    ? new java.util.TreeMap<>(groupedMappings)
+                    : inGroupOrder(groupedMappings, groupOrder);
 
             logger.info("Tiles grouped into {} subdirectories:", groupedMappings.size());
             groupedMappings.forEach((subdir, tiles) -> logger.info("  - '{}': {} tiles", subdir, tiles.size()));
+            progress.orderOutputs(new ArrayList<>(groupedMappings.keySet()));
 
             // 4. Process each subdirectory group separately
             List<String> outputs = new ArrayList<>();
             List<String> failedSubdirs = new ArrayList<>();
+            List<String> failureReasons = new ArrayList<>();
             List<String> resultWarnings = new ArrayList<>(warnings);
             int successCount = 0;
             int failureCount = 0;
@@ -243,7 +251,12 @@ public class StitchingWorkflow {
             for (Map.Entry<String, List<TileMapping>> entry : groupedMappings.entrySet()) {
                 String subdirName = entry.getKey();
                 List<TileMapping> subdirMappings = entry.getValue();
-                progress.startOutput(outputIndex++, subdirName);
+                progress.startOutput(
+                        outputIndex, outputDetail(outputIndex, groupedMappings.size(), subdirName, failureCount));
+                outputIndex++;
+                String outBase = config.outputFilename != null && !config.outputFilename.isBlank()
+                        ? config.outputFilename + "_" + subdirName
+                        : subdirName;
 
                 logger.info(""); // Blank line for readability
                 logger.info("=== Processing subdirectory: '{}' ({} tiles) ===", subdirName, subdirMappings.size());
@@ -253,12 +266,6 @@ public class StitchingWorkflow {
                     // bypasses SparseImageServer (bounded memory) and writes via
                     // DirectTiffOutputWriter (OME-TIFF) or the JZarr chunk writer.
                     logger.info("Stitching {} tiles via the direct tile stitcher", subdirMappings.size());
-                    String outBase;
-                    if (config.outputFilename != null && !config.outputFilename.isBlank()) {
-                        outBase = config.outputFilename + "_" + subdirName;
-                    } else {
-                        outBase = subdirName;
-                    }
                     String written = DirectTileStitcher.stitch(
                             subdirMappings, config.outputPath, outBase, config, progress::outputProgress);
                     if (written != null) {
@@ -276,13 +283,19 @@ public class StitchingWorkflow {
                         successCount++;
                     } else {
                         logger.error("Stitching failed for subdirectory: {}", subdirName);
+                        String reason = config.getOutputFailure(outBase);
                         failedSubdirs.add(subdirName);
+                        failureReasons.add(subdirName + ": " + (reason != null ? reason : "no file was written"));
                         failureCount++;
                     }
 
-                } catch (Exception e) {
+                } catch (Exception | OutOfMemoryError e) {
+                    // Out of memory on one large image need not end the batch: its buffers are
+                    // released when it unwinds, and a smaller image after it can still be written.
                     logger.error("Exception processing subdirectory '{}': {}", subdirName, e.getMessage(), e);
                     failedSubdirs.add(subdirName);
+                    failureReasons.add(subdirName + ": "
+                            + qupath.ext.basicstitching.assembly.direct.DirectTileStitcher.describeFailure(e));
                     failureCount++;
                 }
             }
@@ -309,12 +322,30 @@ public class StitchingWorkflow {
             }
 
             return new StitchingResult(
-                    outputs, successCount, failureCount, failedSubdirs, resultWarnings, !groupOrder.isEmpty());
+                    outputs,
+                    successCount,
+                    failureCount,
+                    failedSubdirs,
+                    resultWarnings,
+                    !groupOrder.isEmpty(),
+                    failureReasons);
 
         } catch (Exception e) {
             logger.error("Critical exception in StitchingWorkflow", e);
             return StitchingResult.empty();
         }
+    }
+
+    /**
+     * The progress detail for one output: "Image 3 of 12: DAPI (1 failed so far)", or just the
+     * name when there is only one.
+     */
+    static String outputDetail(int index, int count, String name, int failedSoFar) {
+        if (count <= 1) {
+            return name;
+        }
+        return "Image " + (index + 1) + " of " + count + ": " + name
+                + (failedSoFar > 0 ? " (" + failedSoFar + " failed so far)" : "");
     }
 
     /**
@@ -461,17 +492,18 @@ public class StitchingWorkflow {
             planes.computeIfAbsent(m.subdirName, k -> new java.util.HashSet<>()).add(r.getZ() + ":" + r.getT());
             tilePixels += (long) r.getWidth() * r.getHeight();
         }
-        long[] bytes = new long[boxes.size()];
-        int i = 0;
+        Map<String, Long> bytes = new java.util.LinkedHashMap<>();
         for (Map.Entry<String, int[]> e : boxes.entrySet()) {
             int[] b = e.getValue();
             int w = Math.max(1, b[2] - b[0]);
             int h = Math.max(1, b[3] - b[1]);
             double[] ds = qupath.ext.basicstitching.assembly.direct.DirectTiffOutputWriter.computePyramidDownsamples(
                     w, h, config.baseDownsample, 512);
-            bytes[i++] = qupath.ext.basicstitching.assembly.direct.DirectTiffOutputWriter.pyramidBytes(
-                            w, h, 1, bytesPerPixel, ds)
-                    * planes.get(e.getKey()).size();
+            bytes.put(
+                    e.getKey(),
+                    qupath.ext.basicstitching.assembly.direct.DirectTiffOutputWriter.pyramidBytes(
+                                    w, h, 1, bytesPerPixel, ds)
+                            * planes.get(e.getKey()).size());
         }
         // A solve correlates about two overlap bands per tile; ~17 % overlap is the usual grid.
         long solveBand =

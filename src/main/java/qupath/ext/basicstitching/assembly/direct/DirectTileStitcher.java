@@ -96,7 +96,7 @@ public class DirectTileStitcher {
 
         try {
             // 1. Read tile properties from first tile header
-            TileReaderPool.TileDimensions dims = TileReaderPool.getDimensions(mappings.get(0).file);
+            TileReaderPool.TileDimensions dims = firstReadableDimensions(mappings);
             logger.info(
                     "Tile properties: {}x{}, {} channels, {} bit, RGB={}",
                     dims.width(),
@@ -107,7 +107,7 @@ public class DirectTileStitcher {
 
             // 2. Build spatial index
             TileSpatialIndex index = new TileSpatialIndex(mappings, DEFAULT_CHUNK_SIZE);
-            checkGeometry(index, dims, config);
+            checkGeometry(index, dims, config, mappings);
             int imageWidth = index.getImageWidth();
             int imageHeight = index.getImageHeight();
             int zCount = countZSlices(mappings);
@@ -201,6 +201,10 @@ public class DirectTileStitcher {
 
                 long elapsed = System.currentTimeMillis() - t0;
                 if (written != null) {
+                    String holes = unreadableWarning(compositor);
+                    if (holes != null) {
+                        writeWarnings.add(holes);
+                    }
                     config.setOutputWarnings(written, writeWarnings);
                     logger.info(
                             "Direct stitching (OME-TIFF) complete in {}s: {}",
@@ -217,6 +221,9 @@ public class DirectTileStitcher {
 
         } catch (Exception e) {
             logger.error("Direct stitching (OME-TIFF) failed", e);
+            if (config != null) {
+                config.setOutputFailure(filename, describeFailure(e));
+            }
             return null;
         }
     }
@@ -235,7 +242,7 @@ public class DirectTileStitcher {
 
         try {
             // 1. Read tile properties from first tile header (no pixel data)
-            TileReaderPool.TileDimensions dims = TileReaderPool.getDimensions(mappings.get(0).file);
+            TileReaderPool.TileDimensions dims = firstReadableDimensions(mappings);
             logger.info(
                     "Tile properties: {}x{}, {} channels, {} bit, RGB={}",
                     dims.width(),
@@ -246,7 +253,7 @@ public class DirectTileStitcher {
 
             // 2. Build spatial index from tile positions
             TileSpatialIndex index = new TileSpatialIndex(mappings, DEFAULT_CHUNK_SIZE);
-            checkGeometry(index, dims, config);
+            checkGeometry(index, dims, config, mappings);
             int imageWidth = index.getImageWidth();
             int imageHeight = index.getImageHeight();
             int zCount = countZSlices(mappings);
@@ -355,6 +362,8 @@ public class DirectTileStitcher {
                     }
 
                     logger.info("Level 0 complete: {} chunks written", totalChunks);
+                    String holes = unreadableWarning(compositor);
+                    config.setOutputWarnings(zarrPath, holes == null ? List.of() : List.of(holes));
                 }
                 // Reader pool closed here -- all tile file handles released
 
@@ -387,6 +396,9 @@ public class DirectTileStitcher {
 
         } catch (Exception e) {
             logger.error("Direct stitching (OME-ZARR) failed", e);
+            if (config != null) {
+                config.setOutputFailure(filename, describeFailure(e));
+            }
             return null;
         }
     }
@@ -457,44 +469,92 @@ public class DirectTileStitcher {
     }
 
     /**
-     * The largest overlap an acquisition plausibly uses. Real ones run 5-20%; a stage would have
-     * to be moving less than half a field per step to exceed this on purpose.
-     */
-    private static final double IMPLAUSIBLE_OVERLAP_FRACTION = 0.45;
-
-    /**
-     * Notice a mosaic whose tiles overlap far more than any acquisition would arrange.
-     *
-     * <p>A wrong pixel size cannot fail the stitch. Positions are micrometers divided by the pixel
-     * size, so too large a value packs the tiles together, the mosaic is written, and it looks
-     * like a mosaic. The only evidence is the geometry: stitching a polarized set at 0.653 um/px
-     * instead of 0.1732 produced 76% overlap where the acquisition used 10%.
-     *
-     * <p>Recorded on the config rather than only logged, so the host can tell the user. Never
-     * throws: an odd overlap is a strong hint, not proof, and refusing to write an image someone
+     * Record on the config, under this image's name, a layout that suggests the wrong pixel size
+     * (see {@link MosaicGeometry}); clear an earlier warning for the same image otherwise. Never
+     * throws: an odd layout is a strong hint, not proof, and refusing to write an image someone
      * asked for on a hint would be worse than writing it with a warning attached.
      */
     private static void checkGeometry(
-            TileSpatialIndex index, TileReaderPool.TileDimensions dims, StitchingConfig config) {
-        if (config == null || dims.width() <= 0 || dims.height() <= 0) {
+            TileSpatialIndex index,
+            TileReaderPool.TileDimensions dims,
+            StitchingConfig config,
+            List<TileMapping> mappings) {
+        if (config == null || mappings.isEmpty()) {
             return;
         }
-        double fx = index.getOverlapPxX() / (double) dims.width();
-        double fy = index.getOverlapPxY() / (double) dims.height();
-        double worst = Math.max(fx, fy);
-        if (worst < IMPLAUSIBLE_OVERLAP_FRACTION) {
-            return;
-        }
-        String warning = String.format(
-                java.util.Locale.ROOT,
-                "The tiles overlap by %.0f%% x %.0f%%, which no acquisition is set up to do. "
-                        + "The usual cause is a pixel size that does not belong to these tiles: "
-                        + "%s um/px was used, and too large a value packs the tiles together. "
-                        + "The image was still written, but check it before using it.",
-                fx * 100,
-                fy * 100,
+        String warning = MosaicGeometry.check(
+                mappings,
+                index.getOverlapPxX(),
+                index.getOverlapPxY(),
+                dims.width(),
+                dims.height(),
                 config.pixelSizeInMicrons);
-        logger.warn(warning);
-        config.setGeometryWarning(warning);
+        if (warning != null) {
+            logger.warn(warning);
+        }
+        config.setGeometryWarning(mappings.get(0).subdirName, warning);
+    }
+
+    /**
+     * The failure in words for the result window: the innermost message (where the real cause is
+     * usually named), with the exception type when there is no message.
+     */
+    public static String describeFailure(Throwable e) {
+        Throwable cause = e;
+        String message = null;
+        while (cause != null) {
+            if (cause.getMessage() != null && !cause.getMessage().isBlank()) {
+                message = cause.getClass().getSimpleName() + ": " + cause.getMessage();
+            }
+            if (cause.getCause() == cause) {
+                break;
+            }
+            cause = cause.getCause();
+        }
+        return message != null ? message : e.getClass().getSimpleName();
+    }
+
+    /**
+     * The tiles a compositor could not read, in words for the result window, or null. A tile that
+     * fails to read is left out so the rest of the image is still written; the user has to know
+     * where the blank patches came from.
+     */
+    static String unreadableWarning(ChunkCompositor compositor) {
+        List<String> names = compositor.unreadableTiles();
+        if (names.isEmpty()) {
+            return null;
+        }
+        int shown = Math.min(3, names.size());
+        return names.size() + (names.size() == 1 ? " tile (" : " tiles (") + String.join(", ", names.subList(0, shown))
+                + (names.size() > shown ? ", ..." : "") + ") could not be read while writing, so the image is blank"
+                + " there.";
+    }
+
+    /**
+     * The size and pixel type of the image's tiles, from the first tile whose header can be read.
+     * One unreadable tile then leaves a reported hole rather than failing the whole image, as it
+     * would whenever the directory happened to list it first.
+     *
+     * @throws java.io.IOException the first tile's error, when no tile can be read
+     */
+    static TileReaderPool.TileDimensions firstReadableDimensions(List<TileMapping> mappings)
+            throws java.io.IOException {
+        java.io.IOException first = null;
+        java.util.Set<java.io.File> tried = new java.util.HashSet<>();
+        for (TileMapping m : mappings) {
+            if (!tried.add(m.file)) {
+                continue;
+            }
+            try {
+                return TileReaderPool.getDimensions(m.file);
+            } catch (java.io.IOException e) {
+                if (first == null) {
+                    first = e;
+                }
+                logger.warn(
+                        "Could not read the header of {}; trying the next tile: {}", m.file.getName(), e.getMessage());
+            }
+        }
+        throw first != null ? first : new java.io.IOException("No tiles to read");
     }
 }

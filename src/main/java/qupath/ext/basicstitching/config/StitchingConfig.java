@@ -130,16 +130,48 @@ public class StitchingConfig {
      * an overlap of 76% where acquisitions use 10%. Recording it here lets the host say so rather
      * than leaving the user to notice, or not.
      */
-    private volatile String geometryWarning;
+    private final java.util.Map<String, String> geometryWarnings =
+            java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<>());
 
-    /** @return the warning, or null if the geometry looked plausible. */
-    public String getGeometryWarning() {
-        return geometryWarning;
+    /**
+     * @return "image: warning" for every image whose geometry looked wrong, in the order
+     *     stitched; empty if all looked plausible
+     */
+    public java.util.List<String> getGeometryWarnings() {
+        synchronized (geometryWarnings) {
+            return geometryWarnings.entrySet().stream()
+                    .map(e -> e.getKey() + ": " + e.getValue())
+                    .toList();
+        }
     }
 
-    /** @param warning what looks wrong; null clears it. */
-    public void setGeometryWarning(String warning) {
-        this.geometryWarning = warning;
+    /**
+     * @param image the image (subdirectory or channel) the warning is about
+     * @param warning what looks wrong; null clears that image's warning
+     */
+    public void setGeometryWarning(String image, String warning) {
+        if (warning == null) {
+            geometryWarnings.remove(image);
+        } else {
+            geometryWarnings.put(image, warning);
+        }
+    }
+
+    /** Why writing an output failed, by output file name (no extension). */
+    private final java.util.Map<String, String> outputFailures =
+            java.util.Collections.synchronizedMap(new java.util.HashMap<>());
+
+    /**
+     * @param filename the output's file name, as passed to the writer
+     * @param reason why writing it failed, in words for the result window
+     */
+    public void setOutputFailure(String filename, String reason) {
+        outputFailures.put(filename, reason);
+    }
+
+    /** @return why writing {@code filename} failed, or null if nothing was recorded */
+    public String getOutputFailure(String filename) {
+        return outputFailures.get(filename);
     }
 
     /** What writing each output reported to the user, by output path, in the order written. */

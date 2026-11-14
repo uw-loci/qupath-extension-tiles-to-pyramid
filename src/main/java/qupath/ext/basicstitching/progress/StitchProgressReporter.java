@@ -85,19 +85,49 @@ public final class StitchProgressReporter {
     // -- the write phase, over one or more outputs (subdirectory groups) written in turn
 
     private long[] groupBytes = new long[0];
+    private String[] groupNames = new String[0];
     private int group;
 
-    /** The outputs this stitch will write, as estimated uncompressed pyramid bytes each. */
-    public synchronized void planWrite(long[] bytesPerOutput) {
-        groupBytes = bytesPerOutput.clone();
+    /**
+     * The outputs this stitch will write, as estimated uncompressed pyramid bytes each, by output
+     * name; {@link #orderOutputs} puts them in the order they will be written.
+     */
+    public synchronized void planWrite(java.util.Map<String, Long> bytesPerOutput) {
+        groupNames = bytesPerOutput.keySet().toArray(new String[0]);
+        groupBytes = new long[groupNames.length];
+        for (int i = 0; i < groupNames.length; i++) {
+            groupBytes[i] = bytesPerOutput.get(groupNames[i]);
+        }
         group = 0;
         refreshWriteWork();
     }
 
-    /** Output {@code index} starts writing. */
-    public synchronized void startOutput(int index, String name) {
+    /**
+     * The order the outputs will be written in, so the progress before output {@code i} is the
+     * sum of the outputs written before it, whatever order they were planned in. Names not planned
+     * get no estimate; planned names not listed are dropped.
+     */
+    public synchronized void orderOutputs(java.util.List<String> names) {
+        java.util.Map<String, Long> planned = new java.util.HashMap<>();
+        for (int i = 0; i < groupNames.length; i++) {
+            planned.put(groupNames[i], groupBytes[i]);
+        }
+        groupNames = names.toArray(new String[0]);
+        groupBytes = new long[groupNames.length];
+        for (int i = 0; i < groupNames.length; i++) {
+            groupBytes[i] = planned.getOrDefault(groupNames[i], 0L);
+        }
+        refreshWriteWork();
+    }
+
+    /**
+     * Output {@code index} (in the order given to {@link #orderOutputs}) starts writing.
+     *
+     * @param detail what to show for it, e.g. "Image 3 of 12: DAPI"
+     */
+    public synchronized void startOutput(int index, String detail) {
         group = Math.max(0, Math.min(index, Math.max(0, groupBytes.length - 1)));
-        update(StitchPhase.WRITE, writeFraction(0), name);
+        update(StitchPhase.WRITE, writeFraction(0), detail);
     }
 
     /** The current output's exact size, once its first tile has been read. */

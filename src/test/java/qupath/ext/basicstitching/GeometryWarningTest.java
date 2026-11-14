@@ -2,6 +2,7 @@ package qupath.ext.basicstitching;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import qupath.ext.basicstitching.config.StitchingConfig;
 
@@ -27,21 +28,24 @@ class GeometryWarningTest {
 
     @Test
     void aFreshConfigCarriesNoWarning() {
-        assertNull(config(0.1732).getGeometryWarning());
+        assertTrue(config(0.1732).getGeometryWarnings().isEmpty());
     }
 
     @Test
     void theWarningRoundTrips() {
         StitchingConfig cfg = config(0.653);
-        cfg.setGeometryWarning("tiles overlap by 76%");
-        assertEquals("tiles overlap by 76%", cfg.getGeometryWarning());
+        cfg.setGeometryWarning("DAPI", "tiles overlap by 76%");
+        cfg.setGeometryWarning("FITC", "tiles are 80% of a tile apart");
+        assertEquals(
+                List.of("DAPI: tiles overlap by 76%", "FITC: tiles are 80% of a tile apart"),
+                cfg.getGeometryWarnings());
     }
 
     @Test
     void theWarningCanBeCleared() {
         StitchingConfig cfg = config(0.653);
-        cfg.setGeometryWarning("something");
-        cfg.setGeometryWarning(null);
-        assertNull(cfg.getGeometryWarning(), "a later stitch on the same config must not inherit it");
+        cfg.setGeometryWarning("DAPI", "something");
+        cfg.setGeometryWarning("DAPI", null);
+        assertTrue(cfg.getGeometryWarnings().isEmpty(), "a later stitch of the same image must not inherit it");
     }
 }

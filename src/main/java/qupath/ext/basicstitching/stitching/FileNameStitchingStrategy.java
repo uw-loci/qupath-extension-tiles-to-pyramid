@@ -23,8 +23,22 @@ public class FileNameStitchingStrategy implements StitchingStrategy {
         Path rootdir = Paths.get(folderPath);
         Pattern pattern = Pattern.compile(".*\\[(\\d+),(\\d+)\\].*\\.(tif|tiff|ome\\.tif)$");
 
+        warnings.clear();
+        List<Path> folders;
         try {
-            for (Path path : TileDirectories.resolve(rootdir, matchingString)) {
+            folders = TileDirectories.resolve(rootdir, matchingString);
+        } catch (Exception e) {
+            logger.error("Error in FileNameStitchingStrategy", e);
+            warnings.add("The tile folders under " + rootdir.getFileName() + " could not be listed (" + e.getMessage()
+                    + ").");
+            return mappings;
+        }
+        for (Path path : folders) {
+            String folder = path.getFileName().toString();
+            List<TileMapping> found = new ArrayList<>();
+            List<String> unreadable = new ArrayList<>();
+            // One unreadable folder leaves out that folder, not every folder after it.
+            try {
                 logger.info("Processing tile folder: {}", path);
                 try (DirectoryStream<Path> tifStream = Files.newDirectoryStream(path, "*.tif*")) {
                     for (Path tifPath : tifStream) {
@@ -40,25 +54,40 @@ public class FileNameStitchingStrategy implements StitchingStrategy {
                             if (dims != null) {
                                 ImageRegion region =
                                         ImageRegion.createInstance(xPx, yPx, dims.width(), dims.height(), 0, 0);
-                                mappings.add(new TileMapping(
+                                found.add(new TileMapping(
                                         tifPath.toFile(),
                                         region,
                                         path.getFileName().toString()));
                                 logger.debug("Added mapping for file {} at ({}, {})", filename, xPx, yPx);
                             } else {
                                 logger.warn("Failed to get TIFF dimensions for {}", filename);
+                                unreadable.add(filename);
                             }
                         } else {
                             logger.debug("Filename does not match pattern: {}", filename);
                         }
                     }
                 }
+                mappings.addAll(found);
+                if (!unreadable.isEmpty()) {
+                    warnings.add(folder + ": " + StitchingStrategy.countAndNames(unreadable)
+                            + " could not be read (no TIFF size), so the image has holes there.");
+                }
+            } catch (Exception e) {
+                logger.error("Error reading tile folder {} in FileNameStitchingStrategy", path, e);
+                warnings.add(folder + ": could not be read (" + e.getMessage() + "), so it was not stitched.");
             }
-        } catch (Exception e) {
-            logger.error("Error in FileNameStitchingStrategy", e);
         }
         logger.info("Total tiles mapped: {}", mappings.size());
         return mappings;
+    }
+
+    /** What the last {@link #prepareStitching} left out or could not read, for the result window. */
+    private final List<String> warnings = new ArrayList<>();
+
+    @Override
+    public List<String> warnings() {
+        return List.copyOf(warnings);
     }
 
     private static TileHeaders.Size readSize(Path tif) {

@@ -57,6 +57,14 @@ public class ChunkCompositor {
         this.bitDepth = bitDepth;
     }
 
+    /** Tiles that failed to read while compositing; their area is left as background. */
+    private final java.util.Set<String> unreadableTiles = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** @return the file names of tiles that could not be read so far, sorted */
+    public java.util.List<String> unreadableTiles() {
+        return unreadableTiles.stream().sorted().toList();
+    }
+
     /**
      * Composite the level-0 plane at {@code (z, t)} for a chunk. Convenience for
      * 2D stitches (z = t = 0).
@@ -154,6 +162,7 @@ public class ChunkCompositor {
                 }
             } catch (IOException e) {
                 logger.warn("Failed to read tile region from {}: {}", tile.file.getName(), e.getMessage());
+                unreadableTiles.add(tile.file.getName());
                 // Continue with remaining tiles -- gap will show background color
             }
         }
@@ -222,6 +231,7 @@ public class ChunkCompositor {
                 tileData = readerPool.readRegion(tile.file, tile.ifdIndex, srcX, srcY, isectW, isectH);
             } catch (IOException e) {
                 logger.warn("Failed to read tile region from {}: {}", tile.file.getName(), e.getMessage());
+                unreadableTiles.add(tile.file.getName());
                 continue;
             }
 

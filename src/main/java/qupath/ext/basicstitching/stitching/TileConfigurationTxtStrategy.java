@@ -74,6 +74,7 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
             String folderPath, double pixelSizeInMicrons, double baseDownsample, String matchingString) {
         logger.info("Preparing stitching using TileConfiguration.txt strategy for folder: {}", folderPath);
         recordedZSpacing = null;
+        warnings.clear();
         List<TileMapping> mappings = new ArrayList<>();
         Path rootdir = Paths.get(folderPath);
 
@@ -87,6 +88,10 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
                 Path configPath = path.resolve("TileConfiguration.txt");
                 if (!Files.exists(configPath)) {
                     logger.warn("No TileConfiguration.txt in tile folder: {}", path);
+                    if (StitchingStrategy.holdsTiff(path)) {
+                        warnings.add(path.getFileName() + ": has TIFF files but no TileConfiguration.txt, so it was"
+                                + " not stitched.");
+                    }
                     continue;
                 }
                 logger.info("Processing tile folder: {} with config {}", path, configPath);
@@ -94,6 +99,8 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
             }
         } catch (Exception e) {
             logger.error("Error searching subdirectories in TileConfigurationTxtStrategy", e);
+            warnings.add("The tile folders under " + rootdir.getFileName() + " could not all be listed ("
+                    + e.getMessage() + "); some may be missing from this stitch.");
         }
 
         // If no matching subdirectories found, fall back to processing the root directory
@@ -113,6 +120,14 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
                 mappings.stream().anyMatch(m -> m.region.getZ() > 0) ? AcquisitionRecord.zStepUm(rootdir) : null;
         logger.info("Total tiles mapped from TileConfiguration.txt: {}", mappings.size());
         return mappings;
+    }
+
+    /** What the last {@link #prepareStitching} left out or could not read, for the result window. */
+    private final List<String> warnings = new ArrayList<>();
+
+    @Override
+    public List<String> warnings() {
+        return List.copyOf(warnings);
     }
 
     /** The z-step in {@code acquisition_metadata.json} when the last call found z-slices; else null. */
@@ -175,13 +190,16 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
     private List<TileMapping> processDirectory(
             Path path, Path configPath, double pixelSizeInMicrons, double baseDownsample) {
         List<TileMapping> mappings = new ArrayList<>();
+        String folder = path.getFileName().toString();
 
         try {
             // Parse positions from config
-            Map<String, Position> positionMap = parseTileConfig(configPath, pixelSizeInMicrons, baseDownsample);
+            Map<String, Position> positionMap =
+                    parseTileConfig(configPath, pixelSizeInMicrons, baseDownsample, folder, warnings);
 
             if (positionMap.isEmpty()) {
                 logger.warn("No tile positions found in config: {}", configPath);
+                warnings.add(folder + ": its TileConfiguration.txt lists no tile positions, so it was not stitched.");
                 return mappings;
             }
 
@@ -225,10 +243,18 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
                             StitchPhase.SCAN, (double) done / Math.max(1, tileCount), done + " of " + tileCount);
                 }
             });
+            java.util.Set<String> found = new java.util.HashSet<>();
+            List<String> unreadable = new ArrayList<>();
             for (Path tifPath : tiffFiles) {
                 String filename = tifPath.getFileName().toString();
                 Position pos = positionMap.get(filename);
                 TileHeaders.Size dims = sizes.get(tifPath);
+                if (pos != null) {
+                    found.add(filename);
+                    if (dims == null) {
+                        unreadable.add(filename);
+                    }
+                }
                 if (pos != null && dims != null) {
                     int[] zt = parseZT(path.relativize(tifPath));
                     ImageRegion region = ImageRegion.createInstance(
@@ -241,12 +267,30 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
                     mappings.add(new TileMapping(
                             tifPath.toFile(), region, path.getFileName().toString()));
                     logger.debug("Mapped {} at ({}, {}) z={} t={} from config", filename, pos.x, pos.y, zt[0], zt[1]);
-                } else {
-                    logger.warn("Missing config position or TIFF dimensions for {}", filename);
+                } else if (pos != null) {
+                    logger.warn("Could not read the size of {}", filename);
                 }
+            }
+            // A TIFF the configuration does not list is not a tile of it (a stitched output written
+            // into the same folder, for one), so only listed tiles that are missing or unreadable
+            // are holes in the mosaic.
+            List<String> missing = positionMap.keySet().stream()
+                    .filter(n -> !found.contains(n))
+                    .sorted()
+                    .toList();
+            if (!missing.isEmpty()) {
+                warnings.add(folder + ": " + StitchingStrategy.countAndNames(missing)
+                        + " listed in TileConfiguration.txt not found, so the image has holes there.");
+            }
+            if (!unreadable.isEmpty()) {
+                warnings.add(folder + ": " + StitchingStrategy.countAndNames(unreadable)
+                        + " could not be read (no TIFF size), so the image has holes there.");
             }
         } catch (Exception e) {
             logger.error("Error processing directory in TileConfigurationTxtStrategy: {}", path, e);
+            // A folder read part way would stitch with holes nobody asked for; leave it out whole.
+            warnings.add(folder + ": could not be read (" + e.getMessage() + "), so it was not stitched.");
+            mappings.clear();
         }
 
         return mappings;
@@ -290,7 +334,7 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
      * Parse a TileConfiguration.txt file and return a mapping of file names to positions.
      */
     private static Map<String, Position> parseTileConfig(
-            Path configPath, double pixelSizeInMicrons, double baseDownsample) {
+            Path configPath, double pixelSizeInMicrons, double baseDownsample, String folder, List<String> warnings) {
         Map<String, Position> map = new HashMap<>();
         boolean flipY = flipStitchingY;
         boolean flipX = flipStitchingX;
@@ -302,15 +346,25 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
         }
         try {
             List<String> lines = Files.readAllLines(configPath);
-            for (String line : lines) {
+            int badLines = 0;
+            int firstBad = 0;
+            for (int lineNo = 1; lineNo <= lines.size(); lineNo++) {
+                String line = lines.get(lineNo - 1);
                 if (line.startsWith("#") || line.trim().isEmpty()) continue;
                 String[] parts = line.split(";");
                 if (parts.length >= 3) {
                     String imageName = parts[0].trim();
                     String[] coord = parts[2].replaceAll("[(){}]", "").split(",");
                     if (coord.length >= 2) {
-                        double rawX = Double.parseDouble(coord[0].trim());
-                        double rawY = Double.parseDouble(coord[1].trim());
+                        double rawX;
+                        double rawY;
+                        try {
+                            rawX = Double.parseDouble(coord[0].trim());
+                            rawY = Double.parseDouble(coord[1].trim());
+                        } catch (NumberFormatException e) {
+                            if (badLines++ == 0) firstBad = lineNo;
+                            continue;
+                        }
                         if (flipX) {
                             rawX = -rawX;
                         }
@@ -325,8 +379,13 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
                     }
                 }
             }
+            if (badLines > 0) {
+                warnings.add(folder + ": " + badLines + " line(s) of TileConfiguration.txt have no readable"
+                        + " position (first: line " + firstBad + "); those tiles were left out.");
+            }
         } catch (Exception e) {
             logger.error("Error parsing TileConfiguration.txt at {}", configPath, e);
+            warnings.add(folder + ": TileConfiguration.txt could not be read (" + e.getMessage() + ").");
         }
         return map;
     }

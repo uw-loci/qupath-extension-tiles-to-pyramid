@@ -21,6 +21,23 @@ public interface StitchingStrategy {
         return List.of();
     }
 
+    /** "3 tiles (a.tif, b.tif, c.tif)" or "40 tiles (a.tif, b.tif, c.tif, ...)", for warnings. */
+    static String countAndNames(List<String> names) {
+        int shown = Math.min(3, names.size());
+        return names.size() + (names.size() == 1 ? " tile (" : " tiles (")
+                + String.join(", ", names.subList(0, shown))
+                + (names.size() > shown ? ", ..." : "") + ")";
+    }
+
+    /** Whether {@code dir} holds a TIFF file directly; false when it cannot be listed. */
+    static boolean holdsTiff(java.nio.file.Path dir) {
+        try (var files = java.nio.file.Files.newDirectoryStream(dir, "*.{tif,tiff,TIF,TIFF}")) {
+            return files.iterator().hasNext();
+        } catch (java.io.IOException | RuntimeException e) {
+            return false;
+        }
+    }
+
     /**
      * The order of the groups ({@link TileMapping#subdirName}) the last {@link #prepareStitching}
      * call produced, when the input records one: Micro-Manager's channel order. Folder-based

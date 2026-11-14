@@ -33,6 +33,7 @@ import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Modality;
 import javafx.stage.Screen;
@@ -62,6 +63,7 @@ import qupath.ext.basicstitching.stitching.TileDirectories;
 import qupath.ext.basicstitching.utilities.QPPreferences;
 import qupath.ext.basicstitching.utilities.RegistrationPreferences;
 import qupath.ext.basicstitching.workflow.StitchInfoFile;
+import qupath.ext.basicstitching.workflow.StitchPreflight;
 import qupath.ext.basicstitching.workflow.StitchingWorkflow;
 import qupath.lib.common.GeneralTools;
 import qupath.lib.gui.QuPathGUI;
@@ -429,13 +431,16 @@ public class StitchingGUI {
         StitchProgressWindow window = new StitchProgressWindow(new File(requested.folderPath.trim()).getName());
         progressWindow = window;
         window.show();
-        int stepCount = 1 + (preprocess != null ? 1 : 0) + (mergeChannels ? 1 : 0);
+        int stepCount = 2 + (preprocess != null ? 1 : 0) + (mergeChannels ? 1 : 0);
+        int first = preprocess != null ? 2 : 1;
         String preprocessStep = "Step 1 of " + stepCount + ": Preprocessing (" + preprocess(preprocess) + ")";
-        String stitchStep = "Step " + (preprocess != null ? 2 : 1) + " of " + stepCount + ": Stitching";
+        String checkStep = "Step " + first + " of " + stepCount + ": Checking the images to write";
+        String stitchStep = "Step " + (first + 1) + " of " + stepCount + ": Stitching";
         String mergeStep = "Step " + stepCount + " of " + stepCount + ": Merging channels";
         Thread worker = new Thread(
                 () -> {
                     boolean ok = false;
+                    boolean backToSettings = false;
                     boolean[] nothing = {false};
                     StringBuilder message = new StringBuilder();
                     StitchingConfig config = requested;
@@ -454,12 +459,21 @@ public class StitchingGUI {
                     MicroManagerMetadataStrategy.flipStitchingY = invertY;
                     TileConfigurationTxtStrategy.flipStitchingX = invertX;
                     TileConfigurationTxtStrategy.flipStitchingY = invertY;
+                    // Labeled so "Back to settings" at the pre-run check can leave it, through the
+                    // finally that restores the axis flags.
+                    stitch:
                     try {
                         String reduced = null;
                         if (preprocess != null) {
                             window.update(preprocessStep, -1, "", "");
                             config = preprocessedCopy(requested, preprocess, window, preprocessStep);
                             reduced = "Preprocessed (" + preprocess.describe() + ") into " + config.folderPath;
+                        }
+                        window.update(checkStep, -1, "reading every tile's header", "");
+                        StitchPreflight.Report check = StitchPreflight.run(config);
+                        if ((check.rows().size() >= 2 || check.hasProblems()) && !confirmPreflight(check, config)) {
+                            backToSettings = true;
+                            break stitch;
                         }
                         window.update(stitchStep, -1, "", "");
                         config.setProgressListener(p -> window.update(stitchStep, p));
@@ -473,16 +487,15 @@ public class StitchingGUI {
                         for (String w : result.warnings()) {
                             message.append("WARNING: ").append(w).append("\n\n");
                         }
-                        if (outputs.isEmpty()) {
+                        if (outputs.isEmpty() && result.failedSubdirs().isEmpty()) {
                             nothing[0] = true;
                             message.append(explainNoTiles(config));
                         } else {
                             ok = result.warnings().isEmpty();
                             // Geometry that cannot be right does not fail the stitch, so the
                             // result is demoted to a warning and the reason put at the top,
-                            // where it is read before the list of files.
-                            String geometry = config.getGeometryWarning();
-                            if (geometry != null) {
+                            // where it is read before the list of files. One per image, named.
+                            for (String geometry : config.getGeometryWarnings()) {
                                 ok = false;
                                 message.append("WARNING: ").append(geometry).append("\n\n");
                             }
@@ -492,11 +505,24 @@ public class StitchingGUI {
                             if (reg != null) {
                                 message.append(reg).append("\n\n");
                             }
-                            message.append("Output files:");
-                            outputs.forEach(o -> message.append("\n  ").append(o));
+                            if (!outputs.isEmpty()) {
+                                message.append("Output files:");
+                                outputs.forEach(o -> message.append("\n  ").append(o));
+                            }
                             if (!result.failedSubdirs().isEmpty()) {
                                 ok = false;
-                                message.append("\n\nFailed: ").append(result.failedSubdirs());
+                                int total =
+                                        outputs.size() + result.failedSubdirs().size();
+                                message.append(outputs.isEmpty() ? "" : "\n\n")
+                                        .append("Failed: ")
+                                        .append(result.failedSubdirs().size())
+                                        .append(" of ")
+                                        .append(total)
+                                        .append(total == 1 ? " image" : " images")
+                                        .append(outputs.isEmpty() ? "" : " (the others were written)")
+                                        .append(":");
+                                result.failureReasons()
+                                        .forEach(r -> message.append("\n  ").append(r));
                             }
                             String shortfall = mergeShortfall(mergeChannels, expectedChannels, outputs.size());
                             if (shortfall != null) {
@@ -542,18 +568,144 @@ public class StitchingGUI {
                     }
                     boolean success = ok;
                     boolean none = nothing[0];
+                    boolean back = backToSettings;
                     String outputDir = config.outputPath;
                     Platform.runLater(() -> {
                         if (progressWindow == window) {
                             progressWindow = null;
                         }
                         window.close();
-                        showResultDialog(success, none, message.toString(), outputDir);
+                        if (back) {
+                            // The settings come back holding what was just tried, from the
+                            // preferences the run saved.
+                            createGUI();
+                        } else {
+                            showResultDialog(success, none, message.toString(), outputDir);
+                        }
                     });
                 },
                 "tiles-to-pyramid-stitch");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    /**
+     * Show the pre-run check and wait for the answer; call from the stitch thread, never the FX
+     * thread.
+     *
+     * @return true to stitch, false to go back to the settings
+     */
+    private static boolean confirmPreflight(StitchPreflight.Report report, StitchingConfig config) {
+        java.util.concurrent.CompletableFuture<Boolean> answer = new java.util.concurrent.CompletableFuture<>();
+        Platform.runLater(() -> {
+            try {
+                showPreflightDialog(report, config, answer);
+            } catch (RuntimeException e) {
+                logger.error("Could not show the pre-run check", e);
+                answer.complete(true);
+            }
+        });
+        try {
+            return answer.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (java.util.concurrent.ExecutionException e) {
+            return true;
+        }
+    }
+
+    /** The pre-run check window: one row per image, flags, and what the tile search left out. */
+    private static void showPreflightDialog(
+            StitchPreflight.Report report,
+            StitchingConfig config,
+            java.util.concurrent.CompletableFuture<Boolean> answer) {
+        Dialog<ButtonType> dlg = new Dialog<>();
+        dlg.initModality(Modality.NONE);
+        DialogOwner.own(dlg);
+        dlg.setTitle("Tiles to Pyramid - Check before stitching");
+        int n = report.rows().size();
+        long flagged = report.rows().stream().filter(r -> !r.flags().isEmpty()).count();
+        dlg.setHeaderText(n + (n == 1 ? " image" : " images") + " will be written, every one with pixel size "
+                + config.pixelSizeInMicrons + " um/px and " + config.compressionType + " compression."
+                + (flagged > 0
+                        ? "\n" + flagged
+                                + (flagged == 1
+                                        ? " image differs from the rest or looks wrong: see Check."
+                                        : " images differ from the rest or look wrong: see Check.")
+                        : report.warnings().isEmpty() ? "\nNothing stands out." : ""));
+
+        javafx.scene.control.TableView<StitchPreflight.Row> table = new javafx.scene.control.TableView<>();
+        table.getItems().setAll(report.rows());
+        table.getColumns().add(column("Image", 150, StitchPreflight.Row::image));
+        table.getColumns().add(column("Tiles", 50, r -> String.valueOf(r.tiles())));
+        table.getColumns().add(column("Tile size", 85, StitchPreflight.Row::tileSize));
+        table.getColumns().add(column("Pixels", 125, StitchPreflight.Row::pixels));
+        table.getColumns().add(column("Planes", 55, r -> String.valueOf(r.planes())));
+        table.getColumns().add(column("Image size (px)", 125, StitchPreflight.Row::size));
+        // The notes are the point of the window, so they wrap onto more lines instead of "...".
+        var check = column("Check", 340, r -> r.flags().isEmpty() ? "" : String.join("\n", r.flags()));
+        check.setCellFactory(col -> new javafx.scene.control.TableCell<>() {
+            private final javafx.scene.text.Text text = new javafx.scene.text.Text();
+
+            {
+                text.wrappingWidthProperty().bind(col.widthProperty().subtract(12));
+                text.setStyle("-fx-font-weight: bold;");
+                text.getStyleClass().add("text");
+            }
+
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(null);
+                if (empty || item == null || item.isEmpty()) {
+                    setGraphic(null);
+                } else {
+                    text.setText(item);
+                    text.fillProperty().bind(textFillProperty());
+                    setGraphic(text);
+                }
+            }
+        });
+        table.getColumns().add(check);
+        table.setColumnResizePolicy(javafx.scene.control.TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
+        int noteLines = report.rows().stream()
+                .mapToInt(r -> Math.max(1, r.flags().size()))
+                .sum();
+        table.setPrefHeight(Math.min(460, 34 + 22 * noteLines + 6 * n));
+        table.setPrefWidth(930);
+
+        VBox content = new VBox(8, table);
+        if (!report.warnings().isEmpty()) {
+            TextArea warnings = new TextArea(String.join("\n", report.warnings()));
+            warnings.setEditable(false);
+            warnings.setWrapText(true);
+            warnings.setPrefRowCount(Math.min(6, report.warnings().size() + 1));
+            content.getChildren().addAll(new Label("The tile search left out or could not read:"), warnings);
+        }
+        dlg.getDialogPane().setContent(content);
+        dlg.setResizable(true);
+
+        ButtonType stitch = new ButtonType("Stitch", ButtonBar.ButtonData.OK_DONE);
+        ButtonType back = new ButtonType("Back to settings", ButtonBar.ButtonData.CANCEL_CLOSE);
+        dlg.getDialogPane().getButtonTypes().setAll(back, stitch);
+        // A long batch should start only on an explicit click, not on Enter.
+        ((Button) dlg.getDialogPane().lookupButton(stitch)).setDefaultButton(false);
+        dlg.setOnHidden(e -> answer.complete(dlg.getResult() == stitch));
+        dlg.show();
+    }
+
+    private static javafx.scene.control.TableColumn<StitchPreflight.Row, String> column(
+            String title, double width, java.util.function.Function<StitchPreflight.Row, String> value) {
+        javafx.scene.control.TableColumn<StitchPreflight.Row, String> c = new javafx.scene.control.TableColumn<>(title);
+        c.setPrefWidth(width);
+        if (!"Check".equals(title)) {
+            // Fixed: the space left over goes to the notes.
+            c.setMinWidth(width);
+            c.setMaxWidth(width * 1.5);
+        }
+        c.setCellValueFactory(cd -> new javafx.beans.property.ReadOnlyStringWrapper(value.apply(cd.getValue())));
+        return c;
     }
 
     /** "mean over time points, then ..." without the rounding note, for the step line. */
