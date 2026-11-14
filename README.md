@@ -80,7 +80,7 @@ Developers of qpsc may want to also run the following to enable working with qps
    want share. It starts empty and remembers what you last typed.
 7. Click **Stitch**. Pressing Enter in a field does not start it.
 
-A **Tiles to Pyramid progress** window opens and follows the stitch (see [The stitch dialog](#the-stitch-dialog-field-by-field)). QuPath stays usable, but a second stitch cannot start
+When two or more images will be written (or one with something that looks wrong), a **Tiles to Pyramid - Check before stitching** window first lists them, with a note on any that look wrong; **Stitch** goes ahead and **Back to settings** returns with nothing written. Then a **Tiles to Pyramid progress** window opens and follows the stitch (see [The stitch dialog](#the-stitch-dialog-field-by-field)). QuPath stays usable, but a second stitch cannot start
 until this one finishes. When it does, a **Tiles to Pyramid - Result** window lists the full path of
 each output file (you can copy the paths from it), and an **Open output folder** button to go straight
 there. Output is written into the folder you selected.
@@ -358,10 +358,11 @@ When a stitch completes, the **Tiles to Pyramid - Result** window appears listin
 - An **Open output folder** button to navigate there
 - What registration did, when it was asked for -- how many seams were accepted, which channel
   they were measured on, and how many tile placements moved
-- A line beginning **WARNING:** when the geometry looks implausible. There is no matching "OK"
+- The images that failed, each with its reason, when any did (for example `Region_04: OutOfMemoryError: Java heap space`)
+- A line beginning **WARNING:** for each image whose geometry looks implausible, named after its image (for example `Region_04: The tiles overlap by X% x Y%, ...`), and for each problem the tile search left out or could not read. There is no matching "OK"
   line; a stitch with nothing to report simply does not have one
 
-If the window opens with **WARNING: The tiles overlap by X% x Y%**, this means the overlap is far larger than any real acquisition would arrange (real acquisitions use 5–20% overlap). The most likely cause is a pixel size that does not match your tiles — too large a value packs the tiles together. Check your pixel-size setting and re-stitch with the correct value. The image was still written, so check it before using it.
+If a warning reads **WARNING: DAPI: The tiles overlap by X% x Y%**, this means that image's overlap is far larger than any real acquisition would arrange (real acquisitions use 5–20% overlap). The most likely cause is a pixel size that does not match your tiles — too large a value packs the tiles together. Check your pixel-size setting and re-stitch with the correct value. The image was still written, so check it before using it.
 
 ### Output format options
 
@@ -1121,8 +1122,8 @@ QuPath has closed the image. On the LC-PolScope test data a 31,623 x 14,951 reta
 - **Command**: `java -Xmx16G -jar QuPath.jar`
 
 #### "The tiles overlap by X% x Y%, which no acquisition is set up to do"
-- **Cause**: Real acquisitions use 5–20% tile overlap. An overlap above 45% in both axes is so rare that it almost always means the pixel size is wrong — too large a value packs the tiles together. A stitched polarized set at 4× the intended pixel size produced 76% overlap where the acquisition used 10%.
-- **What happens**: The stitch succeeds and the image is written, but the **Tiles to Pyramid - Result** window shows **WARNING** at the top with the overlap percentage and the pixel size that was used.
+- **Cause**: Real acquisitions use 5–20% tile overlap. An overlap of 45% or more in either axis is so rare that it almost always means the pixel size is wrong — too large a value packs the tiles together. A stitched polarized set at 4× the intended pixel size produced 76% overlap where the acquisition used 10%. The opposite error, a pixel size too small, shows as neighbors 10% of a tile or more apart, with empty bands between them.
+- **What happens**: The stitch succeeds and the image is written, but the **Tiles to Pyramid - Result** window shows **WARNING** at the top, named after its image (`DAPI: ...`), with the overlap percentage and the pixel size that was used.
 - **Solution**: Check your pixel-size setting. The source label shows where it came from (MicroManager metadata, manual entry, or measured from tiles). For MicroManager methods, you can click **"Measure from tiles..."** to compute the correct pixel size from the overlap itself. Re-stitch with the correct pixel size.
 - **What to check first**: Verify that you selected the right acquisition folder and the right stitching method. A MicroManager acquisition selected with a TileConfiguration.txt method, or a polarized set's metadata read as MicroManager, are common mistakes.
 
@@ -1192,6 +1193,7 @@ Detailed result record returned by `runDetailed()`.
 - `successCount()`: Number of successfully stitched subdirectories
 - `failureCount()`: Number of failed subdirectories
 - `failedSubdirs()`: Names of subdirectories that failed to stitch
+- `failureReasons()`: For each failed subdirectory, in the same order, why it failed (for example `DAPI: OutOfMemoryError: Java heap space`)
 
 **Convenience Methods:**
 - `hasAnyOutput()`: Returns true if at least one subdirectory succeeded
