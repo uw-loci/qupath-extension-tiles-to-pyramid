@@ -380,8 +380,9 @@ If a warning reads **WARNING: DAPI: The tiles overlap by X% x Y%**, this means t
 - **Use Case**: Cloud storage, large datasets, parallel processing
 - **Extension**: `.ome.zarr` (directory)
 - **Metadata**: NGFF 0.4 `multiscales` and `omero` in `.zattrs`, plus `OME/METADATA.ome.xml` as
-  QuPath's own OME-Zarr writer writes it. QuPath reads the pixel size and z spacing from that XML
-  file only (Bio-Formats' Zarr reader keeps the `multiscales` scale as text); stitches from 0.9.1
+  QuPath's own OME-Zarr writer writes it. QuPath reads the pixel size, z spacing and time
+  increment from that XML file only (Bio-Formats' Zarr reader keeps the `multiscales` scale as
+  text); stitches from 0.9.1
   and earlier have no XML file and open in QuPath without a pixel size
 - **Compression**: the same OME writer type you pick is mapped to a Blosc codec internally (e.g. `LZW`/`ZLIB` -> zlib; `J2K`/`JPEG` -> zstd, since JPEG has no Blosc equivalent; otherwise zstd). You do not choose the Blosc codec directly
 - **Best For**: Cloud storage, collaborative access, very large images (> 10GB)
