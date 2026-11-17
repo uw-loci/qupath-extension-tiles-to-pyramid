@@ -20,6 +20,7 @@ import loci.formats.MetadataTools;
 import loci.formats.ome.OMEXMLMetadata;
 import ome.units.UNITS;
 import ome.units.quantity.Length;
+import ome.units.quantity.Time;
 import ome.xml.model.enums.DimensionOrder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -74,6 +75,7 @@ public class ZarrOutputWriter implements AutoCloseable {
     private int sizeZ = 1;
     private int sizeT = 1;
     private double zSpacingMicrons;
+    private double timeIncrementSeconds;
 
     // --- Axis layout (NGFF TCZYX subset) ---
     // The arrays carry only the axes that are non-singleton, in TCZYX order:
@@ -167,6 +169,7 @@ public class ZarrOutputWriter implements AutoCloseable {
      * @param bitDepth Bits per sample (8 or 16)
      * @param pixelSizeMicrons Pixel size for coordinate metadata
      * @param zSpacingMicrons Z-spacing for coordinate metadata
+     * @param timeIncrementSeconds Interval between timepoints in seconds; 0 or less when unknown
      * @param chunkSize Chunk size in pixels (typically 1024)
      * @param numPyramidLevels Number of pyramid levels to create
      */
@@ -180,6 +183,7 @@ public class ZarrOutputWriter implements AutoCloseable {
             int tCount,
             double pixelSizeMicrons,
             double zSpacingMicrons,
+            double timeIncrementSeconds,
             int chunkSize,
             int numPyramidLevels)
             throws IOException {
@@ -191,6 +195,7 @@ public class ZarrOutputWriter implements AutoCloseable {
         this.sizeZ = Math.max(1, zCount);
         this.sizeT = Math.max(1, tCount);
         this.zSpacingMicrons = zSpacingMicrons;
+        this.timeIncrementSeconds = timeIncrementSeconds;
         this.chunkSize = chunkSize;
 
         logger.info(
@@ -258,7 +263,8 @@ public class ZarrOutputWriter implements AutoCloseable {
      * Write {@code OME/METADATA.ome.xml}, as QuPath's own OME-Zarr writer does. Bio-Formats' Zarr
      * reader (what QuPath opens a {@code .ome.zarr} with) takes the physical sizes from this file
      * only; without it QuPath shows the image uncalibrated. PhysicalSizeZ is written only when the
-     * z spacing is known. A failure is logged, not thrown: the pixels are still readable.
+     * z spacing is known, TimeIncrement only when the interval between timepoints is. A failure is
+     * logged, not thrown: the pixels are still readable.
      */
     private void writeOmeXml(double pixelSizeMicrons) {
         try {
@@ -291,6 +297,9 @@ public class ZarrOutputWriter implements AutoCloseable {
             }
             if (zSpacingKnown()) {
                 meta.setPixelsPhysicalSizeZ(new Length(zSpacingMicrons, UNITS.MICROMETER), 0);
+            }
+            if (timeIncrementKnown()) {
+                meta.setPixelsTimeIncrement(new Time(timeIncrementSeconds, UNITS.SECOND), 0);
             }
             rootGroup.createSubGroup(OME_GROUP);
             Files.writeString(
@@ -363,20 +372,28 @@ public class ZarrOutputWriter implements AutoCloseable {
         return zSpacingMicrons > 0 && Double.isFinite(zSpacingMicrons);
     }
 
+    private boolean timeIncrementKnown() {
+        return hasT() && timeIncrementSeconds > 0 && Double.isFinite(timeIncrementSeconds);
+    }
+
     /**
      * Write NGFF 0.4 multiscales and omero metadata to root .zattrs.
      *
      * <p>NGFF 0.4 ("multiscales" metadata) requires one scale value per axis and, when the physical
      * scale is not known, the scale relative to the first resolution, 1.0 for an axis that is not
      * downsampled. An axis "unit" is only a SHOULD ("axes" metadata). So an unknown z spacing is
-     * written as scale 1 with no unit (a z-slice index), never as 1 micrometer, and the time axis,
-     * whose interval is never known here, as scale 1 with no unit.
+     * written as scale 1 with no unit (a z-slice index), never as 1 micrometer, and an unknown
+     * interval between timepoints as scale 1 with no unit (a timepoint index); a known one as
+     * seconds.
      */
     private void writeNGFFMetadata(double pixelSizeMicrons, int numPyramidLevels) throws IOException {
         // Build axes (present axes only, TCZYX order)
         List<Map<String, Object>> axes = new ArrayList<>();
         if (hasT()) {
-            axes.add(Map.of("name", "t", "type", "time"));
+            axes.add(
+                    timeIncrementKnown()
+                            ? Map.of("name", "t", "type", "time", "unit", "second")
+                            : Map.of("name", "t", "type", "time"));
         }
         if (hasC()) {
             axes.add(Map.of("name", "c", "type", "channel"));
@@ -403,7 +420,7 @@ public class ZarrOutputWriter implements AutoCloseable {
             double scale = Math.pow(2, level);
 
             List<Double> scaleValues = new ArrayList<>();
-            if (hasT()) scaleValues.add(1.0);
+            if (hasT()) scaleValues.add(timeIncrementKnown() ? timeIncrementSeconds : 1.0);
             if (hasC()) scaleValues.add(1.0);
             if (hasZ()) scaleValues.add(zSpacingKnown() ? zSpacingMicrons : 1.0);
             scaleValues.add(xyUnitScale * scale);

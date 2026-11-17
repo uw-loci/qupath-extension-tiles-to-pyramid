@@ -74,6 +74,7 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
             String folderPath, double pixelSizeInMicrons, double baseDownsample, String matchingString) {
         logger.info("Preparing stitching using TileConfiguration.txt strategy for folder: {}", folderPath);
         recordedZSpacing = null;
+        recordedTimeIncrement = null;
         warnings.clear();
         List<TileMapping> mappings = new ArrayList<>();
         Path rootdir = Paths.get(folderPath);
@@ -118,6 +119,8 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
 
         recordedZSpacing =
                 mappings.stream().anyMatch(m -> m.region.getZ() > 0) ? AcquisitionRecord.zStepUm(rootdir) : null;
+        recordedTimeIncrement =
+                mappings.stream().anyMatch(m -> m.region.getT() > 0) ? AcquisitionRecord.timeIncrementS(rootdir) : null;
         logger.info("Total tiles mapped from TileConfiguration.txt: {}", mappings.size());
         return mappings;
     }
@@ -137,6 +140,15 @@ public class TileConfigurationTxtStrategy implements StitchingStrategy {
     @Override
     public Double recordedZSpacingUm() {
         return recordedZSpacing;
+    }
+
+    /** The interval in {@code acquisition_metadata.json} when the last call found timepoints; else null. */
+    private Double recordedTimeIncrement;
+
+    /** @return {@code acquisition.time_lapse.interval_s} of a QPSC acquisition record, when the tiles have timepoints */
+    @Override
+    public Double recordedTimeIncrementS() {
+        return recordedTimeIncrement;
     }
 
     /**

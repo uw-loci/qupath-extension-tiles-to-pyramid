@@ -218,6 +218,7 @@ public class StitchingWorkflow {
             }
             logger.info("Total tile mappings created: {}", allMappings.size());
             resolveZSpacing(config, strategy, allMappings);
+            resolveTimeIncrement(config, strategy, allMappings);
             planProgress(progress, allMappings, config);
 
             // 2b. Optionally correct the nominal stage positions against the tiles' own content.
@@ -374,6 +375,29 @@ public class StitchingWorkflow {
             logger.info("  - Z spacing: {} um (from {})", config.zSpacingMicrons, config.getZSpacingSource());
         } else {
             logger.info("  - Z spacing: unknown; the output records none");
+        }
+    }
+
+    /**
+     * Settle the interval between timepoints of a stitch with timepoints: the one the acquisition
+     * recorded, else unknown (the output's time increment is left unset).
+     */
+    static void resolveTimeIncrement(StitchingConfig config, StitchingStrategy strategy, List<TileMapping> mappings) {
+        if (mappings.stream().noneMatch(m -> m.region.getT() > 0)) {
+            return;
+        }
+        Double recorded = strategy.recordedTimeIncrementS();
+        if (recorded != null
+                && config.useRecordedTimeIncrement(
+                        recorded, qupath.ext.basicstitching.stitching.AcquisitionRecord.FILE_NAME)) {
+            logger.info(
+                    "  - Time increment: {} s (from {})",
+                    config.getTimeIncrementSeconds(),
+                    config.getTimeIncrementSource());
+        } else if (config.getTimeIncrementSeconds() > 0) {
+            logger.info("  - Time increment: {} s", config.getTimeIncrementSeconds());
+        } else {
+            logger.info("  - Time increment: unknown; the output records none");
         }
     }
 
@@ -588,6 +612,16 @@ public class StitchingWorkflow {
                             : config.outputFormat == StitchingConfig.OutputFormat.OME_ZARR
                                     ? "unknown (not written: OME-Zarr z scale 1 with no unit, no PhysicalSizeZ)"
                                     : "unknown (not written)");
+        }
+        if (ts.size() > 1) {
+            stitching.put(
+                    "time increment (s)",
+                    config.getTimeIncrementSeconds() > 0
+                            ? config.getTimeIncrementSeconds()
+                                    + (config.getTimeIncrementSource() != null
+                                            ? " (from " + config.getTimeIncrementSource() + ")"
+                                            : "")
+                            : "unknown (not written)");
         }
         stitching.put("stage axes negated (X, Y)", flipX + ", " + flipY);
         // Report the blend that was USED, not the one that was asked for. The old wording appended

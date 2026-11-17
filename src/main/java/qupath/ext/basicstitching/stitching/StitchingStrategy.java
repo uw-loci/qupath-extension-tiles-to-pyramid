@@ -60,6 +60,16 @@ public interface StitchingStrategy {
     }
 
     /**
+     * The interval between timepoints that the acquisition the last {@link #prepareStitching} call
+     * read recorded itself.
+     *
+     * @return the interval in seconds; null when the input records none
+     */
+    default Double recordedTimeIncrementS() {
+        return null;
+    }
+
+    /**
      * Write what the input recorded about the acquisition beside one output of the last
      * {@link #prepareStitching} call. Never throws.
      *

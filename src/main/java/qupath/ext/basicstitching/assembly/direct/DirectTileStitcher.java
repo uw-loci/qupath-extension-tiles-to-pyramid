@@ -168,6 +168,7 @@ public class DirectTileStitcher {
                         tCount,
                         config.pixelSizeInMicrons,
                         config.zSpacingMicrons,
+                        config.getTimeIncrementSeconds(),
                         dims.isRGB()
                                 ? List.of()
                                 : ChannelSemantics.channelNames(mappings.get(0).file, dims.nChannels()));
@@ -295,6 +296,7 @@ public class DirectTileStitcher {
                         tCount,
                         config.pixelSizeInMicrons,
                         config.zSpacingMicrons,
+                        config.getTimeIncrementSeconds(),
                         DEFAULT_CHUNK_SIZE,
                         numLevels);
 

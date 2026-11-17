@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import loci.formats.FormatException;
 import loci.formats.ImageWriter;
@@ -17,6 +18,7 @@ import loci.formats.out.TiffWriter;
 import loci.formats.tiff.IFD;
 import ome.units.UNITS;
 import ome.units.quantity.Length;
+import ome.units.quantity.Time;
 import ome.xml.model.enums.DimensionOrder;
 import ome.xml.model.primitives.Color;
 import ome.xml.model.primitives.PositiveInteger;
@@ -1163,6 +1165,15 @@ public final class DirectTiffOutputWriter {
         }
         if (!Double.isNaN(cal.getZSpacingMicrons())) {
             meta.setPixelsPhysicalSizeZ(new Length(cal.getZSpacingMicrons(), UNITS.MICROMETER), series);
+        }
+        // QuPath's Bio-Formats reader takes a time calibration from TimeIncrement only. A stitch has
+        // evenly spaced timepoints (CompositorImageServer sets 0, dt, 2dt, ...), so the first step
+        // is the increment; written in seconds whatever unit the source keeps them in.
+        if (source.nTimepoints() > 1 && !Double.isNaN(cal.getTimepoint(0)) && !Double.isNaN(cal.getTimepoint(1))) {
+            double seconds = Math.abs(cal.getTimepoint(1) - cal.getTimepoint(0))
+                    * cal.getTimeUnit().toNanos(1)
+                    / (double) TimeUnit.SECONDS.toNanos(1);
+            meta.setPixelsTimeIncrement(new Time(seconds, UNITS.SECOND), series);
         }
 
         for (int level = 0; level < downsamples.length; level++) {

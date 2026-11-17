@@ -59,6 +59,36 @@ public final class AcquisitionRecord {
         }
     }
 
+    /**
+     * The interval between timepoints the acquisition recorded: {@code acquisition.time_lapse.interval_s}.
+     *
+     * @param folder the selected folder, or one tile folder: the record is looked for in it and then
+     *     in its parent
+     * @return the interval in seconds, or null when there is no record, it holds no time lapse, or the
+     *     interval is not positive (0 is back-to-back timepoints, whose spacing is not known)
+     */
+    public static Double timeIncrementS(Path folder) {
+        Path file = find(folder);
+        if (file == null) {
+            return null;
+        }
+        try {
+            JsonObject root = MicroManagerPlanes.readJson(file);
+            JsonObject t = object(object(root, "acquisition"), "time_lapse");
+            JsonElement interval = t == null ? null : t.get("interval_s");
+            if (interval == null
+                    || !interval.isJsonPrimitive()
+                    || !interval.getAsJsonPrimitive().isNumber()) {
+                return null;
+            }
+            double v = interval.getAsDouble();
+            return v > 0 && Double.isFinite(v) ? v : null;
+        } catch (IOException | RuntimeException e) {
+            logger.debug("Could not read the time increment from {}: {}", file, e.toString());
+            return null;
+        }
+    }
+
     /** @return the record in {@code folder} or its parent, or null */
     static Path find(Path folder) {
         if (folder == null) {

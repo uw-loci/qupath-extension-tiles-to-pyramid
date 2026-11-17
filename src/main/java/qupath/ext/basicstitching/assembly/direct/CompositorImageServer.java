@@ -7,6 +7,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -70,6 +71,7 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
      * @param tCount Number of timepoints (>= 1)
      * @param pixelSizeMicrons Pixel size for metadata
      * @param zSpacingMicrons Z-spacing for metadata
+     * @param timeIncrementSeconds Interval between timepoints in seconds; 0 or less when unknown
      * @param channelNames Names for the non-RGB channels, one per channel (from the tiles'
      *     OME-XML); null or a list of another size gives "Channel 0", "Channel 1", ...
      */
@@ -86,6 +88,7 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
             int tCount,
             double pixelSizeMicrons,
             double zSpacingMicrons,
+            double timeIncrementSeconds,
             List<String> channelNames) {
         this.compositor = compositor;
         this.readerPool = readerPool;
@@ -123,6 +126,14 @@ public class CompositorImageServer implements ImageServer<BufferedImage> {
         }
         if (zSpacingMicrons > 0) {
             builder.zSpacingMicrons(zSpacingMicrons);
+        }
+        int sizeT = Math.max(1, tCount);
+        if (sizeT > 1 && timeIncrementSeconds > 0 && Double.isFinite(timeIncrementSeconds)) {
+            double[] times = new double[sizeT];
+            for (int t = 0; t < sizeT; t++) {
+                times[t] = t * timeIncrementSeconds;
+            }
+            builder.timepoints(TimeUnit.SECONDS, times);
         }
 
         this.metadata = builder.build();

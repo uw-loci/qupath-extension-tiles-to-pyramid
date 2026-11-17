@@ -69,7 +69,11 @@ per file for the session by path, length and modification time); the NDTiff path
 the index. After the strategy runs, `StitchingWorkflow.resolveZSpacing` fills an unknown
 `zSpacingMicrons` (0 or less) of a stitch with z-slices from `StitchingStrategy.recordedZSpacingUm()`
 (`acquisition_metadata.json` for TileConfiguration.txt, `Summary.z-step_um` for MicroManager); a
-value the caller gave is kept.
+value the caller gave is kept. `StitchingWorkflow.resolveTimeIncrement` does the same for a stitch with
+timepoints, from `StitchingStrategy.recordedTimeIncrementS()` (`acquisition.time_lapse.interval_s`
+in `acquisition_metadata.json`, TileConfiguration.txt only) into
+`StitchingConfig.getTimeIncrementSeconds()`; `CompositorImageServer` turns it into timepoints
+0, dt, 2dt, ... in seconds, and the OME-TIFF and OME-Zarr writers write it as `TimeIncrement`.
 
 The filename, TileConfiguration and Vectra strategies find their tile folders through
 `TileDirectories.resolve`: a blank matching string means the selected folder itself and nothing

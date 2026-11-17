@@ -25,6 +25,16 @@ public class StitchingConfig {
     /** Where {@link #zSpacingMicrons} came from when the workflow filled it in; null when the caller gave it. */
     private String zSpacingSource;
 
+    /**
+     * Interval between timepoints in seconds; 0 when unknown, which leaves the output's time
+     * increment unset (QuPath then shows timepoint numbers). Filled by the workflow from the
+     * acquisition's own record ({@link #useRecordedTimeIncrement}).
+     */
+    private double timeIncrementSeconds;
+
+    /** Where {@link #timeIncrementSeconds} came from; null when unknown. */
+    private String timeIncrementSource;
+
     public final double xFudgeFactor;
     public final double yFudgeFactor;
     public final OutputFormat outputFormat;
@@ -119,6 +129,32 @@ public class StitchingConfig {
     /** @return where the z spacing was read from when the workflow filled it in; null when the caller gave it */
     public String getZSpacingSource() {
         return zSpacingSource;
+    }
+
+    /**
+     * Take the interval between timepoints the acquisition recorded, when none is set yet.
+     *
+     * @param seconds the recorded interval
+     * @param source where it was recorded, for the stitch record
+     * @return whether it was taken: false when one is already set or the value is not positive
+     */
+    public boolean useRecordedTimeIncrement(double seconds, String source) {
+        if (timeIncrementSeconds > 0 || !(seconds > 0) || !Double.isFinite(seconds)) {
+            return false;
+        }
+        timeIncrementSeconds = seconds;
+        timeIncrementSource = source;
+        return true;
+    }
+
+    /** @return the interval between timepoints in seconds; 0 when unknown */
+    public double getTimeIncrementSeconds() {
+        return timeIncrementSeconds;
+    }
+
+    /** @return where the time increment was read from; null when it is unknown */
+    public String getTimeIncrementSource() {
+        return timeIncrementSource;
     }
 
     /** @return what registration did on this stitch; never null. */

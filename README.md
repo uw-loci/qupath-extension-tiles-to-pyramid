@@ -884,7 +884,15 @@ micrometers and `PhysicalSizeZ` in `OME/METADATA.ome.xml`; an unknown one is a z
 unit on the z axis and no `PhysicalSizeZ`, and the record says so. NGFF 0.4 requires a scale for
 every axis and gives 1 as the value when no physical scale is known; an axis unit is only
 recommended ("multiscales" and "axes" metadata in the
-[0.4 specification](https://ngff.openmicroscopy.org/specifications/0.4/index.html)). Planes are written through as-is; for
+[0.4 specification](https://ngff.openmicroscopy.org/specifications/0.4/index.html)). The time
+increment of a TileConfiguration.txt time series (`t{nn}/` directories) is the interval a QPSC
+acquisition recorded (`acquisition.time_lapse.interval_s` in the same `acquisition_metadata.json`),
+so QuPath shows each timepoint in seconds: an OME-TIFF gets `TimeIncrement` in seconds, and an
+OME-Zarr a time scale in seconds plus `TimeIncrement` in `OME/METADATA.ome.xml`. With no record,
+or an interval of 0 (timepoints taken back to back), no increment is written, the OME-Zarr time
+axis is a scale of 1 with no unit, and QuPath shows timepoint numbers. MicroManager input records
+no time increment yet. The `.stitch-info.txt` record gives the increment and where it was read
+from. Planes are written through as-is; for
 MicroManager input, time points can be averaged and z-stacks max-projected first (below).
 
 | Input layout | Z | T |
