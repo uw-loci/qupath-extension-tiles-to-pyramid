@@ -441,6 +441,8 @@ public class StitchingGUI {
                 () -> {
                     boolean ok = false;
                     boolean backToSettings = false;
+                    boolean[] merge = {mergeChannels};
+                    boolean skippedMerge = false;
                     boolean[] nothing = {false};
                     StringBuilder message = new StringBuilder();
                     StitchingConfig config = requested;
@@ -471,9 +473,19 @@ public class StitchingGUI {
                         }
                         window.update(checkStep, -1, "reading every tile's header", "");
                         StitchPreflight.Report check = StitchPreflight.run(config);
-                        if ((check.rows().size() >= 2 || check.hasProblems()) && !confirmPreflight(check, config)) {
-                            backToSettings = true;
-                            break stitch;
+                        // Separate regions offered as "channels" would be overlaid by a merge.
+                        List<String> mergeProblems =
+                                mergeChannels ? StitchPreflight.mergeProblems(check.rows()) : List.of();
+                        if (check.rows().size() >= 2 || check.hasProblems() || !mergeProblems.isEmpty()) {
+                            PreflightAnswer answer = confirmPreflight(check, mergeProblems, config);
+                            if (answer == PreflightAnswer.BACK) {
+                                backToSettings = true;
+                                break stitch;
+                            }
+                            if (answer == PreflightAnswer.STITCH_WITHOUT_MERGING) {
+                                merge[0] = false;
+                                skippedMerge = true;
+                            }
                         }
                         window.update(stitchStep, -1, "", "");
                         config.setProgressListener(p -> window.update(stitchStep, p));
@@ -524,13 +536,17 @@ public class StitchingGUI {
                                 result.failureReasons()
                                         .forEach(r -> message.append("\n  ").append(r));
                             }
-                            String shortfall = mergeShortfall(mergeChannels, expectedChannels, outputs.size());
+                            if (skippedMerge) {
+                                message.append("\n\nChannels not merged: the images cover different areas, and"
+                                        + " Stitch without merging was chosen.");
+                            }
+                            String shortfall = mergeShortfall(merge[0], expectedChannels, outputs.size());
                             if (shortfall != null) {
                                 ok = false;
                                 logger.warn(shortfall);
                                 message.append("\n\nWARNING: ").append(shortfall);
                             }
-                            if (mergeChannels && outputs.size() >= 2) {
+                            if (merge[0] && outputs.size() >= 2) {
                                 // A size or pixel-type mismatch throws from ChannelMergeImageServer; catch
                                 // it here so the stitched outputs listed above still reach the user.
                                 String merged = null;
@@ -589,37 +605,47 @@ public class StitchingGUI {
         worker.start();
     }
 
+    /** What the user chose in the pre-run check. */
+    private enum PreflightAnswer {
+        STITCH,
+        STITCH_WITHOUT_MERGING,
+        BACK
+    }
+
     /**
      * Show the pre-run check and wait for the answer; call from the stitch thread, never the FX
      * thread.
      *
-     * @return true to stitch, false to go back to the settings
+     * @param mergeProblems why the images should not be merged; empty when no merge was asked
+     *     for or the images cover the same area
      */
-    private static boolean confirmPreflight(StitchPreflight.Report report, StitchingConfig config) {
-        java.util.concurrent.CompletableFuture<Boolean> answer = new java.util.concurrent.CompletableFuture<>();
+    private static PreflightAnswer confirmPreflight(
+            StitchPreflight.Report report, List<String> mergeProblems, StitchingConfig config) {
+        java.util.concurrent.CompletableFuture<PreflightAnswer> answer = new java.util.concurrent.CompletableFuture<>();
         Platform.runLater(() -> {
             try {
-                showPreflightDialog(report, config, answer);
+                showPreflightDialog(report, mergeProblems, config, answer);
             } catch (RuntimeException e) {
                 logger.error("Could not show the pre-run check", e);
-                answer.complete(true);
+                answer.complete(PreflightAnswer.STITCH);
             }
         });
         try {
             return answer.get();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return false;
+            return PreflightAnswer.BACK;
         } catch (java.util.concurrent.ExecutionException e) {
-            return true;
+            return PreflightAnswer.STITCH;
         }
     }
 
     /** The pre-run check window: one row per image, flags, and what the tile search left out. */
     private static void showPreflightDialog(
             StitchPreflight.Report report,
+            List<String> mergeProblems,
             StitchingConfig config,
-            java.util.concurrent.CompletableFuture<Boolean> answer) {
+            java.util.concurrent.CompletableFuture<PreflightAnswer> answer) {
         Dialog<ButtonType> dlg = new Dialog<>();
         dlg.initModality(Modality.NONE);
         DialogOwner.own(dlg);
@@ -633,7 +659,11 @@ public class StitchingGUI {
                                 + (flagged == 1
                                         ? " image differs from the rest or looks wrong: see Check."
                                         : " images differ from the rest or look wrong: see Check.")
-                        : report.warnings().isEmpty() ? "\nNothing stands out." : ""));
+                        : report.warnings().isEmpty() && mergeProblems.isEmpty() ? "\nNothing stands out." : "")
+                + (mergeProblems.isEmpty()
+                        ? ""
+                        : "\nMerge channels is ticked, but these images do not cover the same area: they look"
+                                + " like separate regions, which a merge would overlay."));
 
         javafx.scene.control.TableView<StitchPreflight.Row> table = new javafx.scene.control.TableView<>();
         table.getItems().setAll(report.rows());
@@ -683,15 +713,34 @@ public class StitchingGUI {
             warnings.setPrefRowCount(Math.min(6, report.warnings().size() + 1));
             content.getChildren().addAll(new Label("The tile search left out or could not read:"), warnings);
         }
+        if (!mergeProblems.isEmpty()) {
+            TextArea areas = new TextArea(String.join("\n", mergeProblems));
+            areas.setEditable(false);
+            areas.setWrapText(true);
+            areas.setPrefRowCount(Math.min(6, mergeProblems.size() + 1));
+            content.getChildren().addAll(new Label("Not the same area, so not channels of one acquisition:"), areas);
+        }
         dlg.getDialogPane().setContent(content);
         dlg.setResizable(true);
 
-        ButtonType stitch = new ButtonType("Stitch", ButtonBar.ButtonData.OK_DONE);
+        ButtonType stitch = new ButtonType(
+                mergeProblems.isEmpty() ? "Stitch" : "Stitch and merge anyway", ButtonBar.ButtonData.OK_DONE);
+        ButtonType noMerge = new ButtonType("Stitch without merging", ButtonBar.ButtonData.OTHER);
         ButtonType back = new ButtonType("Back to settings", ButtonBar.ButtonData.CANCEL_CLOSE);
-        dlg.getDialogPane().getButtonTypes().setAll(back, stitch);
+        if (mergeProblems.isEmpty()) {
+            dlg.getDialogPane().getButtonTypes().setAll(back, stitch);
+        } else {
+            dlg.getDialogPane().getButtonTypes().setAll(back, noMerge, stitch);
+        }
         // A long batch should start only on an explicit click, not on Enter.
         ((Button) dlg.getDialogPane().lookupButton(stitch)).setDefaultButton(false);
-        dlg.setOnHidden(e -> answer.complete(dlg.getResult() == stitch));
+        dlg.setOnHidden(e -> {
+            ButtonType chosen = dlg.getResult();
+            answer.complete(
+                    chosen == stitch
+                            ? PreflightAnswer.STITCH
+                            : chosen == noMerge ? PreflightAnswer.STITCH_WITHOUT_MERGING : PreflightAnswer.BACK);
+        });
         dlg.show();
     }
 

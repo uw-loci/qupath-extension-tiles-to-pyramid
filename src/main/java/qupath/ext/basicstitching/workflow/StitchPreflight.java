@@ -65,6 +65,10 @@ public final class StitchPreflight {
      * @param planes z-slices times time points
      * @param size the image's width and height in pixels, e.g. "18635 x 18635"
      * @param flags what to check, in a few words each; empty when nothing stands out
+     * @param x left edge of the area the tiles cover, in full-resolution pixels of the stage frame
+     * @param y top edge of that area
+     * @param width width of that area
+     * @param height height of that area
      */
     public record Row(
             String image,
@@ -74,7 +78,11 @@ public final class StitchPreflight {
             String pixels,
             int planes,
             String size,
-            List<String> flags) {}
+            List<String> flags,
+            int x,
+            int y,
+            int width,
+            int height) {}
 
     /**
      * What the check found.
@@ -192,9 +200,65 @@ public final class StitchPreflight {
                     f.pixels().describe(),
                     (int) planes,
                     String.format(Locale.ROOT, "%d x %d", index.getImageWidth(), index.getImageHeight()),
-                    List.copyOf(flags)));
+                    List.copyOf(flags),
+                    index.getOriginX(),
+                    index.getOriginY(),
+                    index.getImageWidth(),
+                    index.getImageHeight()));
         }
         return rows;
+    }
+
+    /**
+     * Why these images should not be merged as channels: channels of one acquisition cover the
+     * same stage area, tile for tile, while separate regions (or slides) do not. Each image is
+     * compared with the area most of the others share, within 2% of its size.
+     *
+     * @return one sentence per image whose area differs; empty when they all match or there are
+     *     fewer than two
+     */
+    public static List<String> mergeProblems(List<Row> rows) {
+        if (rows.size() < 2) {
+            return List.of();
+        }
+        Row reference = rows.get(0);
+        int best = -1;
+        for (Row candidate : rows) {
+            int matches =
+                    (int) rows.stream().filter(r -> sameArea(candidate, r)).count();
+            if (matches > best) {
+                best = matches;
+                reference = candidate;
+            }
+        }
+        List<String> problems = new ArrayList<>();
+        for (Row r : rows) {
+            if (!sameArea(reference, r)) {
+                problems.add(String.format(
+                        Locale.ROOT,
+                        "%s covers %d x %d px at (%d, %d), %s covers %d x %d px at (%d, %d).",
+                        r.image(),
+                        r.width(),
+                        r.height(),
+                        r.x(),
+                        r.y(),
+                        reference.image(),
+                        reference.width(),
+                        reference.height(),
+                        reference.x(),
+                        reference.y()));
+            }
+        }
+        return problems;
+    }
+
+    private static boolean sameArea(Row a, Row b) {
+        double tolX = Math.max(2, 0.02 * Math.max(a.width(), b.width()));
+        double tolY = Math.max(2, 0.02 * Math.max(a.height(), b.height()));
+        return Math.abs(a.x() - b.x()) <= tolX
+                && Math.abs(a.y() - b.y()) <= tolY
+                && Math.abs(a.width() - b.width()) <= tolX
+                && Math.abs(a.height() - b.height()) <= tolY;
     }
 
     private static long mostCommon(Map<Long, Integer> counts) {

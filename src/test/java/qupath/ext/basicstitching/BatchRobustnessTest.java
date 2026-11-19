@@ -303,6 +303,33 @@ class BatchRobustnessTest {
     }
 
     @Test
+    void separateRegionsAreNotMergedSilentlyAsChannels() {
+        List<String> none = List.of();
+        // Three channels of one acquisition: the same area, tile for tile.
+        List<StitchPreflight.Row> channels = List.of(
+                row("DAPI", 1000, 2000, 717, 717),
+                row("FITC", 1000, 2000, 717, 717),
+                row("TRITC", 1001, 2000, 718, 717));
+        assertEquals(none, StitchPreflight.mergeProblems(channels));
+        // Regions of the same size elsewhere on the slide: a merge would overlay them.
+        List<StitchPreflight.Row> regions = List.of(
+                row("Region_01", 1000, 2000, 717, 717),
+                row("Region_02", 9000, 2000, 717, 717),
+                row("Region_03", 1000, 2000, 717, 717));
+        assertEquals(
+                List.of("Region_02 covers 717 x 717 px at (9000, 2000), Region_01 covers 717 x 717 px at (1000,"
+                        + " 2000)."),
+                StitchPreflight.mergeProblems(regions),
+                "compared with the area most of them share, not just the first");
+        assertEquals(none, StitchPreflight.mergeProblems(List.of(row("DAPI", 0, 0, 10, 10))));
+    }
+
+    private static StitchPreflight.Row row(String name, int x, int y, int w, int h) {
+        return new StitchPreflight.Row(
+                name, 9, "256 x 256", 0, "16-bit, 1 channel", 1, w + " x " + h, List.of(), x, y, w, h);
+    }
+
+    @Test
     void theProgressLineCountsImagesAndFailures() throws Exception {
         var detail = StitchingWorkflow.class.getDeclaredMethod(
                 "outputDetail", int.class, int.class, String.class, int.class);
