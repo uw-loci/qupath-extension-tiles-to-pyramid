@@ -669,7 +669,7 @@ public class StitchingGUI {
         table.getItems().setAll(report.rows());
         table.getColumns().add(column("Image", 150, StitchPreflight.Row::image));
         table.getColumns().add(column("Tiles", 50, r -> String.valueOf(r.tiles())));
-        table.getColumns().add(column("Tile size", 85, StitchPreflight.Row::tileSize));
+        table.getColumns().add(column("Tile size", 105, StitchPreflight.Row::tileSize));
         table.getColumns().add(column("Pixels", 125, StitchPreflight.Row::pixels));
         table.getColumns().add(column("Planes", 55, r -> String.valueOf(r.planes())));
         table.getColumns().add(column("Image size (px)", 125, StitchPreflight.Row::size));
@@ -1705,7 +1705,7 @@ public class StitchingGUI {
 
         Tooltip formatTooltip =
                 new Tooltip("OME-TIFF: one pyramidal .ome.tif file with OME-XML metadata. Widely readable.\n\n"
-                        + "OME-Zarr: a .ome.zarr DIRECTORY of chunks, written in parallel and suited to cloud\n"
+                        + "OME-Zarr: a .ome.zarr DIRECTORY of chunks, suited to cloud\n"
                         + "storage. Written as NGFF " + OME_ZARR_NGFF_VERSION + " (multiscales + omero metadata)\n"
                         + "on Zarr format v" + ZARR_FORMAT_VERSION + ", which QuPath's bundled reader opens.\n"
                         + "Check what your other tools accept before choosing it: NGFF versions are still moving.");
